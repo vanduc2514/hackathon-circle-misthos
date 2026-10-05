@@ -32,6 +32,7 @@ The platform is agent-first by design. Agents scope issues, propose prices, tria
 | [10 Go to market and roadmap](./10-go-to-market-and-roadmap.md) | How we get the first twenty users, and what we build by 17 October | Founders, marketing |
 | [11 Hackathon alignment](./11-hackathon-alignment.md) | How this maps to the Tameion brief, the five RFBs and the judging criteria | Judges, the team |
 | [12 Glossary](./12-glossary.md) | Plain-English definitions of the terms we use | Anyone who trips on a word |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) | How the system is built: components, contracts, settlement, trust boundaries | Engineers, and anyone doing technical diligence |
 
 If you only read one thing, read [05 How it works](./05-how-it-works.md). The diagrams there explain the product faster than the prose does.
 
