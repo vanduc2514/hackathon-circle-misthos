@@ -1,0 +1,89 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Editors and IDEs
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.swp
+*.swo
+*~
+*.code-workspace
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+secrets/
+.credentials/
+
+# Logs and temp
+*.log
+logs/
+tmp/
+.cache/
+
+# Node
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+.pnp.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+.next/
+.nuxt/
+.svelte-kit/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.Python
+*.egg-info/
+.eggs/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+htmlcov/
+.coverage
+.coverage.*
+build/
+develop-eggs/
+downloads/
+sdist/
+wheels/
+
+# Local tool overrides
+mise.local.toml
+.mise.local.toml
+
+# Keep lockfiles. They pin the build and belong in version control.
+!package-lock.json
+!pnpm-lock.yaml
+!yarn.lock
+!uv.lock
+!poetry.lock
