@@ -10,7 +10,9 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **Acceptance criteria.** The written conditions a submission has to meet. Drafted by the agent from the issue and the project's test suite, edited and approved by the publisher, then shown to contributors before they start work.
 
-**Claim.** A contributor's exclusive, time-boxed reservation of a funded issue. Expires if no pull request appears, so desirable work cannot be squatted on.
+**Claim.** A contributor's exclusive, time-boxed reservation of a funded issue. Expires if no pull request appears, so desirable work cannot be squatted on. First claim wins, and there is nothing to bid against because the price is already published.
+
+**Fixed price.** The only pricing model the platform uses. The publisher approves one number before publication, commits the funds, and the issue is taken at that number or left alone. There is no bidding, no auction and no negotiation.
 
 **Review fee.** A payment to whoever holds the verdict on a submission. Set at 20 percent of the fix price with a $25 minimum. It exists because maintainers reject bounty platforms over the unpaid review queue.
 

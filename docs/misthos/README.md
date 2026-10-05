@@ -42,6 +42,7 @@ If you only read one thing, read [05 How it works](./05-how-it-works.md). The di
 | Problem and buyer | Researched, with the main assumption still untested |
 | Competitors | Researched against live sources, see the sources table |
 | Product flow | Decided at the level of who decides what |
+| Assignment model | Decided. Fixed price set before publication, first claim takes the work. No bidding, no auction, no negotiation. |
 | Pricing engine | Designed, with the financial-data input still to be proven |
 | Revenue model | Proposed, not validated with a paying customer |
 | Regulatory position | Understood well enough to know it is not a blocker, not engineered |

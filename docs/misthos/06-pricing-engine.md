@@ -8,6 +8,22 @@ The second is how we charge for the platform. That is a straightforward take rat
 
 This document covers both, and it is honest about the parts we have not proven.
 
+## How the price is settled
+
+One model, no variants. The price is fixed before the issue is published and it does not move afterwards.
+
+That rules out three things people usually assume a marketplace like this includes. There is no bidding, so contributors do not submit competing prices for the same issue. There is no auction, so the platform never runs a round to discover a clearing price. There is no negotiation, so the publisher sets one number, commits the funds, and the issue is either taken at that number or left alone.
+
+The reason sits in the assignment model described in [05 How it works](./05-how-it-works.md). Work goes to whoever claims the issue first. There is nothing to bid against, because the price is already public and the first claim takes the job.
+
+Removing the bidding round buys two things and costs one.
+
+The publisher learns what the fix costs before committing money, so the budget conversation happens at the moment of decision rather than three days later when the bids close. The contributor knows what they will be paid before starting work, which matters most to whoever has the least runway. Both of those are worth more to us than the price discovery an auction would provide.
+
+What it costs is adaptability. A fixed price cannot absorb a surprise found once work begins, so a badly scoped issue will either sit unclaimed or cost the contributor more than they budgeted. That is why requirement clarity carries weight in the complexity signals below, and why the engine flags an issue whose band rests on a vague description.
+
+This also sidesteps a failure documented in [03 Market research](./03-market-research.md). Selecting on lowest price picks the bidder who spent least time understanding the issue, and the reviewer pays for that in unpaid review time. Price competition rewards the wrong behaviour when quality cannot be judged before work starts.
+
 ## Part one: pricing an issue
 
 ### Why this is a product feature and not a formula

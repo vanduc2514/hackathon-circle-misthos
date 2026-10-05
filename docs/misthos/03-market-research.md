@@ -293,6 +293,7 @@ The gap, stated plainly: nobody today prices a single GitHub issue from the buye
 | Capability | Algora | Opire | Upwork | Security bounties | Misthos |
 | --- | --- | --- | --- | --- | --- |
 | Unit of sale is a single issue | Yes | Yes | No | No | Yes |
+| Assigns work by competitive bidding | No | No | Yes | No | No |
 | Buyer is an enterprise with a budget | Partly | No | Yes | Yes | Yes |
 | Price suggested by a valuation engine | No | No | No | No | Yes |
 | Price informed by the buyer's own books | No | No | No | No | Yes, by design |

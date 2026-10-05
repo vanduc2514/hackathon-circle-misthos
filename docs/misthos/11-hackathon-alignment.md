@@ -47,6 +47,14 @@ The brief asks for at least one complete business workflow the agent runs end to
 
 Every step of that is a real state transition in the product, not a narrative.
 
+### What we deliberately left out
+
+Two scoping decisions are worth stating, because a reviewer will otherwise assume they are missing rather than excluded.
+
+**No bidding.** An issue carries one fixed price set before publication, and the work goes to the first claim. A competing-bid model was considered and dropped: it rewards the least careful bidder, and it defers the publisher's budget decision to whenever the bids close. None of the five RFBs require price discovery, and the brief's own framing of delegated authority assumes a known amount rather than a contested one.
+
+**No multi-platform integration.** GitHub only, as the brief's problem statements assume. A second forge would multiply the integration surface without changing anything a judge can see in three weeks.
+
 ## The design question the brief raises
 
 The fourth FAQ answer is the one that matters most for us, and it is worth quoting the shape of it: an agent that asks permission for every payment is a form with extra steps, and an agent that can move the entire treasury on its own judgement is not something anyone will run. Their suggested answers are a contract that enforces the budget, a threshold above which a human signs, and a complete record the agent must produce afterwards.

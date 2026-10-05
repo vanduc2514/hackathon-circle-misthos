@@ -76,6 +76,16 @@ stateDiagram-v2
 
 Two states carry most of the design weight. `AwaitingApproval` is the human checkpoint that keeps the agent honest about price. `Accepted` is the checkpoint that keeps the agent honest about quality. Everything between them can run without a person.
 
+## How work is assigned
+
+One mechanism, used for every issue: **fixed price, first claim.**
+
+The publisher approves a single number and commits the funds. The first contributor to claim the issue holds it exclusively for a bounded window, and loses it if no pull request appears. Contributors do not compete on price, because the price is already published. They compete on being ready to start.
+
+There is no bidding round, no auction, and no negotiation. A price that could move after publication would defeat both checkpoints above: the publisher would be approving a number it might not pay, and the contributor would not know what the work is worth until someone else decided. The trade-off is that a fixed price cannot adapt to a surprise in the codebase, which is the main reason requirement clarity is scored when the price is set.
+
+The full reasoning is in [06 The pricing engine](./06-pricing-engine.md).
+
 ## The happy path, step by step
 
 ```mermaid

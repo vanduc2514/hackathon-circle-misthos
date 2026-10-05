@@ -14,12 +14,14 @@ The existing platforms prove the demand exists and then struggle to monetise it.
 
 Four pieces, described here at the level of who decides what.
 
-1. Issue publishing with a price on it. A company or maintainer turns an issue into a funded contract with acceptance criteria attached. A human approves it before it goes live.
+1. Issue publishing with a price on it. A company or maintainer turns an issue into a funded contract at one fixed price, with acceptance criteria attached. A human approves that price before it goes live.
 2. A valuation agent. It reads the issue, the repository, the surrounding code and the buyer's financial context, then proposes a price band with a written reason. The buyer can accept or override.
-3. A claim and review pipeline. Contributors claim work, open pull requests, and get an automated first review against the acceptance criteria and the project's test suite. A human makes the final acceptance call.
+3. A claim and review pipeline. The first contributor to claim the issue holds it exclusively, opens a pull request, and gets an automated first review against the acceptance criteria and the project's test suite. A human makes the final acceptance call.
 4. Settlement in USDC. Funds are committed when the issue is published, released when the work is accepted, and refunded on a timeout if nothing acceptable arrives.
 
 Agents do the scoping, pricing, triage and first-pass review. Humans keep the two decisions with consequences: putting a real price on an issue, and declaring work done.
+
+No part of that flow involves bidding. One price is set before publication and it is taken or left, which is what lets the publisher answer the budget question before committing money and lets the contributor know what the work pays before starting.
 
 ## Why now, in three facts
 

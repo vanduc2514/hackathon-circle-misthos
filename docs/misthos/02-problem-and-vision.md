@@ -103,6 +103,8 @@ We pay for review. Publishers fund a review fee alongside the fix. The cost is t
 
 A general freelance marketplace. A recruitment product, which is where Algora went. A security disclosure programme, which is where IssueHunt went. A treasury management product, despite the Arc and Circle treasury tooling being available. An agent that spends money without a human approving the price, because that is the line the Tameion brief itself draws in its fourth FAQ answer.
 
+A bidding or auction model is also out. Issues carry one fixed price set before publication, and work goes to the first claim. Competing bids were considered and rejected on the grounds set out in [06 The pricing engine](./06-pricing-engine.md): a price round rewards the least careful bidder, and it puts the publisher's budget decision three days after the decision to fix something.
+
 ## The honest risk
 
 The vision assumes companies will buy small fixes as a routine procurement action. Every platform before us has either failed or migrated away from that assumption. We might be wrong that the timing has changed, and if a mid-sized company will not spend $500 this way, no amount of good pricing engine changes the outcome. That specific question is the first thing we test, ahead of anything technical.
