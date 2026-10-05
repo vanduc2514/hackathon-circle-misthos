@@ -1,5 +1,71 @@
 [tools]
+node = "22"
 npm = "10.9.3"
 "npm:@circle-fin/cli" = "latest"
 python = "3.11"
 uv = "0.11.6"
+foundry = "latest"
+
+[env]
+_.file = ".env"
+
+[tasks.dev]
+description = "Run the API and the web app together"
+run = "mise run dev:api & mise run dev:web"
+
+[tasks."dev:api"]
+description = "FastAPI on :8000 with reload"
+dir = "backend"
+run = "uv run uvicorn misthos.main:app --reload --port 8000"
+
+[tasks."dev:web"]
+description = "Vite dev server on :5173"
+dir = "frontend"
+run = "npm run dev"
+
+[tasks."dev:edge"]
+description = "x402 gate and Circle CLI bridge on :8080"
+dir = "edge"
+run = "npm run dev"
+
+[tasks.setup]
+description = "Install every runtime's dependencies"
+run = """
+cd backend && uv sync --extra dev
+cd frontend && npm install
+cd edge && npm install
+mkdir -p contracts/lib
+test -d contracts/lib/forge-std || git clone --depth 1 https://github.com/foundry-rs/forge-std.git contracts/lib/forge-std
+"""
+
+[tasks.test]
+description = "Run every test suite"
+run = "mise run test:backend && mise run test:web && mise run test:contracts"
+
+[tasks."test:backend"]
+dir = "backend"
+run = "uv run pytest -q"
+
+[tasks."test:web"]
+dir = "frontend"
+run = "npm run test"
+
+[tasks."test:contracts"]
+dir = "contracts"
+run = "forge test -vvv"
+
+[tasks.lint]
+description = "Lint and typecheck"
+run = """
+cd backend && uv run ruff check src tests
+cd frontend && npx tsc --noEmit
+cd edge && npx tsc --noEmit
+"""
+
+[tasks.codegen]
+description = "Regenerate the frontend API client from the live OpenAPI schema"
+run = "cd frontend && npm run codegen"
+
+[tasks.reset]
+description = "Reset the simulated data back to the seed"
+run = "curl -s -X POST http://127.0.0.1:8000/api/v1/demo/reset"

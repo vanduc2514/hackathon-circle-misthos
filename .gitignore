@@ -87,3 +87,23 @@ mise.local.toml
 !yarn.lock
 !uv.lock
 !poetry.lock
+
+# Project-specific build output
+backend/.venv/
+backend/.pytest_cache/
+backend/**/__pycache__/
+backend/*.egg-info/
+frontend/dist/
+frontend/node_modules/
+frontend/src/lib/api-schema.d.ts.bak
+edge/dist/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Foundry dependencies are cloned, not vendored
+contracts/lib/
+
+# Python tooling
+.ruff_cache/
+.mypy_cache/
