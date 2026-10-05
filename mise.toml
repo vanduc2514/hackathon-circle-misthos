@@ -1,0 +1,5 @@
+[tools]
+npm = "10.9.3"
+"npm:@circle-fin/cli" = "latest"
+python = "3.11"
+uv = "0.11.6"
