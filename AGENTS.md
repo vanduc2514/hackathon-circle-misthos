@@ -1,0 +1,184 @@
+# AGENTS.md
+
+Orientation for agents and contributors working in this repository. Keep it short;
+the depth lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+[docs/misthos/](docs/misthos/README.md).
+
+## Business context
+
+**Misthos** is a marketplace where the unit of sale is a single GitHub issue. A company
+or an open-source maintainer attaches a **fixed price** to an issue, an agent prices it
+from the issue's complexity and the publisher's own budget, a contributor fixes it, an
+agent reviews the pull request against the acceptance criteria, and payment settles in
+**USDC on Arc** when the work is accepted.
+
+- No bidding, no auction, no negotiation. One price is set before publication.
+- **Two human checkpoints** carry consequences: approving the price, and accepting the
+  work. Everything else — scoping, pricing, triage, first-pass review — is agent work.
+- The **platform is never a custodian**. Committed funds sit in `MisthosEscrow` on Arc,
+  not with us, and release requires an acceptance attestation.
+- Arc settles in under a second for about a cent, which is what makes a $40 fix viable.
+- The business case, personas, pricing model, risk and metrics are in
+  [docs/misthos/](docs/misthos/README.md). Read
+  [05 How it works](docs/misthos/05-how-it-works.md) first.
+
+### Current status
+
+A scaffold with a working simulation. The lifecycle, pricing engine, escrow contract and
+decision log are real code; the GitHub calls and the money are fake — no chain is
+contacted. Do not assume a live integration because a module names one.
+
+## Project layout
+
+Four code folders, one per runtime boundary. State that crosses a boundary crosses over
+HTTP or a contract, never by importing across folders.
+
+```
+backend/     Python 3.11: FastAPI API, pure domain, agents, workers
+             src/misthos/{api,domain,services,models,observability}/
+             tests/{unit,integration}/
+frontend/    Vite + React SPA, typed client generated from the API schema
+             src/{routes,components,lib}/
+edge/        Node + Express: x402 payment gate and Circle CLI wallet bridge
+contracts/   Foundry: MisthosEscrow on Arc
+             src/ test/ script/
+docs/        Business documentation (misthos/) and architecture
+```
+
+`backend/src/misthos/domain/` has **no IO and no imports from services**. That is
+deliberate: the lifecycle and the money units are where a bug costs real funds, so they
+must be testable without a database, a chain or a GitHub token.
+
+## Toolchain
+
+Everything runs through [mise](https://mise.jdx.dev/), which pins Node 22, npm, Python
+3.11, uv, Foundry and the Circle CLI.
+
+```bash
+mise install             # toolchain once
+mise run setup           # install all dependencies, clone forge-std
+mise run dev             # FastAPI :8000 + Vite :5173
+mise run dev:api         # backend only
+mise run dev:web         # frontend only
+mise run dev:edge        # edge service :8080
+mise run test            # backend + web + contracts
+mise run test:backend    # pytest
+mise run test:web        # vitest
+mise run test:contracts  # forge test
+mise run lint            # ruff + tsc for both TS packages
+mise run codegen         # regenerate frontend API types from the live schema
+mise run reset           # restore the seeded simulation data
+```
+
+Prefer the `mise run` task over the underlying command so the tool versions match. Run
+`mise run lint` and the relevant `mise run test:*` before calling a change done.
+
+## Coding conventions
+
+[.editorconfig](.editorconfig) is the source of truth for indentation: 4 spaces for
+Python, Solidity and TOML; 2 spaces for TS/JS/JSON/CSS/HTML/Markdown; LF, final newline,
+trim trailing whitespace (Markdown excluded).
+
+### Python (backend)
+
+- **Ruff** with `select = ["E", "F", "I", "UP", "B"]`, line length 100, target
+  `py311`. Import order is enforced by `I`; don't hand-sort.
+- Start every module with `from __future__ import annotations`, then a module docstring
+  that says **why the module exists**, not what the functions do.
+- Full type hints on every signature, including `-> None`. Prefer `str | None` over
+  `Optional[str]` and lowercase builtins (`list`, `dict`) over `typing.List`.
+- Value types are `@dataclass(frozen=True)`. Immutability is the default in `domain/`.
+- The domain layer stays pure: no IO, no framework imports, no `settings`, no `store`.
+  Raise plain `ValueError`/custom exceptions there and translate to `HTTPException` in
+  the API layer.
+- FastAPI: one `APIRouter` per resource under `api/v1/`, `response_model` on every
+  route, `async def` handlers, routes registered in
+  [api/router.py](backend/src/misthos/api/router.py) under the `/api/v1` prefix.
+- Pydantic v2 models for all request and response shapes in
+  [schemas.py](backend/src/misthos/schemas.py).
+- Settings come from `Settings` in [config.py](backend/src/misthos/config.py), env prefix
+  `MISTHOS_`, every value with a safe default so the demo runs with no config.
+- Tests: `pytest` with `asyncio_mode = "auto"`. Unit tests for domain logic in
+  `tests/unit/`, API tests via `httpx` in `tests/integration/`. Name tests as
+  behaviour sentences, in the project's plain voice.
+- Prefer `for` comprehensions and small pure functions over mutable state. Keep comments
+  to the non-obvious "why".
+
+### TypeScript — frontend (`frontend/`)
+
+- Strict TS (`strict`, `noUnusedLocals`, `noUnusedParameters`). No `any`; if a type is
+  genuinely unknown use `unknown` and narrow.
+- No semicolons, single quotes, 2-space indent, `type` imports (`import type { … }`).
+- React 19 function components. Route files under `src/routes/` use a **default export**;
+  shared components in [components/ui.tsx](frontend/src/components/ui.tsx) use **named
+  exports**. Props are typed inline; there is no component library.
+- Server state belongs to **TanStack Query** (`useQuery` / `useMutation`). Mutations
+  invalidate queries via `queryClient.invalidateQueries()` rather than patching cache by
+  hand.
+- **Never hand-edit [src/lib/api-schema.d.ts](frontend/src/lib/api-schema.d.ts)** — it is
+  generated. Change the backend schema, start the API, then `mise run codegen`. Drift
+  between the two is meant to be a compile error.
+- Reach the API only through `api` from [src/lib/client.ts](frontend/src/lib/client.ts).
+  Requests go to `/api/v1` on the same origin; Vite proxies to the backend, so do not
+  add a `baseUrl` or CORS handling.
+- `routes/` composes, `lib/` holds pure helpers, `components/ui.tsx` holds presentation.
+  Pure helpers get colocated vitest tests (`client.test.ts`), naming the behaviour tested.
+
+### TypeScript — edge (`edge/`)
+
+- ESM (`"type": "module"`), strict, `noUnusedLocals`/`noUnusedParameters`, 2-space indent.
+- Express with explicitly typed `Request`/`Response`. Keep the service thin: it exists
+  only for the two things Circle's stack does in Node (x402 seller middleware and the
+  Circle CLI bridge). Business logic belongs in the Python backend.
+- Local `node --test` for tests. Return the module's `app` as a default export and only
+  `listen()` when `NODE_ENV !== 'test'`.
+
+### Solidity (`contracts/`)
+
+- `pragma solidity ^0.8.24`, `evm_version = "osaka"`, optimizer on (200 runs) — see
+  [foundry.toml](contracts/foundry.toml). Match those settings; Arc targets the Osaka EVM.
+- `// SPDX-License-Identifier: MIT` on every file. 4-space indent. Section banner
+  comments (`// ---- errors`, `// ---- types`, `// ---- events`) order the file:
+  errors, types, events, state, constructor, external, internal, private.
+- Custom errors, not `require` strings: `error NotHeld(); … revert NotHeld();`.
+- NatSpec (`/// @title`, `@notice`, `@dev`) on contracts and non-obvious functions.
+  Explain Arc-specific behaviour where it matters — the USDC dual decimal views,
+  sub-second finality, the runtime blocklist.
+- **This contract only ever touches the 6-decimal ERC-20 USDC view.** Native 18-decimal
+  gas accounting is never handled in Solidity.
+- Tests are Foundry tests (`forge-std/Test.sol`) in `contracts/test/`, with a comment on
+  each test explaining the invariant it protects, not what it does. `contracts/lib/` is
+  cloned, never vendored.
+
+### Cross-cutting rules
+
+- **USDC has two views of one balance on Arc.** Native gas is 18 decimals; the ERC-20 at
+  `0x3600000000000000000000000000000000000000` is 6 decimals. In Python they are
+  separate types (`Usdc`, `NativeUsdc`) in
+  [domain/money.py](backend/src/misthos/domain/money.py) precisely so they cannot be
+  mixed. Everything except raw gas math uses the 6-decimal view.
+- **The platform never holds customer funds.** Any change that would put money in our
+  custody, or enforce an agent limit in application code instead of in the escrow
+  contract, breaks a design constraint — raise it rather than implementing it.
+- **Lifecycle state has a single writer.** Do not add a second code path that mutates
+  issue state (webhook handler included); go through the lifecycle service so every
+  transition gets a decision-log entry.
+- Anything that hits a blockchain must respect the `MISTHOS_SIMULATED` flag and stay
+  offline by default.
+- Configuration goes in the relevant `.env.example` with a comment; **never commit a
+  real `.env`, key or address-with-funds**. Lockfiles are committed — do not gitignore
+  them.
+
+## Branch and commit conventions
+
+- Default branch is `main`. Branch from it and keep it working.
+- Branch names are `<type>/<short-slug>`, kebab-case, matching the commit type:
+  `feat/escrow-ceiling`, `fix/deadline-refund`, `docs/architecture-components`,
+  `chore/lockfile-policy`. One concern per branch.
+- Commits follow **Conventional Commits**: `type: imperative subject`, lowercase, no
+  trailing period. Allowed types in use: `feat`, `fix`, `docs`, `chore`, `refactor`,
+  `test`, `perf`, `build`, `ci`. Keep the subject under ~72 characters and describe the
+  behaviour change, not the files touched.
+- Rebase on `main` rather than merging it in; the history is linear.
+- Squash trivial fixups before opening a PR. A PR should state the behaviour it changes
+  and name the tests that cover it.
