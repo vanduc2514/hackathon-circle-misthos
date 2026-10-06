@@ -12,7 +12,7 @@
 | Revenue | Take rate on matched work at 8 to 12 percent, plus organisation subscriptions at $249 and from $2,000 per month |
 | Cost structure | Agent inference, engineering salaries, compliance and identity verification, community and content |
 | Unfair advantage | The settled-price dataset, which only exists once issues clear on the platform |
-| Key metrics | Matched volume, issues settled, reviewer retention, repeat publisher rate |
+| Key metrics | Matched volume, issues settled, repeat publisher rate, publisher overturn rate |
 
 ## The three revenue lines, ranked by how much we believe in them
 
@@ -24,7 +24,7 @@ The problem with relying on it is in the market research. Algora, the best-funde
 
 ### Line two: organisation subscriptions
 
-Budget rules, approval thresholds, reviewer pools, spend reporting. Sold to the person who owns the open-source programme rather than to the individual manager funding a fix. This is the persona we called Dev, and the reason he buys is that the compliance obligation lands on his desk and not on an engineer's.
+Budget rules, approval thresholds, spend reporting, audit export. Sold to the person who owns the open-source programme rather than to the individual manager funding a fix. This is the persona we called Dev, and the reason he buys is that the compliance obligation lands on his desk and not on an engineer's.
 
 Priced at $249 a month for Team and from $2,000 a month for Enterprise, anchored against what a company already spends on adjacent tooling. A 300-engineer company already pays roughly $9,000 a month for AI code review alone at published rates. A compliance reporting line item at $2,000 is easy to justify inside a budget that already exists.
 
@@ -91,14 +91,16 @@ The structural choice that keeps the cost base small is not holding customer fun
 
 ### Per issue settled
 
-| | $40 fix | $500 fix | $5,000 fix |
+| | $55 fix (the floor) | $500 fix | $5,000 fix |
 | --- | --- | --- | --- |
-| Platform revenue at 12% | $7.80 | $72.00 | $720.00 |
+| Platform revenue at 12% | $6.60 | $60.00 | $600.00 |
 | Agent review cost | ($6.00) | ($6.00) | ($6.00) |
 | Settlement | ($0.01) | ($0.01) | ($0.01) |
 | Screening, amortised | ($0.30) | ($0.30) | ($0.30) |
-| Contribution | $1.49 | $65.69 | $713.69 |
-| Margin | 19% | 91% | 99% |
+| Contribution | $0.29 | $53.69 | $593.69 |
+| Margin | 4% | 89% | 99% |
+
+The take rate is charged on the fix price alone, which is the whole of what the publisher pays. The floor is not a comfortable number: it is where review stops being a loss. Everything above $500 is unaffected.
 
 The small end of the range is the constraint. Below about $50 an issue stops paying for itself, which is why the platform needs a published minimum price rather than discovering one customer at a time.
 

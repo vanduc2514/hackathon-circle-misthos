@@ -75,24 +75,24 @@ Product fit: strong. She is the persona the whole flow is shaped around, and the
 | Role | Senior engineer by day, maintainer of two libraries with a combined 900,000 monthly downloads |
 | Company | Employed full time, maintains in evenings |
 | Technical depth | Very high, and deeply familiar with his own codebase |
-| Relationship to the platform | Publisher. Puts a price on his own backlog. Also reviews. |
+| Relationship to the platform | Publisher. Puts a price on his own backlog, then merges what passes review. |
 | Frequency | Continuous, low intensity |
 
 Primary job to be done: reduce his backlog without creating a second job reviewing other people's patches.
 
 Top three pain points:
 
-1. Funded issues attract submissions from people who have not read the codebase, and he pays for that in review time.
+1. Funded issues attract submissions from people who have not read the codebase, and he has always been the one paying for that in review time.
 2. He has been burned on money before. Bountysource held developer funds and stopped paying verified claims before filing for bankruptcy in 2023.
 3. Every platform wants him to adopt its workflow rather than working where he already works.
 
 Top three desired gains:
 
-1. A review fee, so that reading a bad patch is at least compensated.
-2. Certainty about payment. Money visibly committed before he spends an evening on review.
+1. A queue he does not have to read. The platform reviews the patch, so his work is deciding whether to merge.
+2. Certainty about payment. Money visibly committed before he spends an evening on anything.
 3. Control. He decides what gets funded and what acceptance means, and a contributor cannot merge around him.
 
-Unexpected insight: the review fee matters less for the money than for the signal. A marketplace that pays for review is telling him it understands that review is the cost, and he will extend trust on that basis. A marketplace that only pays the contributor is telling him his time is free.
+Unexpected insight: he does not want to be paid for review, he wants to stop doing it. A platform that pays him a review fee is still asking for his evening. A platform that reviews the patch itself is giving the evening back. That is harder to build and a far stronger reason to adopt.
 
 Product fit: strong, and load-bearing. If Jonas does not adopt, there is no supply of well-scoped issues. Friction: our agent's first-pass review has to be good enough that he is reading a pre-filtered queue rather than a raw one. If it sends him the same quality of submission he already gets, we have made his problem worse.
 
@@ -192,7 +192,7 @@ journey
 | Approval | Internal budget conversation | Requests $500 | Resigned, expecting friction | No budget line exists for this | Produce a one-page justification the manager can forward, generated with the quote. |
 | Publishing | Platform UI, human approval | Approves the price and the acceptance criteria | Focused | Writing acceptance criteria is work | Draft the criteria from the issue and the test suite. Human edits rather than writes. |
 | Waiting | GitHub notifications | Watches for a claim and a pull request | Impatient | No idea whether anyone will pick it up | Deadline with automatic escalation, and a refund path if nothing arrives. |
-| Review | Agent review, then her own read | Reads the review summary and the diff | Cautious | Trusting an unknown author | Show test results, the diff scope, and what the agent checked. |
+| Review | Agent review | Reads the verdict, the test results and the diff scope | Cautious | Trusting an unknown author | Show what the agent checked. The diff stays available, but reading it is not her job. |
 | Acceptance | Merge | Merges and accepts | Satisfied | Handing off payment to finance | A receipt generated at merge that finance accepts without a conversation. |
 
 ### The aha moment
@@ -211,7 +211,7 @@ If nobody claims the issue within the deadline on her first attempt. A buyer who
 | Scoping | Issue page | Reads the acceptance criteria and the price | Deciding | Risk of doing work that is rejected | Publish the acceptance criteria and the review rubric before she starts |
 | Claiming | Platform | Claims the issue | Committed | Losing the claim to someone faster | Time-boxed exclusive claim with an auto-release |
 | Working | Their own editor | Writes the patch | Absorbed | Context cost in an unfamiliar codebase | Point the agent at the relevant files and prior related pull requests |
-| Submitting | GitHub | Opens the pull request | Nervous | Reviewer may reject on style, not substance | Run the linters and tests locally before submission so style is not the reason |
+| Submitting | GitHub | Opens the pull request | Nervous | The review may reject on style, not substance | Run the linters and tests locally before submission so style is not the reason |
 | Review | Agent review | Reads the automated findings and responds | Frustrated or vindicated | Feedback loops cost time | Keep the loop tight. Findings within minutes, not days. |
 | Payment | Wallet | Receives USDC on acceptance | Relieved | KYC and payout friction | Verify at payout, not at signup. Pay out in the same session as acceptance. |
 | Repeat | Issue feed | Looks for the next one | Loyal | None | Track record and a reputation score that makes the next claim easier |

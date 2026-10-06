@@ -6,13 +6,14 @@ This is the document to read if you want the product in your head in ten minutes
 
 | Actor | What they do | What they never do |
 | --- | --- | --- |
-| Publisher | Puts a price on an issue, approves it, accepts the work | Review code line by line unless they choose to |
+| Publisher | Puts a price on an issue, approves it, merges the work | Review code line by line; the platform does that |
 | Contributor | Claims an issue, writes the patch, responds to review | Merge their own work |
-| Reviewer | The maintainer or a person the publisher nominates. Judges the submission. | Spend unpaid hours on a queue nobody filtered |
 | Pricing agent | Reads the issue and the publisher's financial context, proposes a price, writes the reason | Move money |
-| Review agent | Reads the submission against the acceptance criteria and the test suite, drafts a verdict | Merge, or release payment |
+| Review agent | Reads the submission against the acceptance criteria and the test suite, issues the verdict | Merge, or release payment |
 | Settlement layer | Holds committed funds, releases on acceptance, refunds on timeout | Decide anything |
 | Publisher's finance tool | Supplies budget and cash context to the pricing agent | Anything, unless the publisher enables it |
+
+Review means one thing here: the platform assessing the contributor's submitted pull request against the published acceptance criteria and the project's own test suite, and issuing a verdict. It is review of the submission, not of the issue before it is funded and not of the repository in general. No human reads the diff as a required step.
 
 ## System context
 
@@ -21,7 +22,6 @@ flowchart TB
     subgraph People["People"]
         PUB["Publisher<br/>company or maintainer"]
         CON["Contributor"]
-        REV["Reviewer"]
     end
 
     subgraph Platform["Misthos"]
@@ -38,7 +38,6 @@ flowchart TB
 
     PUB -->|"issue plus price"| Platform
     CON -->|"pull request"| GH
-    REV -->|"verdict"| Platform
     Platform --> GH
     FIN -->|"budget and cash context"| PRICE
     PRICE --> TRIAGE
@@ -62,19 +61,18 @@ stateDiagram-v2
     Funded --> Claimed: contributor takes an exclusive time-boxed claim
     Claimed --> Funded: claim expires without a pull request
     Claimed --> InReview: contributor opens a pull request
-    InReview --> Rework: review agent or reviewer requests changes
+    InReview --> Rework: the verdict asks for changes
     Rework --> InReview: contributor pushes an update
-    InReview --> Accepted: reviewer accepts, pull request merges
-    InReview --> Rejected: reviewer rejects with reasons
+    InReview --> Accepted: the verdict passes
+    InReview --> Rejected: the verdict rejects with reasons
     Rejected --> Funded: issue returns to the pool
-    Accepted --> Paid: funds release to the contributor
-    Paid --> Reviewed: review fee releases to the reviewer
+    Accepted --> Paid: publisher merges, or the grace period expires
     Funded --> Refunded: deadline passes with no accepted work
     Refunded --> [*]
-    Reviewed --> [*]
+    Paid --> [*]
 ```
 
-Two states carry most of the design weight. `AwaitingApproval` is the human checkpoint that keeps the agent honest about price. `Accepted` is the checkpoint that keeps the agent honest about quality. Everything between them can run without a person.
+Two states carry most of the design weight. `AwaitingApproval` is the human checkpoint that keeps the agent honest about price. `Accepted` is the window in which the publisher decides whether to merge, and it is the only other place a person reaches into the flow. Everything between them runs without one.
 
 ## How work is assigned
 
@@ -96,7 +94,6 @@ sequenceDiagram
     participant GH as GitHub
     actor Amara as Contributor
     participant Escrow as Arc commitment
-    actor Jonas as Reviewer
 
     Priya->>GH: Opens or selects an issue
     Priya->>Agent: Requests a price
@@ -104,26 +101,24 @@ sequenceDiagram
     Agent->>Agent: Scores complexity, effort and risk
     Agent->>Priya: Price band plus written reasoning
     Priya->>Agent: Approves, adjusts or rejects
-    Priya->>Escrow: Commits funds for the fix and the review fee
+    Priya->>Escrow: Commits the fix price
     Agent->>GH: Publishes acceptance criteria on the issue
     Amara->>Agent: Claims the issue
     Agent->>Amara: Exclusive claim, deadline, relevant files and prior attempts
     Amara->>GH: Opens a pull request
     Agent->>GH: Runs the project's checks and tests
-    Agent->>Jonas: Draft verdict, findings, test results
-    Jonas->>Agent: Confirms, amends or overrides the verdict
+    Agent->>Agent: Issues the verdict against the criteria and the tests
     alt Accepted
-        Agent->>GH: Records acceptance
+        Agent->>Priya: Verdict, findings and test results
         Priya->>GH: Merges
         Escrow->>Amara: Releases payment in USDC
-        Escrow->>Jonas: Releases the review fee
     else Changes requested
         Agent->>Amara: Findings with reasons
         Amara->>GH: Updates the pull request
     end
 ```
 
-Note the ordering around acceptance. The agent produces a draft verdict and Jonas owns the final one. Priya merges. Neither the agent nor the contributor can release money, and Priya cannot release it without a verdict on record. That separation is the whole trust story.
+Note the ordering around acceptance. The agent issues the verdict and Priya merges. Neither the agent nor the contributor can release money, and the release needs a verdict on record. The one exception is a publisher who goes quiet for seven days after a passing verdict, which releases anyway rather than strand finished work.
 
 ## Who decides what
 
@@ -164,7 +159,8 @@ The third input is where the product gets unusual. A maintainer with no budget a
 | Checkpoint | Who holds it | Why it is not automated |
 | --- | --- | --- |
 | Publishing an issue with a price | Publisher | This is the moment a real obligation is created. Someone has to own it. |
-| Accepting the work | Reviewer or publisher | Automated review is a filter, not a signature. Someone accepts liability for the code. |
+| Accepting the work | Publisher's merge | Someone has to accept liability for the code. A verdict is evidence, not a signature. |
+| A publisher who goes quiet after a passing verdict | Nobody, after seven days | A finished patch should not be held hostage by an absent publisher. The only release that carries no signature. |
 | Releasing funds above a threshold | Publisher's policy | The publisher sets the threshold. Below it, release is automatic. |
 | Resolving a dispute | Both parties, then the platform | Disagreements are rare and expensive. A person should handle them. |
 
@@ -175,8 +171,7 @@ The Tameion brief asks the same question in its fourth FAQ answer, and its answe
 ```mermaid
 flowchart LR
     P["Publisher<br/>commits funds"] --> E["Escrow commitment<br/>on Arc"]
-    E -->|"on acceptance"| C["Contributor<br/>fix fee"]
-    E -->|"on acceptance"| R["Reviewer<br/>review fee"]
+    E -->|"on acceptance"| C["Contributor<br/>fix price less take"]
     E -->|"on deadline"| P2["Publisher<br/>refund"]
     E -->|"on acceptance"| F["Misthos<br/>take rate"]
 ```
@@ -195,9 +190,9 @@ The refund path is automatic and boring. If no acceptable work arrives by the de
 | --- | --- | --- |
 | Nobody claims the issue | Refund on deadline, or automatic re-price with a higher band | A silent empty listing teaches the publisher to stop funding |
 | Claim expires with no pull request | Issue returns to the pool, claim score affected | Prevents squatting on desirable work |
-| Submission is close but not acceptable | Rework loop with specific findings, then a bounded number of rounds | Unbounded review loops cost the reviewer more than the fix is worth |
-| Reviewer and contributor disagree on the verdict | Publisher decides first, platform mediates if the publisher is absent | Cheapest path to a decision, and the publisher owns the outcome |
-| Publisher disappears after funding | Funds sit until the dispute window closes, then a default outcome applies | Protects both sides without requiring the publisher |
+| Submission is close but not acceptable | Rework loop with specific findings, then a bounded number of rounds | Unbounded review loops cost more than the fix is worth |
+| Contributor disputes the verdict | Platform re-reviews against the published criteria, then the publisher decides | The criteria are on record, so the argument is about them rather than about taste |
+| Publisher disappears after a passing verdict | Funds release to the contributor seven days later | Otherwise a finished patch is held hostage by someone who stopped paying attention |
 | The pull request is good but the buyer merges it without accepting | Payment is triggered by the merge event, not by a separate click | Removes the incentive to take free work |
 
 That last row is worth flagging to any enterprise buyer, because it is the one place where the platform takes a decision out of a human's hands for a good reason. Merging is acceptance. If a publisher merges the patch, the patch was accepted.
@@ -216,7 +211,7 @@ A small number of screens, in this order.
 
 1. A list of their funded issues with state, price and deadline.
 2. A price proposal with the reasoning, a confidence level, and the comparable issues behind it. Approve, adjust, or send it back.
-3. A submissions view: the diff, the test results, the agent's findings, and the reviewer's verdict.
+3. A submissions view: the verdict, the findings and the test results, with the diff available as evidence. Reading it is optional, not the job.
 4. A spend view: what was budgeted, what was committed, what was released, and what to file for the security review.
 5. Budget rules: category limits, per-transaction thresholds, and who counts as an approver.
 
@@ -224,6 +219,6 @@ Screen four is the one that turns a per-issue buyer into an organisation subscri
 
 ## Where the product is thin
 
-Automated review quality is the weakest part of the design today. If the agent's first-pass verdict is unreliable, the reviewer loses time instead of saving it, and Jonas walks away. We are treating review quality as the primary technical risk and the go-to-market plan tests it before anything else.
+Automated review quality is the weakest part of the design today, and it is now the whole of the design. There is no human reviewer standing behind the agent, so an unreliable verdict is not a wasted review, it is a wrong decision about someone's money. We are treating review quality as the primary technical risk and the go-to-market plan tests it before anything else.
 
 The second thin spot is the finance integration. Reading a publisher's budget from their accounting system is the differentiator, and it is also the integration most likely to break, because the systems people actually run are self-hosted and idiosyncratic. The plan handles this by making the integration optional and by shipping a manual budget-band mode that gets the same behaviour with more effort.

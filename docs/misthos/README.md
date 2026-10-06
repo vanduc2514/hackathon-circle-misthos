@@ -6,15 +6,15 @@ Written for stakeholders: founders, judges, investors, and the business people w
 
 ## The idea in six sentences
 
-An enterprise or a maintainer picks an issue in a GitHub repository and attaches money to it. An AI agent reads the issue, the repository and the buyer's financial position, and proposes a price with a written justification. A contributor picks up the issue, opens a pull request, and an agent reviews the submission against the acceptance criteria and the project's own tests. A human on the publisher's side makes the final call on whether the work is accepted. Payment settles in USDC over x402, released when the pull request merges. Because settlement costs about a cent, a $40 fix is worth doing, which is not true of any payment method a business uses today.
+An enterprise or a maintainer picks an issue in a GitHub repository and attaches money to it. An AI agent reads the issue, the repository and the buyer's financial position, and proposes a price with a written justification. A contributor picks up the issue, opens a pull request, and an agent reviews the submission against the acceptance criteria and the project's own tests. The publisher merges, and that merge is the acceptance decision. Payment settles in USDC over x402, released when the pull request merges. Because settlement costs about a cent, a small fix is worth transacting at all, which is not true of any payment method a business uses today.
 
 ## The 60-second pitch
 
 Open-source work gets done by people who are not paid for it. The issues that never get fixed are not unfixable, they are unfunded. Companies that depend on that code have money and no mechanism, and maintainers have a backlog and no budget.
 
-Misthos is the mechanism. It is a marketplace where the unit of sale is one issue, not one person and not one project. The buyer gets a price, a reviewed patch and an audit trail. The contributor gets paid on acceptance instead of on a 45-day invoice cycle. The maintainer gets review work compensated instead of volunteered.
+Misthos is the mechanism. It is a marketplace where the unit of sale is one issue, not one person and not one project. The buyer gets a price, a reviewed patch and an audit trail. The contributor gets paid on acceptance instead of on a 45-day invoice cycle. The maintainer gets a reviewed patch instead of one more unpaid review queue.
 
-The platform is agent-first by design. Agents scope issues, propose prices, triage submissions and draft reviews. Humans stay in the loop for the two decisions that carry consequences: publishing an issue with a real price on it, and accepting a piece of work as done.
+The platform is agent-first by design. Agents scope issues, propose prices and review submissions. Humans stay in the loop for the two decisions that carry consequences: publishing an issue with a real price on it, and merging a piece of work as done.
 
 ## How to read this set
 

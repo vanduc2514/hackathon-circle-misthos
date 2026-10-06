@@ -45,7 +45,6 @@ flowchart TB
     subgraph People["People"]
         PUB["Publisher"]
         CON["Contributor"]
-        REV["Reviewer"]
         AGT["Calling agent"]
     end
 
@@ -146,7 +145,7 @@ The Circle box is a platform dependency rather than a library. Three things in t
 
 | Component | Responsibility | Notes |
 | --- | --- | --- |
-| `frontend/` | The interface for publishers, contributors and reviewers | Vite 6, React 19, TypeScript. An SPA, so no server rendering and no SEO to lose behind a login |
+| `frontend/` | The interface for publishers and contributors | Vite 6, React 19, TypeScript. An SPA, so no server rendering and no SEO to lose behind a login |
 | Routing | `react-router-dom` | Three routes: overview, issues, issue detail |
 | Server state | TanStack Query | Caching and invalidation. A lifecycle action invalidates the issue, its timeline, the list and the metrics in one go |
 | API access | `openapi-typescript` plus `openapi-fetch` | The client is generated from the API's OpenAPI schema, so backend and frontend drift is a compile error rather than a runtime surprise |
@@ -306,7 +305,7 @@ The platform has no ability to move escrowed funds except by producing the attes
 
 A contributor can verify the commitment on-chain before writing a line of code, which removes the need to trust us.
 
-A dispute about whether work is acceptable is still a judgement call, and a contract cannot make one. That is what the reviewer checkpoint is for, and the contract only ever sees the outcome.
+A dispute about whether work is acceptable is still a judgement call, and a contract cannot make one. That is what the platform's review is for, and the contract only ever sees the outcome.
 
 ### USDC on Arc: the decimals trap
 
@@ -386,16 +385,13 @@ sequenceDiagram
     autonumber
     participant GH as GitHub
     participant RS as Review service
-    participant REV as Reviewer
     participant SET as Settlement orchestrator
     participant ESC as MisthosEscrow
 
     GH->>RS: pull_request webhook
     RS->>GH: run project checks and tests
-    RS->>RS: draft verdict against acceptance criteria
+    RS->>RS: issue the verdict against the acceptance criteria
     RS->>GH: post findings as a review comment
-    RS->>REV: draft verdict with findings and test results
-    REV->>RS: confirm, amend or override
     alt accepted
         RS->>GH: record acceptance
         RS->>SET: acceptance attestation
@@ -408,7 +404,7 @@ sequenceDiagram
 
 The review service produces a draft and never a decision. That separation is C2, and it is also the answer to the hackathon's own framing of delegated authority: the agent can do the work, but the limit sits somewhere it cannot reach.
 
-Rework rounds are bounded. An unbounded review loop costs the reviewer more than the fix is worth, which is the exact problem the product exists to solve.
+Rework rounds are bounded. An unbounded review loop costs more than the fix is worth, which is the exact problem the product exists to solve.
 
 Merge is acceptance. Payment is triggered by the merge event rather than by a separate click, so a publisher cannot take the patch and skip the payment.
 
@@ -438,7 +434,7 @@ erDiagram
 | EscrowCommitment | Issue id, amount, chain, tx hash, deadline | Mirrors on-chain state. The chain is the source of truth |
 | Claim | Contributor, issued at, expires at | At most one active claim per issue |
 | Submission | PR number, head sha, checks result | Immutable per sha |
-| Review | Reviewer, verdict, findings, agent draft | The agent draft is retained alongside the human verdict |
+| Review | Verdict, findings, decided at | The platform's verdict is the decision. There is no draft to confirm |
 | ReputationEvent | Contributor, repo, outcome, amount | Derived from settled issues only |
 | Decision | Actor, inputs, rule applied, outcome, cost | Append-only. Replayable |
 
@@ -484,7 +480,6 @@ flowchart TB
     subgraph T2["Semi-trusted: authenticated users"]
         U2["Publisher"]
         U3["Contributor"]
-        U4["Reviewer"]
     end
     subgraph T3["Our trust domain"]
         S1["API"]
@@ -551,7 +546,7 @@ Wallet addresses are identical across testnet and mainnet for USDC because it is
 | Time from acceptance to payout | Under 10 seconds | The contributor's aha moment is watching money arrive |
 | Policy evaluation | Before every outbound transfer | A limit checked after the fact is not a limit |
 | Price proposal latency | Under 60 seconds | Long enough for real reasoning, short enough to stay in a session |
-| Review draft latency | Under 5 minutes | The reviewer is waiting, and a slow queue is the problem we are solving |
+| Review latency | Under 5 minutes | The contributor is waiting, and a slow queue is the problem we are solving |
 | Ledger reconciliation | Every settlement, continuously | Divergence between chain and database is an incident |
 | Decision log durability | Append-only, replicated | The record is the product's justification for autonomy |
 
@@ -595,7 +590,7 @@ These are unresolved. Each one has a real constraint behind it, and none should 
 
 **Yield on committed funds.** USYC would make idle escrow productive, and it adds a redemption step between acceptance and payment plus an eligibility restriction on who can hold it. Worth doing after the core loop works.
 
-**Review agent quality.** The single largest technical risk in the system. An unreliable first-pass verdict costs the reviewer time instead of saving it, and the reviewer is the supply side of the whole marketplace. Nothing else in this document matters if this does not work.
+**Review agent quality.** The single largest technical risk in the system. With no human reviewer behind it, an unreliable verdict is not a wasted review, it is a wrong decision about someone's money, and the maintainers whose acceptance the marketplace depends on wear the consequences. Nothing else in this document matters if this does not work.
 
 **Chain re-org assumption.** Arc gives deterministic finality, so we assume none. If the platform ever settles on a probabilistic chain, every settlement path needs rework rather than a configuration change.
 
