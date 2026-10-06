@@ -6,6 +6,22 @@ Read [05 How it works](./misthos/05-how-it-works.md) first if you want the produ
 
 Technical facts about Arc and the Circle stack are sourced from [docs.arc.io](https://docs.arc.io/llms.txt) and [developers.circle.com](https://developers.circle.com/llms.txt), read on 6 October 2026.
 
+## What exists today
+
+The diagrams below describe the target system. This table is what is actually in the repository, so the two are not confused.
+
+| Layer | Component | State |
+| --- | --- | --- |
+| Web | Vite + React SPA, generated API client | Built. Three routes, live against the API |
+| Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
+| Core | FastAPI, lifecycle, pricing engine, decision log | Built. 48 tests |
+| Worker | Job runner and deadline sweeper | Not built. The simulation has no timers |
+| Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
+| Data | Postgres, Redis | Not built. State is in process and resets on restart |
+| Integrations | GitHub App, Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
+
+Everything marked not built has its interface in place, which is why the missing pieces are listed here as work rather than as risk.
+
 ## Design constraints
 
 These come from the business documents and are treated as fixed. Every decision below follows from them.
@@ -26,37 +42,54 @@ C1 and C5 pull in opposite directions and set the shape of the whole system. C1 
 
 ```mermaid
 flowchart TB
-    subgraph Actors
-        PUB["Publisher<br/>company or maintainer"]
+    subgraph People["People"]
+        PUB["Publisher"]
         CON["Contributor"]
         REV["Reviewer"]
+        AGT["Calling agent"]
+    end
+
+    subgraph Webapp["Web application"]
+        SPA["Vite + React SPA<br/>:5173"]
+    end
+
+    subgraph EdgeSvc["Edge service :8080"]
+        GATE["x402 payment gate"]
+        WALLET["Circle CLI bridge"]
+    end
+
+    subgraph Core["Core API :8000"]
+        API["HTTP API<br/>/api/v1"]
+        LIFE["Issue lifecycle<br/>state machine"]
+        PRICE["Pricing engine"]
+        REVIEW["Review service"]
+        SETTLE["Settlement orchestrator"]
+        FIN["Finance adapter<br/>read-only"]
+    end
+
+    subgraph Job["Worker"]
+        QUEUE["Job runner"]
+        SWEEP["Deadline sweeper"]
+    end
+
+    subgraph Data["Data stores"]
+        PG[("Postgres<br/>issues, decisions,<br/>escrow mirror")]
+        RD[("Redis<br/>claims, locks,<br/>idempotency")]
     end
 
     subgraph GH["GitHub"]
-        ISSUES["Issues and PRs"]
+        ISSPR["Issues and pull requests"]
         CHECKS["Checks and tests"]
         HOOKS["Webhooks"]
     end
 
-    subgraph Off["Misthos platform (off-chain)"]
-        API["API and web app"]
-        LIFE["Issue lifecycle service"]
-        PRICE["Pricing service"]
-        REVIEW["Review service"]
-        REP["Identity and reputation"]
-        FIN["Finance context adapter<br/>read-only"]
-        SETTLE["Settlement orchestrator"]
-        AUDIT["Decision log<br/>append-only"]
+    subgraph Arc["Arc"]
+        ESCROW["MisthosEscrow"]
+        MEMO["Memo"]
+        USDC["USDC ERC-20"]
     end
 
-    subgraph Chain["Arc"]
-        ESCROW["MisthosEscrow contract"]
-        MEMO["Memo contract<br/>0x5294..."]
-        MC["Multicall3From<br/>0x522f..."]
-        USDC["USDC ERC-20<br/>0x3600..."]
-    end
-
-    subgraph Circle["Circle platform"]
+    subgraph Circle["Circle"]
         AW["Agent Wallets<br/>MPC 2-of-2"]
         POL["Spending policies"]
         FAC["Facilitator Service"]
@@ -64,51 +97,109 @@ flowchart TB
         SCREEN["Transaction screening"]
     end
 
-    PUB --> API
-    CON --> API
-    REV --> API
+    PUB --> SPA
+    CON --> SPA
+    REV --> SPA
+    AGT -->|"402 handshake"| GATE
+    SPA -->|"/api/* same origin"| API
+    GATE -->|"verified paid request"| API
+    GATE --> FAC
+    GATE --> GW
+    WALLET --> AW
+
     API --> LIFE
     LIFE --> PRICE
     LIFE --> REVIEW
-    LIFE --> REP
-    PRICE --> FIN
-    PRICE --> AUDIT
-    REVIEW --> AUDIT
-    REVIEW --> CHECKS
-    LIFE <--> HOOKS
-    HOOKS --> ISSUES
     LIFE --> SETTLE
+    PRICE --> FIN
+    REVIEW --> CHECKS
+    HOOKS -->|"pull_request, issues, check_run"| API
+    API --> ISSPR
+
+    LIFE <--> PG
+    LIFE <--> RD
+    PRICE --> PG
+    REVIEW --> PG
+    QUEUE --> PG
+    SWEEP --> RD
+    SWEEP --> PG
+
     SETTLE --> ESCROW
-    SETTLE --> FAC
     ESCROW --> USDC
     ESCROW --> MEMO
-    ESCROW --> MC
-    AW --> POL
     SETTLE --> AW
-    GW --> FAC
+    AW --> POL
     AW --> SCREEN
-    PUB -.->|"holds funds in"| AW
     ESCROW -.->|"releases to"| AW
+    PUB -.->|"holds funds in"| AW
 ```
+
+Read it as four layers. The browser talks to the API only, over one origin. The edge service sits in front of anything an agent pays for, because Circle's x402 seller middleware is TypeScript-only. The core holds the domain logic and is the only thing that talks to the data stores. The worker owns anything time-based, which is most of the lifecycle: claim expiry, review deadlines, refunds on deadline.
+
+Postgres and Redis are the intended shape rather than the current one. This build keeps state in process so it runs with no infrastructure; see [Runtime topology](#runtime-topology) for what is actually running today.
 
 The Circle box is a platform dependency rather than a library. Three things in that box are not replaceable without rewriting the trust story: MPC wallets with the user retaining custody, the spending policies that cap an agent, and the transaction screening that runs before submission.
 
 ## Components
 
-### Off-chain services
+### Web application
 
 | Component | Responsibility | Notes |
 | --- | --- | --- |
-| API and web app | Public interface for publishers, contributors and reviewers | Authentication is GitHub OAuth, so the account is the identity |
-| Issue lifecycle service | Owns issue state transitions | Single writer for state. Every transition is a decision-log entry |
-| Pricing service | Produces the price band and its justification | Runs the complexity model, calls the finance adapter, queries comparables |
-| Review service | Runs checks, drafts the verdict, files findings on the PR | Produces a draft. A human confirms |
-| Identity and reputation | Contributor track record, verification state, sanctions state | Keyed on GitHub identity plus wallet address |
-| Finance context adapter | Reads budget and cash context, read-only | Pluggable. Firefly III first, then beancount, Odoo, ERPNext, Invoice Ninja |
-| Settlement orchestrator | Commits, releases, refunds, reconciles | The only component that can move money, and it moves it by calling a contract |
-| Decision log | Append-only record of what the agent saw, decided and spent | Replayable. The artifact that makes delegated authority defensible |
+| `frontend/` | The interface for publishers, contributors and reviewers | Vite 6, React 19, TypeScript. An SPA, so no server rendering and no SEO to lose behind a login |
+| Routing | `react-router-dom` | Three routes: overview, issues, issue detail |
+| Server state | TanStack Query | Caching and invalidation. A lifecycle action invalidates the issue, its timeline, the list and the metrics in one go |
+| API access | `openapi-typescript` plus `openapi-fetch` | The client is generated from the API's OpenAPI schema, so backend and frontend drift is a compile error rather than a runtime surprise |
 
-The lifecycle service is deliberately the only writer of issue state. Letting the pricing service or the webhook handler write state directly is the fastest way to get an issue that is both funded and refunded.
+The frontend holds no business rules. It renders state and calls endpoints, which keeps the money logic in one place.
+
+### Edge service
+
+| Component | Responsibility | Notes |
+| --- | --- | --- |
+| `edge/` | The x402 seller gate and the Circle CLI bridge | Express, TypeScript |
+| x402 gate | Answers an unpaid request with `402` and a machine-readable `accepts` array, then settles and forwards | Circle's Gateway Nanopayments middleware ships as `@circle-fin/x402-batching`. Their own guidance for FastAPI and other non-Node APIs is a thin proxy in front, which is this process |
+| Wallet bridge | Runs agent wallet operations | Agent wallets are documented around the Circle CLI, a Node package |
+
+This process exists for exactly two reasons and both are Node-only dependencies. Anything else that lands here belongs in the core instead.
+
+### Core API
+
+| Component | Responsibility | Notes |
+| --- | --- | --- |
+| `backend/src/misthos/api/` | HTTP surface under `/api/v1` | FastAPI. Issues, proposals, lifecycle actions, metrics, decisions, webhook receiver |
+| `backend/src/misthos/domain/` | Lifecycle state machine, money units, pricing engine | Deliberately IO-free, so the two places a bug costs real funds are testable without a database |
+| `backend/src/misthos/store.py` | State, and the seeded simulation | In-process today. Becomes repositories over Postgres |
+| Pricing engine | Produces the price band and its justification | Scores six signals, then applies market context and the publisher's affordability ceiling |
+| Review service | Runs the project's checks, drafts the verdict, files findings on the pull request | Produces a draft. A human confirms it |
+| Settlement orchestrator | Commits, releases, refunds, reconciles | The only component that can move money, and it moves it by calling a contract |
+| Finance adapter | Reads budget and cash context, read-only | Pluggable. Firefly III first, then beancount, Odoo, ERPNext, Invoice Ninja |
+
+The lifecycle is the single writer of issue state. Letting the pricing engine or the webhook handler write state directly is the fastest way to get an issue that is both funded and refunded.
+
+### Worker
+
+| Component | Responsibility | Notes |
+| --- | --- | --- |
+| `backend/src/misthos/workers/` | Anything time-based | Claim expiry, review deadlines, refund on deadline, reconciliation against the chain |
+
+A job table in Postgres using `SELECT … FOR UPDATE SKIP LOCKED` is enough to several hundred issues a day and adds no infrastructure. Temporal is the correct answer once the saga complexity bites, and it is an unnecessary cluster before then.
+
+### Data stores
+
+| Store | Holds | Notes |
+| --- | --- | --- |
+| Postgres | Issues, price proposals, claims, submissions, reviews, decisions, and a local mirror of escrow state | The mirror is never the authority. Reconciliation runs against the chain and a divergence is an alert |
+| Redis | Claim locks, idempotency keys, rate limits | A claim is a mutual exclusion problem, so the lock has to be somewhere atomic |
+| Decision log | What the agent saw, decided and spent | Append-only and replayable. The artifact that makes delegated authority defensible |
+
+Three rules about persistence, all of them load-bearing.
+
+The chain is the source of truth for money. Our copy of an escrow commitment is a cache with an expiry, not a record.
+
+Price proposals are immutable. An override creates a new proposal rather than editing one, because overrides are the most valuable training signal the pricing engine will ever get.
+
+Reputation derives only from settled issues. Anything else rewards activity, and activity is cheap.
 
 ### On-chain contracts on Arc
 
@@ -137,6 +228,45 @@ The lifecycle service is deliberately the only writer of issue state. Letting th
 | Smart Contract Platform | Deploy and monitor contracts | Deployment plus event monitoring, which saves building an indexer |
 | CCTP | Bridge USDC for publishers holding funds elsewhere | Arc's CCTP domain is `26` |
 | USYC | Yield on committed funds awaiting release | Eligible entities only. See the caveat below |
+
+## Runtime topology
+
+Four processes, three ports, and no infrastructure to run for the simulation.
+
+```mermaid
+flowchart LR
+    BROWSER["Browser"] -->|":5173"| WEB["web<br/>Vite dev server"]
+    AGENT["Calling agent"] -->|":8080"| EDG["edge<br/>Express"]
+
+    WEB -->|"proxy /api"| API["api<br/>uvicorn :8000"]
+    EDG -->|"verified request"| API
+
+    API --> MEM[("in-process state<br/>store.py")]
+    WORKER["worker<br/>not built"] -.->|"will own timers"| MEM
+    API -.->|"planned"| PG[("Postgres")]
+    API -.->|"planned"| RD[("Redis")]
+```
+
+| Process | Runtime | Port | Entry point | State |
+| --- | --- | --- | --- | --- |
+| `web` | Node 22, Vite | 5173 | `frontend/src/main.tsx` | Built |
+| `api` | Python 3.11, uvicorn | 8000 | `backend/src/misthos/main.py` | Built |
+| `edge` | Node 22, Express | 8080 | `edge/src/index.ts` | Built, rails stubbed |
+| `worker` | Python 3.11 | none | `backend/src/misthos/workers/` | Not built. Needs the timers |
+
+| Data | Where it lives today | Where it goes |
+| --- | --- | --- |
+| Issues, proposals, claims, submissions, reviews | In process, `store.py`, reset on restart | Postgres via repositories |
+| Decision log | In process, append-only per issue | Postgres, append-only, replicated |
+| Escrow state | Mirrored in process | Read from the chain on a schedule, never trusted from our own copy |
+| Claim lock and idempotency keys | Not implemented | Redis |
+| Contract | `contracts/`, 18 Foundry tests | Deployed to Arc testnet |
+
+Two consequences worth being explicit about, because they are the difference between a demo and a system.
+
+Every restart loses the simulation. That is fine for a demo and unacceptable for anything real, which is why the store is written behind a narrow surface that repositories can replace without touching the domain.
+
+Nothing enforces the claim lock yet, because there is only one process. The moment there are two, two contributors can claim the same issue. Redis with a short TTL is the fix and it needs to land before anyone runs this behind a load balancer.
 
 ## The money model
 
@@ -319,6 +449,30 @@ The `PriceProposal` is immutable and an override creates a new one. Overrides ar
 The `EscrowCommitment` row is a local mirror, never the authority. Reconciliation runs against the chain, and a divergence is an alert.
 
 Reputation derives only from settled issues. Anything else rewards activity rather than outcomes, and activity is cheap.
+
+### Where each entity lives
+
+| Entity | Postgres table | Notes |
+| --- | --- | --- |
+| Publisher | `publishers` | Keyed on the GitHub org or user id. Wallet address stored, never a key |
+| Issue | `issues` | Carries the state column. Only the lifecycle service writes it |
+| PriceProposal | `price_proposals` | Append-only. One row per proposal, including overrides |
+| EscrowCommitment | `escrow_commitments` | A cache. Refreshed from the chain, and reconciled on a schedule |
+| Claim | `claims` | Partial unique index on `(issue_id) WHERE active` enforces one active claim |
+| Submission | `submissions` | Unique on `(issue_id, head_sha)` |
+| Review | `reviews` | Holds the agent draft beside the human verdict so disagreement is measurable |
+| Decision | `decisions` | Append-only, ordered by `created_at`. No update or delete grants |
+| ReputationEvent | `reputation_events` | Derived. Rebuildable from settled issues, so it is safe to recompute |
+| Payout | `payouts` | One row per release, with the transaction hash as the unique key |
+
+| Redis key | Purpose | TTL |
+| --- | --- | --- |
+| `claim:{issue_id}` | Mutual exclusion so two contributors cannot claim the same issue | Claim window |
+| `idem:{request_id}` | Idempotency for anything that moves money | 24 hours |
+| `rl:{actor}:{window}` | Rate limiting on publish and claim | Window |
+| `sweep:lock` | Single sweeper, so two workers do not double-refund | 30 seconds |
+
+The `payouts` row is written after the chain confirms, and the transaction hash is unique. A retry that tries to write the same hash fails on the constraint rather than paying twice, which is the failure the market research warns about: an agent that retries after a timeout can pay an invoice twice and the books will still balance.
 
 ## Trust boundaries
 
