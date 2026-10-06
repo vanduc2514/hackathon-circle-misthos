@@ -23,7 +23,7 @@ Three criteria in the organisers' own priority order:
 | Agentic sophistication | 30% | Strong. The agent prices work, explains its reasoning, triages submissions and drafts verdicts. Two human checkpoints are deliberate and named. | A recorded run: issue in, price and reasoning out, pull request in, review out. Plus the written rationale for the two checkpoints that stay human. |
 | Traction | 30% | Weakest area, and honestly so. One design partner and one funded issue is the realistic outcome in twelve days. | Name the business. Show the funded issue. Show the USDC settled, labelled testnet. |
 | Circle tool usage | 20% | Strong if we use the stack rather than one primitive. | Agent wallets for both sides, escrowed commitment on Arc, x402 settlement, App Kit for any cross-chain move, USYC considered for idle escrow. |
-| Innovation | 20% | Strong on two counts: pricing work from the buyer's own financial position, and paying the reviewer as well as the contributor. | The pricing brief itself is the artifact. So is the review fee. |
+| Innovation | 20% | Strong on two counts: pricing work from the buyer's own financial position, and the agent's verdict as the settlement condition. | The pricing brief itself is the artifact. So is a recorded run where the verdict is what moves the money. |
 
 The rubric is explicit that judges have the final say and that the best projects tend to break the rules. Our reading is that the two 30 percent items are where we have to be strong, and traction is the one we can only partly control in twelve days.
 
@@ -49,7 +49,7 @@ Every step of that is a real state transition in the product, not a narrative.
 
 ### What we deliberately left out
 
-Two scoping decisions are worth stating, because a reviewer will otherwise assume they are missing rather than excluded.
+Two scoping decisions are worth stating, because a judge will otherwise assume they are missing rather than excluded.
 
 **No bidding.** An issue carries one fixed price set before publication, and the work goes to the first claim. A competing-bid model was considered and dropped: it rewards the least careful bidder, and it defers the publisher's budget decision to whenever the bids close. None of the five RFBs require price discovery, and the brief's own framing of delegated authority assumes a known amount rather than a contested one.
 
@@ -63,7 +63,7 @@ We do all three.
 
 The budget lives in the escrow contract rather than in a prompt, so the agent cannot be talked past it. Two thresholds require a human signature: approving the price and accepting the work. And the agent writes a signed decision record for every action, which is the artifact that makes delegated authority defensible in the first place.
 
-Worth noting that the brief's own prior-art section frames this in the same terms, describing the Athenian *euthyna* audit as the invention to beat, and suggesting an agent that writes a record a reviewer can replay. That is the shape of our decision log.
+Worth noting that the brief's own prior-art section frames this in the same terms, describing the Athenian *euthyna* audit as the invention to beat, and suggesting an agent that writes a record an auditor can replay. That is the shape of our decision log.
 
 ## Prior art from the brief that we build on
 
@@ -79,7 +79,7 @@ That is the whole product in one paragraph, and it is the paragraph to use in th
 
 | Primitive | Use in Misthos |
 | --- | --- |
-| Arc | The settlement chain. Cheap enough that a $40 issue is viable. |
+| Arc | The settlement chain. Cheap enough that a small fix is worth transacting at all. |
 | USDC and EURC | Contributor payouts and publisher funding. EURC for European publishers and contributors. |
 | Circle Agent Wallets | One wallet per publisher organisation, one per contributor, with spending controls |
 | Circle CLI | Agent access to wallets and the Circle suite from a command interface |

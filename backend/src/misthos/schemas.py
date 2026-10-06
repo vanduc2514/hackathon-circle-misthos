@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from misthos.domain.money import Usdc
 
 Tier = Literal["open", "team", "enterprise"]
-Actor = Literal["agent", "publisher", "contributor", "reviewer", "system"]
+Actor = Literal["agent", "publisher", "contributor", "system"]
 
 
 def money(amount: Usdc) -> dict[str, str | int]:
@@ -46,13 +46,6 @@ class Contributor(BaseModel):
     verified: bool
 
 
-class Reviewer(BaseModel):
-    id: str
-    handle: str
-    reviews_completed: int
-    earned_usdc: str
-
-
 class Decision(BaseModel):
     id: str
     issue_id: str
@@ -68,8 +61,6 @@ class PriceProposalOut(BaseModel):
     band_low: dict[str, str | int]
     band_high: dict[str, str | int]
     recommended: dict[str, str | int]
-    review_fee: dict[str, str | int]
-    publisher_total: dict[str, str | int]
     estimated_hours: float
     complexity_score: float
     confidence: Literal["low", "medium", "high"]
@@ -106,10 +97,13 @@ class Submission(BaseModel):
 
 
 class Review(BaseModel):
-    reviewer_id: str
+    """The platform's verdict on a submission.
+
+    The agent owns this record: there is no separate human verdict, and no draft
+    to confirm. The publisher's remaining decision is whether to merge.
+    """
+
     verdict: Literal["accept", "rework", "reject"]
-    agent_draft: Literal["accept", "rework", "reject"]
-    agreed_with_agent: bool
     findings: list[str]
     decided_at: datetime
 
@@ -134,9 +128,7 @@ class IssueOut(BaseModel):
     submission: Submission | None = None
     review: Review | None = None
     contributor_id: str | None = None
-    reviewer_id: str | None = None
     paid_usdc: str | None = None
-    review_fee_paid_usdc: str | None = None
     github_url: str
 
 
@@ -162,10 +154,9 @@ class MetricsOut(BaseModel):
     acceptance_rate_first_review: float
     repeat_publisher_rate: float
     matched_volume_usdc: str
-    total_review_fees_usdc: str
     median_hours_to_payout: float | None
     dispute_rate: float
-    agent_agreement_rate: float
+    publisher_overturn_rate: float
     open_issues: int
     by_state: dict[str, int]
 

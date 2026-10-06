@@ -104,7 +104,7 @@ export interface paths {
         put?: never;
         /**
          * Complete
-         * @description Run the rest of the happy path, including release and the review fee.
+         * @description Run the rest of the happy path: verdict, merge, release.
          */
         post: operations["complete_api_v1_issues__issue_id__complete_post"];
         delete?: never;
@@ -139,23 +139,6 @@ export interface paths {
         };
         /** List Contributors */
         get: operations["list_contributors_api_v1_contributors_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/reviewers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Reviewers */
-        get: operations["list_reviewers_api_v1_reviewers_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -286,7 +269,7 @@ export interface components {
              * Actor
              * @enum {string}
              */
-            actor: "agent" | "publisher" | "contributor" | "reviewer" | "system";
+            actor: "agent" | "publisher" | "contributor" | "system";
             /** Action */
             action: string;
             /** Rule */
@@ -387,12 +370,8 @@ export interface components {
             review?: components["schemas"]["Review"] | null;
             /** Contributor Id */
             contributor_id?: string | null;
-            /** Reviewer Id */
-            reviewer_id?: string | null;
             /** Paid Usdc */
             paid_usdc?: string | null;
-            /** Review Fee Paid Usdc */
-            review_fee_paid_usdc?: string | null;
             /** Github Url */
             github_url: string;
         };
@@ -437,14 +416,12 @@ export interface components {
             repeat_publisher_rate: number;
             /** Matched Volume Usdc */
             matched_volume_usdc: string;
-            /** Total Review Fees Usdc */
-            total_review_fees_usdc: string;
             /** Median Hours To Payout */
             median_hours_to_payout: number | null;
             /** Dispute Rate */
             dispute_rate: number;
-            /** Agent Agreement Rate */
-            agent_agreement_rate: number;
+            /** Publisher Overturn Rate */
+            publisher_overturn_rate: number;
             /** Open Issues */
             open_issues: number;
             /** By State */
@@ -464,14 +441,6 @@ export interface components {
             };
             /** Recommended */
             recommended: {
-                [key: string]: string | number;
-            };
-            /** Review Fee */
-            review_fee: {
-                [key: string]: string | number;
-            };
-            /** Publisher Total */
-            publisher_total: {
                 [key: string]: string | number;
             };
             /** Estimated Hours */
@@ -542,22 +511,19 @@ export interface components {
             /** Budget Remaining Usdc */
             budget_remaining_usdc: string;
         };
-        /** Review */
+        /**
+         * Review
+         * @description The platform's verdict on a submission.
+         *
+         *     The agent owns this record: there is no separate human verdict, and no draft
+         *     to confirm. The publisher's remaining decision is whether to merge.
+         */
         Review: {
-            /** Reviewer Id */
-            reviewer_id: string;
             /**
              * Verdict
              * @enum {string}
              */
             verdict: "accept" | "rework" | "reject";
-            /**
-             * Agent Draft
-             * @enum {string}
-             */
-            agent_draft: "accept" | "rework" | "reject";
-            /** Agreed With Agent */
-            agreed_with_agent: boolean;
             /** Findings */
             findings: string[];
             /**
@@ -565,17 +531,6 @@ export interface components {
              * Format: date-time
              */
             decided_at: string;
-        };
-        /** Reviewer */
-        Reviewer: {
-            /** Id */
-            id: string;
-            /** Handle */
-            handle: string;
-            /** Reviews Completed */
-            reviews_completed: number;
-            /** Earned Usdc */
-            earned_usdc: string;
         };
         /** Submission */
         Submission: {
@@ -600,7 +555,7 @@ export interface components {
              * Actor
              * @enum {string}
              */
-            actor: "agent" | "publisher" | "contributor" | "reviewer" | "system";
+            actor: "agent" | "publisher" | "contributor" | "system";
             /** Action */
             action: string;
             /** Outcome */
@@ -892,26 +847,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Contributor"][];
-                };
-            };
-        };
-    };
-    list_reviewers_api_v1_reviewers_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Reviewer"][];
                 };
             };
         };

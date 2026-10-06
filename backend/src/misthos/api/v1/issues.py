@@ -13,7 +13,6 @@ from misthos.schemas import (
     MetricsOut,
     Publisher,
     PublishRequest,
-    Reviewer,
     TimelineEntry,
 )
 from misthos.store import store
@@ -82,7 +81,7 @@ async def advance(issue_id: str) -> IssueOut:
 
 @router.post("/issues/{issue_id}/complete", response_model=IssueOut)
 async def complete(issue_id: str) -> IssueOut:
-    """Run the rest of the happy path, including release and the review fee."""
+    """Run the rest of the happy path: verdict, merge, release."""
     if store.get(issue_id) is None:
         raise HTTPException(status_code=404, detail=f"no issue {issue_id}")
     try:
@@ -108,11 +107,6 @@ async def list_publishers() -> list[Publisher]:
 @router.get("/contributors", response_model=list[Contributor])
 async def list_contributors() -> list[Contributor]:
     return list(store.contributors.values())
-
-
-@router.get("/reviewers", response_model=list[Reviewer])
-async def list_reviewers() -> list[Reviewer]:
-    return list(store.reviewers.values())
 
 
 @router.get("/metrics", response_model=MetricsOut)

@@ -13,11 +13,17 @@ agent reviews the pull request against the acceptance criteria, and payment sett
 **USDC on Arc** when the work is accepted.
 
 - No bidding, no auction, no negotiation. One price is set before publication.
-- **Two human checkpoints** carry consequences: approving the price, and accepting the
-  work. Everything else — scoping, pricing, triage, first-pass review — is agent work.
+- **The platform owns review.** There is no third-party reviewer and no review fee. The
+  review agent's verdict is the verdict. The publisher's merge is the only human
+  signature on release, with a seven-day grace period if they go quiet.
+- The published minimum fix price is about **$55**, which is where review pays for
+  itself at the Open tier's 12 percent take rate.
+- **Two human checkpoints** carry consequences: approving the price, and merging the
+  work, which is what acceptance means. Everything else — scoping, pricing, triage and review — is agent work.
 - The **platform is never a custodian**. Committed funds sit in `MisthosEscrow` on Arc,
   not with us, and release requires an acceptance attestation.
-- Arc settles in under a second for about a cent, which is what makes a $40 fix viable.
+- Arc settles in under a second for about a cent, which is what makes a small fix worth
+  transacting at all.
 - The business case, personas, pricing model, risk and metrics are in
   [docs/misthos/](docs/misthos/README.md). Read
   [05 How it works](docs/misthos/05-how-it-works.md) first.

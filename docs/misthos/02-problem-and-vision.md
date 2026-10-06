@@ -12,7 +12,7 @@ The result is a market with money on one side, labour on the other, and no instr
 
 ### The maintainer's side
 
-A maintainer of a popular project receives more offers of help than they can review. Most of those offers cost them time and return nothing. The unpaid review queue is the actual reason maintainers turn down bounty platforms, and it is the reason a funded issue has to pay for review as well as for the patch. Any product that increases the queue without compensating the queue gets rejected by the people it depends on.
+A maintainer of a popular project receives more offers of help than they can review. Most of those offers cost them time and return nothing. The unpaid review queue is the actual reason maintainers turn down bounty platforms, and it is why the platform reviews every submission instead of charging someone to. Any product that grows that queue, however it pays for it, gets rejected by the people it depends on.
 
 ### The company's side
 
@@ -97,7 +97,7 @@ We are agent-first, not agent-assisted. Agents scope, price and review; humans a
 
 We are GitHub-only. No GitLab, no Bitbucket, no Jira. The cost is a smaller addressable market. The benefit is that the integration is deep, the acceptance criteria can read the project's own tests, and the review agent has one API to understand properly.
 
-We pay for review. Publishers fund a review fee alongside the fix. The cost is that we are adding a line item nobody has asked for. The benefit is that maintainers will actually accept funded issues, and without them there is no marketplace.
+We review for free. The platform reviews every submission, so the publisher pays the fix price and nothing else, and the maintainer receives a queue that has already been filtered by a machine. The cost is that review quality is entirely ours to get right, with no human second opinion behind it. The benefit is that maintainers face less work rather than more, which is the only reason they will accept funded issues at all.
 
 ## What we are not building
 

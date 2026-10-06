@@ -97,7 +97,7 @@ The plan has one non-negotiable item and it is on the second line: one company c
 | Agentic sophistication | 30% | The agent prices an issue and explains why, runs the technical review, and hands a verdict to a human. The two human checkpoints are named and deliberate. |
 | Traction | 30% | One named business, one real issue, one real payout. Testnet USDC is acceptable to the judges and should be reported as testnet rather than blurred. |
 | Circle tool usage | 20% | Agent wallets for the contributor and the publisher, escrowed commitment on Arc, x402 for settlement, App Kit for any cross-chain move, USYC considered for idle committed funds |
-| Innovation | 20% | Pricing work from the buyer's financial position, and paying reviewers rather than only contributors |
+| Innovation | 20% | Pricing work from the buyer's financial position, and an agent's verdict as the settlement condition |
 
 The unused Circle primitives are worth a paragraph in the submission. USYC on committed-but-unreleased funds is a small feature with a real story: money sitting in escrow for three weeks can earn while it waits, which is exactly the Tameion brief's own reading of the Parable of the Talents.
 
@@ -124,8 +124,8 @@ Each of these is cheap, and each one can kill an assumption that the whole busin
 | # | Question | Method | Success looks like | Cost |
 | --- | --- | --- | --- | --- |
 | 1 | Will a company pay for a fix delivered by a stranger? | Concierge. Find the issue, get the price agreed, get the fix written, handle the payment manually. | One signed commitment of real money | Founder time |
-| 2 | Will a maintainer accept a funded issue with a review fee? | Five conversations with maintainers of target repositories | Three of five say yes at 20 percent | Two days |
-| 3 | Is the review agent good enough to save the reviewer time? | Run it over ten historical pull requests where a human already decided | 85 percent agreement with the human verdict, and findings a reviewer calls useful | Three days |
+| 2 | Will a maintainer accept a funded issue they never review, only merge? | Five conversations with maintainers of target repositories | Three of five say yes | Two days |
+| 3 | Is the review agent good enough to be the only review? | Run it over ten historical pull requests where a human already decided | 85 percent agreement with the human verdict, and findings a maintainer calls useful | Three days |
 | 4 | Is the proposed price plausible to a buyer? | Show ten buyers the band and ask for their own guess before revealing ours | Within 30 percent on seven of ten | Two days |
 | 5 | Will a contributor claim a funded issue? | Publish one real funded issue and wait 72 hours | One claim, one pull request | One day |
 | 6 | Is finance context actually useful, or is it a feature in search of a problem? | Read Firefly III budgets for two partners and see whether the band changes in a way they agree with | The band changes, and the buyer agrees with the change | Three days |

@@ -41,13 +41,10 @@ contract MisthosEscrowTest is Test {
     address constant ATTESTOR = address(0xA77E5);
     address constant PUBLISHER = address(0xB0B);
     address constant CONTRIBUTOR = address(0xC0FE);
-    address constant REVIEWER = address(0x2E7);
 
     bytes32 constant ISSUE = keccak256("ISS-1001");
 
     uint256 constant FIX = 180_000_000; // 180.00 USDC at 6 decimals
-    uint256 constant REVIEW_FEE = 36_000_000; // 36.00 USDC
-    uint256 constant TOTAL = FIX + REVIEW_FEE;
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -61,7 +58,7 @@ contract MisthosEscrowTest is Test {
     function _commit() internal returns (uint64 deadline) {
         deadline = uint64(block.timestamp + 14 days);
         vm.prank(PUBLISHER);
-        escrow.commit(ISSUE, TOTAL, deadline);
+        escrow.commit(ISSUE, FIX, deadline);
     }
 
     // ----------------------------------------------------------------- commit
@@ -70,12 +67,12 @@ contract MisthosEscrowTest is Test {
         uint64 deadline = _commit();
 
         assertTrue(escrow.isHeld(ISSUE));
-        assertEq(usdc.balanceOf(address(escrow)), TOTAL);
+        assertEq(usdc.balanceOf(address(escrow)), FIX);
 
         (address pub, uint96 amount, uint64 d, MisthosEscrow.Status status) =
             escrow.commitments(ISSUE);
         assertEq(pub, PUBLISHER);
-        assertEq(amount, TOTAL);
+        assertEq(amount, FIX);
         assertEq(d, deadline);
         assertEq(uint256(status), uint256(MisthosEscrow.Status.Held));
     }
@@ -84,7 +81,7 @@ contract MisthosEscrowTest is Test {
         _commit();
         vm.expectRevert(MisthosEscrow.AlreadyExists.selector);
         vm.prank(PUBLISHER);
-        escrow.commit(ISSUE, TOTAL, uint64(block.timestamp + 1 days));
+        escrow.commit(ISSUE, FIX, uint64(block.timestamp + 1 days));
     }
 
     function test_commit_with_a_zero_amount_is_rejected() public {
@@ -96,28 +93,27 @@ contract MisthosEscrowTest is Test {
     function test_commit_with_a_past_deadline_is_rejected() public {
         vm.expectRevert(MisthosEscrow.DeadlinePassed.selector);
         vm.prank(PUBLISHER);
-        escrow.commit(ISSUE, TOTAL, uint64(block.timestamp - 1));
+        escrow.commit(ISSUE, FIX, uint64(block.timestamp - 1));
     }
 
     function test_ceiling_caps_what_an_agent_can_commit() public {
         escrow.setCeiling(ISSUE, 100_000_000);
         vm.expectRevert(
-            abi.encodeWithSelector(MisthosEscrow.ExceedsCeiling.selector, TOTAL, 100_000_000)
+            abi.encodeWithSelector(MisthosEscrow.ExceedsCeiling.selector, FIX, 100_000_000)
         );
         vm.prank(PUBLISHER);
-        escrow.commit(ISSUE, TOTAL, uint64(block.timestamp + 1 days));
+        escrow.commit(ISSUE, FIX, uint64(block.timestamp + 1 days));
     }
 
     // ---------------------------------------------------------------- release
 
-    function test_release_splits_the_commitment_between_contributor_and_reviewer() public {
+    function test_release_pays_the_contributor_in_one_transfer() public {
         _commit();
 
         vm.prank(ATTESTOR);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
 
         assertEq(usdc.balanceOf(CONTRIBUTOR), FIX);
-        assertEq(usdc.balanceOf(REVIEWER), REVIEW_FEE);
         assertEq(usdc.balanceOf(address(escrow)), 0);
         assertEq(uint256(escrow.statusOf(ISSUE)), uint256(MisthosEscrow.Status.Released));
     }
@@ -126,14 +122,14 @@ contract MisthosEscrowTest is Test {
         _commit();
         vm.expectRevert(MisthosEscrow.NotAttestor.selector);
         vm.prank(PUBLISHER);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
     }
 
     function test_the_contributor_cannot_release_their_own_payment() public {
         _commit();
         vm.expectRevert(MisthosEscrow.NotAttestor.selector);
         vm.prank(CONTRIBUTOR);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
     }
 
     function test_release_after_the_deadline_is_refused() public {
@@ -141,24 +137,31 @@ contract MisthosEscrowTest is Test {
         vm.warp(deadline + 1);
         vm.expectRevert(MisthosEscrow.DeadlinePassed.selector);
         vm.prank(ATTESTOR);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
     }
 
     function test_release_cannot_pay_out_more_than_was_committed() public {
         _commit();
         vm.expectRevert(MisthosEscrow.AmountMismatch.selector);
         vm.prank(ATTESTOR);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX * 2, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX * 2);
+    }
+
+    function test_release_to_the_zero_address_is_rejected() public {
+        _commit();
+        vm.expectRevert(MisthosEscrow.ZeroAddress.selector);
+        vm.prank(ATTESTOR);
+        escrow.release(ISSUE, address(0), FIX);
     }
 
     function test_release_twice_is_rejected() public {
         _commit();
         vm.prank(ATTESTOR);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
 
         vm.expectRevert(MisthosEscrow.NotHeld.selector);
         vm.prank(ATTESTOR);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
     }
 
     // ----------------------------------------------------------------- refund
@@ -170,7 +173,7 @@ contract MisthosEscrowTest is Test {
         vm.warp(deadline + 1);
         escrow.refund(ISSUE);
 
-        assertEq(usdc.balanceOf(PUBLISHER) - before, TOTAL);
+        assertEq(usdc.balanceOf(PUBLISHER) - before, FIX);
         assertEq(uint256(escrow.statusOf(ISSUE)), uint256(MisthosEscrow.Status.Refunded));
     }
 
@@ -188,7 +191,7 @@ contract MisthosEscrowTest is Test {
     function test_a_released_issue_cannot_be_refunded() public {
         _commit();
         vm.prank(ATTESTOR);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
 
         vm.warp(block.timestamp + 30 days);
         vm.expectRevert(MisthosEscrow.NotHeld.selector);
@@ -210,10 +213,10 @@ contract MisthosEscrowTest is Test {
 
         vm.prank(ATTESTOR);
         vm.expectRevert(MisthosEscrow.NotAttestor.selector);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
 
         vm.prank(next);
-        escrow.release(ISSUE, CONTRIBUTOR, FIX, REVIEWER, REVIEW_FEE);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
         assertEq(usdc.balanceOf(CONTRIBUTOR), FIX);
     }
 

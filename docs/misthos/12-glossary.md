@@ -8,15 +8,15 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **Price band.** The range the pricing agent proposes rather than a single number. A band invites the publisher to choose a position; a single figure invites an argument about whether it is exactly right.
 
-**Acceptance criteria.** The written conditions a submission has to meet. Drafted by the agent from the issue and the project's test suite, edited and approved by the publisher, then shown to contributors before they start work.
+**Acceptance criteria.** The written conditions a submission has to meet. Drafted by the agent from the issue and the project's test suite, edited and approved by the publisher, then shown to contributors before they start work. These are what the platform reviews the pull request against, and the publisher is not expected to read the diff themselves.
+
+**Price floor.** The lowest fix price the platform will publish, about $55. Derived from break-even rather than chosen: below it, review costs more than the take rate earns. The thinner a tier's take rate, the higher its floor.
 
 **Claim.** A contributor's exclusive, time-boxed reservation of a funded issue. Expires if no pull request appears, so desirable work cannot be squatted on. First claim wins, and there is nothing to bid against because the price is already published.
 
 **Fixed price.** The only pricing model the platform uses. The publisher approves one number before publication, commits the funds, and the issue is taken at that number or left alone. There is no bidding, no auction and no negotiation.
 
-**Review fee.** A payment to whoever holds the verdict on a submission. Set at 20 percent of the fix price with a $25 minimum. It exists because maintainers reject bounty platforms over the unpaid review queue.
-
-**Take rate.** The platform's commission on matched work, between 8 and 15 percent depending on the publisher's tier.
+**Take rate.** The platform's commission on matched work, between 8 and 12 percent depending on the publisher's tier. It funds the review: the publisher pays the fix price and nothing else.
 
 **Settled issue.** The unit the business counts. An issue where a pull request merged and the payment released. This is the North Star metric.
 
@@ -92,7 +92,7 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **CAC.** Customer acquisition cost. What it costs to win one customer.
 
-**Unit economics.** Whether a single transaction makes money. Ours does at $50 and above, and barely at $40.
+**Unit economics.** Whether a single transaction makes money. Ours does at $55 and above, which is where the published price floor comes from.
 
 ## Historical terms from the brief
 

@@ -22,7 +22,7 @@ The publisher learns what the fix costs before committing money, so the budget c
 
 What it costs is adaptability. A fixed price cannot absorb a surprise found once work begins, so a badly scoped issue will either sit unclaimed or cost the contributor more than they budgeted. That is why requirement clarity carries weight in the complexity signals below, and why the engine flags an issue whose band rests on a vague description.
 
-This also sidesteps a failure documented in [03 Market research](./03-market-research.md). Selecting on lowest price picks the bidder who spent least time understanding the issue, and the reviewer pays for that in unpaid review time. Price competition rewards the wrong behaviour when quality cannot be judged before work starts.
+This also sidesteps a failure documented in [03 Market research](./03-market-research.md). Selecting on lowest price picks the bidder who spent least time understanding the issue, and the platform pays for that in review time it did not need to spend. Price competition rewards the wrong behaviour when quality cannot be judged before work starts.
 
 ## Part one: pricing an issue
 
@@ -81,8 +81,7 @@ The score produces an effort estimate in hours, which is the number a buyer can 
 ```
 fix price     = hours × rate × complexity multiplier + risk premium + urgency premium
 price band    = fix price × 0.7  to  fix price × 1.4
-review fee    = 20% of the fix price, minimum $25
-publisher ask = fix price + review fee
+publisher ask = fix price
 ```
 
 The band is deliberately wide. A single point estimate invites a fight over the exact number. A range invites the buyer to pick a position inside it, which is the behaviour we want.
@@ -100,8 +99,7 @@ The rate comes from the going cost of competent work in that technology and regi
 | Complexity multiplier | 1.0 | 1.3 | 1.6 |
 | Risk premium | $0 | $300 | $1,200 |
 | Urgency premium | $0 | $0 | $800 |
-| Fix price | $180 | $3,108 | $9,040 |
-| Review fee | $36 | $622 | $1,808 |
+| Publisher pays | $180 | $3,108 | $9,040 |
 | Band shown to the buyer | $126 to $252 | $2,176 to $4,351 | $6,328 to $12,656 |
 | Typical outcome | Publishes at the bottom | Publishes near the middle | Publishes near the top, because the alternative is a 2027 filing problem |
 
@@ -135,9 +133,9 @@ Publishers will trust a system that tells them no. A system that always finds a 
 | --- | --- |
 | Publisher understates the issue to get a cheaper price | The engine reads the repository and the issue itself, not the publisher's description of it |
 | Contributor inflates effort | Payment is for a merged result, not for time |
-| Reviewer rejects good work to keep the fee while the work is unpaid | Review is paid on verdict, not on rejection. Rejections are visible and scored. |
-| Two accounts colluding to farm the review fee | Review fees require an independent reviewer identity from the contributor |
-| Publisher merges without accepting to avoid the fee | A merge triggers acceptance |
+| The platform rejects work it should have passed | Every verdict is recorded with its findings, and the contributor can force a re-review against the published criteria |
+| Two accounts colluding to farm a payout | The publisher and the contributor must be distinct identities, and payout wallets are screened |
+| Publisher merges without accepting to avoid payment | A merge triggers acceptance and releases the payment |
 
 ### What is not in the model yet
 
@@ -194,32 +192,34 @@ If the publisher wants the payment recorded in their books, we emit a record the
 
 ### The take rate
 
-A commission on matched work, in the range of 10 to 15 percent. Comparable platforms sit at ten percent for network marketplaces and at zero for the commission-free entrants, so anything above 15 percent needs a reason.
+A commission on matched work, in the range of 8 to 12 percent. Comparable platforms sit at ten percent for network marketplaces and at zero for the commission-free entrants, so anything above 15 percent needs a reason.
 
 Our reason is that we do two things a marketplace normally does not: we price the work, and we verify it. That is a defensible reason for a rate at the top of the range, and it stops being defensible the moment a competitor prices for free and matches us on verification.
 
 | | Take rate | Why a buyer accepts it |
 | --- | --- | --- |
 | Below 8% | Unsustainable | Nothing. We would be subsidising every transaction. |
-| 10% | Defensive floor | Matches Braintrust and Upwork, so it needs no explanation |
-| 12% | Target | We price and verify the work, which neither of them does |
-| 15% | Stretch | Only with evidence that our review saves the buyer more time than the fee costs |
+| 8% | Enterprise | Below our own floor for the tier, and deliberately so: the subscription is what pays for the compliance reporting, so the per-issue rate can be the thinnest on the list |
+| 10% | Team | Matches Braintrust and Upwork, so it needs no explanation, and the subscription covers the rest |
+| 12% | Open, and the target | We price and verify the work, which neither of them does. This is also the rate the published price floor is derived from |
 | Above 15% | Renegotiated | Buyers start routing around us and paying directly |
+
+The tier table in the section below is the single source of truth for these numbers. Every rate quoted anywhere else in this set is one of those three.
 
 Who pays the fee is a smaller decision than it looks. Our default is to split it, with the publisher's side visible in the quote and the contributor's side deducted from the payout. A split keeps both sides aware of the cost and neither side feeling singled out.
 
-### The review fee
+### The price floor
 
-Twenty percent of the fix price, minimum $25, paid to whoever holds the verdict.
+Review costs the platform about $6.31 an issue. It is not a line item on the publisher's invoice, so it has to come out of the take rate, and that sets a floor: at the Open tier's 12 percent a fix has to be worth about $53 before review pays for itself, which is why the published minimum is $55. Tiers with a thinner take rate carry a higher floor, about $63 at Team's 10 percent and $79 at Enterprise's 8 percent.
 
-This is the most contentious number in the document, and it exists for a specific reason documented in the market research: maintainers reject bounty platforms because funded issues increase their unpaid review queue. If the reviewer is not paid, the reviewer blocks the issue. Twenty percent is a starting position based on nothing but the intuition that a review is roughly a fifth of the work of a fix, and it should be the first thing we test with real maintainers.
+The floor is published rather than discovered. An issue below it is one the platform declines rather than subsidises.
 
 ### Tiers
 
 | Tier | Price | Who it is for | What they get | Take rate |
 | --- | --- | --- | --- | --- |
 | Open | Free | Maintainers and individuals | Per-issue flow, pricing engine, automated review, USDC payout | 12% |
-| Team | $249 per month | Companies of 10 to 200 engineers | Everything in Open, plus budget rules, approval thresholds, spend reporting, a named reviewer pool | 10% |
+| Team | $249 per month | Companies of 10 to 200 engineers | Everything in Open, plus budget rules, approval thresholds, spend reporting | 10% |
 | Enterprise | From $2,000 per month | Companies with a compliance obligation | Everything in Team, plus compliance reporting, audit export, policy-enforced limits, SSO, and a support commitment | 8% |
 
 Prices are anchored against what the buyer already pays for adjacent tools. CodeRabbit charges $30 per developer per month for AI review of pull requests, so a 300-developer company is already spending roughly $9,000 a month on reviewing code. A $2,000 Enterprise tier that also funds the fixes and produces the compliance report is a rounding error next to that number. (Sourced: CodeRabbit pricing page.)
@@ -232,26 +232,23 @@ Maintainers are the supply of well-scoped issues. Charging them would be chargin
 
 ### Unit economics of a single transaction
 
-| Line | $40 fix | $500 fix | $5,000 fix |
+| Line | $55 fix (the floor) | $500 fix | $5,000 fix |
 | --- | --- | --- | --- |
-| Fix price | $40 | $500 | $5,000 |
-| Review fee | $25 minimum | $100 | $1,000 |
-| Publisher pays | $65 | $600 | $6,000 |
-| Platform take at 12% | $7.80 | $72 | $720 |
+| Fix price | $55 | $500 | $5,000 |
+| Publisher pays | $55 | $500 | $5,000 |
+| Platform take at 12% | $6.60 | $60 | $600 |
 | Settlement cost, one transfer | $0.01 | $0.01 | $0.01 |
 | Agent review cost, 15 minutes at $0.40 | $6.00 | $6.00 | $6.00 |
-| Contribution margin | $1.79 | $65.99 | $713.99 |
+| Screening, amortised | $0.30 | $0.30 | $0.30 |
+| Contribution margin | $0.29 | $53.69 | $593.69 |
 
-The $40 column is the reason this product only works on Arc. At a 12 percent take on a $40 fix, anything more than a few cents of settlement cost wipes out the transaction, and a card fee would make it negative.
-
-The $40 column is also a warning. A platform whose smallest transactions lose money on infrastructure has to either raise the floor or make the review cheaper. In practice we will set a minimum issue price somewhere around $50 to keep the unit economics positive, and revisit when review costs fall. That floor should be published rather than discovered, because a contributor who does a $20 job and gets nothing learns the wrong lesson about the platform.
+The floor column is where the rail matters most. At a 12 percent take there is 29 cents left after review, so anything more than a few cents of settlement cost would wipe the transaction out, and a card fee would make it negative on its own. Above $500 none of this is close to mattering, which is why the floor is the only interesting column.
 
 ### Pricing experiments to run
 
 | Experiment | Question | How |
 | --- | --- | --- |
 | Take rate sensitivity | Does 12% lose deals that 8% would win? | Quote both to the first ten publisher conversations |
-| Review fee | Will a maintainer accept a 20% review fee, or is it insulting at the low end? | Ask five maintainers directly before building it |
 | Price band width | Does a wider band increase publishing rates? | Compare 0.7 to 1.4 against a narrower 0.85 to 1.2 |
 | Reasoning transparency | Does showing comparables increase approval? | Publish the brief for half the issues, hide it for the other half |
 | Tier boundary | Is $249 the right Team price? | Founder-led sales, ask what they currently pay for code review tooling |
@@ -259,7 +256,7 @@ The $40 column is also a warning. A platform whose smallest transactions lose mo
 ## Assumptions that need validating before launch
 
 1. A buyer will accept an agent-generated price without an independent quote. Confidence: medium. Test by comparing our band against what the buyer's own engineer estimates.
-2. A twenty percent review fee is acceptable to maintainers. Confidence: low. This is the number most likely to be wrong.
+2. A maintainer will accept a funded issue they never review, only merge. Confidence: low. If they still want to read every diff themselves, the platform's review saves them nothing and the product is administration software with a payment rail attached.
 3. Twelve percent does not push buyers into paying contributors directly. Confidence: medium. The verification is the lock-in, and it needs to be good enough to be worth the rate.
 4. Firefly III gives us budget context that is actually useful. Confidence: low. Firefly III is personal finance software and may simply not hold the data an enterprise needs. The manual band fallback exists for this reason.
 5. Review can be done for roughly six dollars of agent time. Confidence: medium. Based on a publicly listed agent minute price, not on our own measurements.

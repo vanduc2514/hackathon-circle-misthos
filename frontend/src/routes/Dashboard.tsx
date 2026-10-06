@@ -87,14 +87,14 @@ export default function Dashboard() {
           hint={`${m?.open_issues ?? 0} still open`}
         />
         <Stat
-          label="Review fees paid"
-          value={`$${money(m?.total_review_fees_usdc)}`}
-          hint="Review is paid work, not charity"
+          label="Settled issues"
+          value={m?.settled_issues ?? '—'}
+          hint="Merged and paid end to end. The North Star."
         />
         <Stat
-          label="Agent agreement"
-          value={m ? `${Math.round(m.agent_agreement_rate * 100)}%` : '—'}
-          hint="How often the human kept the agent's verdict"
+          label="Publisher overturns"
+          value={m ? `${Math.round(m.publisher_overturn_rate * 100)}%` : '—'}
+          hint="How often a publisher declined a passing verdict"
         />
       </div>
 

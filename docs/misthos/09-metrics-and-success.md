@@ -43,11 +43,11 @@ flowchart TB
     I1["Funded issues published"]
     I2["Claim rate within 72 hours"]
     I3["Acceptance rate on first review"]
-    I4["Reviewer time saved per issue"]
+    I4["Verdict agreement with human judgement"]
     I5["Repeat publisher rate"]
     H1["Dispute rate"]
     H2["Time from claim to payout"]
-    H3["Agent verdict agreement with humans"]
+    H3["Publisher overturn rate"]
     H4["Refund rate"]
 
     I1 --> NSM
@@ -85,17 +85,17 @@ Quality of matching and of scoping. The share of submissions accepted without a 
 
 Why it matters: low means we are attracting the wrong contributors or writing bad acceptance criteria. Both are fixable and both are fatal if ignored.
 
-Where it breaks: an acceptance rate of 100 percent means the reviewer is not rejecting anything, which is a different problem.
+Where it breaks: an acceptance rate of 100 percent means the platform is not rejecting anything, which is a different problem.
 
-### 4. Reviewer time saved per issue
+### 4. Verdict agreement with human judgement
 
 The value proof, and the hardest metric to instrument honestly.
 
-Why it matters: the market research says the review burden is why maintainers reject funded issues. If our agent does not measurably reduce it, the product adds to the problem it claims to solve.
+Why it matters: the platform is now the only review. If its verdicts do not match what a competent human would have decided, the product is authorising bad patches, and the maintainers whose acceptance it depends on are the ones who find out.
 
-How to measure: ask the reviewer to record minutes spent, and compare against their baseline for unfunded contributions of similar size. Self-reported and imperfect, and still better than assuming.
+How to measure: replay the agent against historical pull requests where a human already decided, and compare. Offline and repeatable, which is better than asking anyone to self-report.
 
-Where it breaks: a reviewer who does not trust the agent will re-review everything from scratch regardless of what the agent produced, and the metric will be honest and damning.
+Where it breaks: agreement on easy patches is easy. Report it by complexity band, because the metric hides its failures in the aggregate.
 
 ### 5. Repeat publisher rate
 
@@ -113,7 +113,7 @@ These do not drive the business. They stop the North Star from being hit in a wa
 | --- | --- | --- |
 | Dispute rate | Under 5 percent of submitted issues | Acceptance becoming contentious |
 | Median time from claim to payout | Under 14 days | The promise of fast payment quietly eroding |
-| Agent verdict agreement with human reviewers | Above 85 percent | The reviewer re-doing all the work |
+| Publisher overturn rate | Under 10 percent | A publisher repeatedly rejecting work the platform passed |
 | Refund rate | Under 15 percent | Publishers funding issues nobody completes |
 | Share of contributors earning more than $500 in a month | Above 30 percent | A long tail of near-zero earners, which is what kills contributor trust |
 | Contributor earnings concentration | Top 10 contributors under 50 percent of payouts | A marketplace that is really a roster of ten people |
@@ -128,7 +128,7 @@ That fifth guardrail is the one most platforms get wrong. A contributor who comp
 | Funded issues published per week | Issue records | 3 | 15 | 90 |
 | Claim rate within 72 hours | Issue lifecycle | 60% | 70% | 80% |
 | Acceptance on first review | Review records | Not measured | 40% | 55% |
-| Reviewer time saved per issue | Reviewer survey | Not measured | 20 minutes | 45 minutes |
+| Verdict agreement with human judgement | Historical pull requests | Not measured | 80 percent | 90 percent |
 | Repeat publisher rate | Publisher records | Not measured | 30% | 50% |
 | Matched volume | Settlement ledger | $350 | $6,000 | $60,000 per week |
 | Median time to payout | Lifecycle timestamps | Under 7 days | Under 5 days | Under 2 days |

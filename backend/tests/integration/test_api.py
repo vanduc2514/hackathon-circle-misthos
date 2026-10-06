@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from misthos.domain.issue import IssueState
 from misthos.main import app
 from misthos.store import store
 
@@ -72,12 +73,38 @@ class TestLifecycleThroughTheApi:
         client.post(f"{API}/issues/ISS-1006/advance")  # claim
         client.post(f"{API}/issues/ISS-1006/advance")  # submit
         body = client.post(f"{API}/issues/ISS-1006/complete").json()
-        assert body["state"] == "REVIEWED"
+        assert body["state"] == "PAID"
         assert float(body["paid_usdc"]) > 0
-        assert float(body["review_fee_paid_usdc"]) > 0
+
+    def test_settlement_pays_one_party_and_never_a_reviewer(self, client: TestClient) -> None:
+        """The platform reviews, so there is no reviewer to pay."""
+        client.post(f"{API}/issues/ISS-1002/complete")
+        body = client.get(f"{API}/issues/ISS-1002").json()
+        assert body["state"] == "PAID"
+        assert "reviewer_id" not in body
+        assert "review_fee_paid_usdc" not in body
 
     def test_advancing_a_finished_issue_is_conflict(self, client: TestClient) -> None:
         assert client.post(f"{API}/issues/ISS-1005/advance").status_code == 409
+
+    def test_a_silent_publisher_does_not_strand_finished_work(self) -> None:
+        """The one release path with no human signature. See `08`."""
+        from datetime import timedelta
+
+        from misthos.domain.issue import SILENT_PUBLISHER_GRACE
+
+        rec = store.get("ISS-1002")  # seeded IN_REVIEW
+        assert rec is not None
+        store.advance("ISS-1002")
+        assert rec.state is IssueState.ACCEPTED
+        assert rec.review is not None
+
+        # Backdate the verdict past the grace window and advance again.
+        rec.review.decided_at -= SILENT_PUBLISHER_GRACE + timedelta(hours=1)
+        store.advance("ISS-1002")
+
+        assert rec.state is IssueState.PAID
+        assert rec.decisions[-1].rule == "silent_publisher_grace_period"
 
     def test_every_transition_leaves_a_decision(self, client: TestClient) -> None:
         before = len(client.get(f"{API}/issues/ISS-1006/timeline").json())
@@ -114,8 +141,8 @@ class TestMetrics:
         m = client.get(f"{API}/metrics").json()
         assert m["settled_issues"] == 2
         assert float(m["matched_volume_usdc"]) > 0
-        assert float(m["total_review_fees_usdc"]) > 0
-        assert 0 <= m["agent_agreement_rate"] <= 1
+        assert 0 <= m["publisher_overturn_rate"] <= 1
+        assert "total_review_fees_usdc" not in m
         assert sum(m["by_state"].values()) == 8
 
     def test_metrics_move_after_a_settlement(self, client: TestClient) -> None:

@@ -24,13 +24,11 @@ function nextAction(state: string): { label: string; hint: string } | null {
     case 'CLAIMED':
       return { label: 'Submit a pull request', hint: 'Runs the project’s own checks.' }
     case 'IN_REVIEW':
-      return { label: 'Draft the review', hint: 'The agent drafts a verdict for a human.' }
+      return { label: 'Issue the verdict', hint: 'The platform reviews; no human confirms it.' }
     case 'REWORK':
       return { label: 'Resubmit after rework', hint: 'Rework rounds are bounded.' }
     case 'ACCEPTED':
-      return { label: 'Release payment', hint: 'Merge is acceptance.' }
-    case 'PAID':
-      return { label: 'Pay the review fee', hint: 'Review is paid work.' }
+      return { label: 'Merge and release', hint: 'Merge is acceptance. Silence for 7 days releases too.' }
     default:
       return null
   }
@@ -81,7 +79,7 @@ export default function IssueDetail() {
 
   const p = issue.proposal
   const action = nextAction(issue.state)
-  const isSettled = ['REVIEWED', 'REFUNDED'].includes(issue.state)
+  const isSettled = ['PAID', 'REFUNDED'].includes(issue.state)
   const signals = p ? Object.entries(p.signals) : []
 
   // Place the recommended price inside the band for the visual.
@@ -162,22 +160,11 @@ export default function IssueDetail() {
           {issue.review && (
             <Panel title="Review">
               <dl className="kv" style={{ marginBottom: 14 }}>
-                <dt>Agent draft</dt>
-                <dd>
-                  <span className={`chip ${issue.review.agent_draft === 'accept' ? 'ok' : 'warn'}`}>
-                    {issue.review.agent_draft}
-                  </span>
-                </dd>
-                <dt>Human verdict</dt>
+                <dt>Verdict</dt>
                 <dd>
                   <span className={`chip ${issue.review.verdict === 'accept' ? 'ok' : 'warn'}`}>
                     {issue.review.verdict}
                   </span>
-                  {!issue.review.agreed_with_agent && (
-                    <span className="chip bad" style={{ marginLeft: 8 }}>
-                      overrode the agent
-                    </span>
-                  )}
                 </dd>
                 <dt>Decided</dt>
                 <dd className="muted">{shortTime(issue.review.decided_at)}</dd>
@@ -245,16 +232,6 @@ export default function IssueDetail() {
                   <span className="mono-num">${money(p.recommended)}</span>
                 </div>
                 <div className="price-total">
-                  <span className="dim">Review fee</span>
-                  <span className="mono-num">${money(p.review_fee)}</span>
-                </div>
-                <div className="price-total">
-                  <span className="dim">Publisher pays</span>
-                  <span className="mono-num" style={{ color: 'var(--accent)' }}>
-                    ${money(p.publisher_total)}
-                  </span>
-                </div>
-                <div className="price-total">
                   <span className="dim">Effort estimate</span>
                   <span className="mono-num">{p.estimated_hours}h</span>
                 </div>
@@ -314,18 +291,12 @@ export default function IssueDetail() {
             </Panel>
           )}
 
-          {(issue.paid_usdc || issue.review_fee_paid_usdc) && (
+          {issue.paid_usdc && (
             <Panel title="Settlement">
               <div className="price-total">
                 <span className="dim">Paid to contributor</span>
                 <span className="mono-num" style={{ color: 'var(--ok)' }}>
                   ${money(issue.paid_usdc)}
-                </span>
-              </div>
-              <div className="price-total">
-                <span className="dim">Paid to reviewer</span>
-                <span className="mono-num" style={{ color: 'var(--ok)' }}>
-                  ${money(issue.review_fee_paid_usdc)}
                 </span>
               </div>
             </Panel>
@@ -334,7 +305,7 @@ export default function IssueDetail() {
           <Panel title="Next step">
             {isSettled ? (
               <p className="dim">
-                This issue is closed. {issue.state === 'REVIEWED' ? 'The contributor and the reviewer were both paid.' : 'Funds returned to the publisher.'}
+                This issue is closed. {issue.state === 'PAID' ? 'The contributor was paid.' : 'Funds returned to the publisher.'}
               </p>
             ) : action ? (
               <>
@@ -374,8 +345,6 @@ export default function IssueDetail() {
               <dd>{issue.publisher_name}</dd>
               <dt>Contributor</dt>
               <dd>{issue.contributor_id ?? '— not claimed'}</dd>
-              <dt>Reviewer</dt>
-              <dd>{issue.reviewer_id ?? '—'}</dd>
               <dt>Opened</dt>
               <dd className="muted">{shortTime(issue.created_at)}</dd>
             </dl>

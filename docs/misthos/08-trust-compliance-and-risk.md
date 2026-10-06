@@ -40,7 +40,7 @@ The Tameion brief frames the design question as: how much autonomy should the ag
 | --- | --- | --- |
 | Whether to fund an issue at all | Publisher | Human action, no default |
 | What the price is | Publisher, on the agent's recommendation | The agent cannot commit funds |
-| Whether work is acceptable | Reviewer, on the agent's draft verdict | The agent cannot merge or release |
+| Whether work is acceptable | The publisher's merge, on the platform's verdict | The agent cannot merge or release |
 | Whether to release above a threshold | Publisher's policy | Enforced in the contract, not in a prompt |
 | Whether a deadline has passed | Agent | Time-based, no judgement involved |
 | What to escalate to a human | Agent | Anything outside a declared budget category |
@@ -93,7 +93,7 @@ Disputes are rare and expensive, and the policy should be written before the fir
 
 ```mermaid
 flowchart TB
-    D0["Disagreement on the verdict"] --> D1["Reviewer restates the specific unmet criteria"]
+    D0["Disagreement on the verdict"] --> D1["Platform restates the specific unmet criteria"]
     D1 --> D2{"Contributor responds<br/>within 72 hours?"}
     D2 -->|"Yes"| D3["Rework round, bounded at two"]
     D2 -->|"No"| D4["Issue returns to the pool, claim score affected"]
@@ -105,7 +105,7 @@ flowchart TB
     D8 -->|"No"| D10["Decision stands, funds stay committed for rework"]
 ```
 
-Two rules make this cheap. Rework rounds are bounded, because an unbounded review loop costs the reviewer more than the fix is worth, which is the entire problem we are trying to solve. And the platform's own decisions are published with their reasoning, because a mediation process whose reasoning is secret is indistinguishable from a platform taking the money.
+Two rules make this cheap. Rework rounds are bounded, because an unbounded review loop costs more than the fix is worth, which is the entire problem we are trying to solve. And the platform's own decisions are published with their reasoning, because a mediation process whose reasoning is secret is indistinguishable from a platform taking the money.
 
 ## Risk register
 
@@ -113,7 +113,8 @@ Two rules make this cheap. Rework rounds are bounded, because an unbounded revie
 | --- | --- | --- | --- | --- |
 | Maintainers reject funded issues because of the review burden | High | Severe | Pay for review, filter the queue with an agent | The single biggest product risk. Test first. |
 | Buyers will not pay an unknown contributor for a small fix | High | Severe | Small first transactions, escrow, review evidence, refund on failure | The single biggest commercial risk. Also test first. |
-| Review agent quality is not good enough to save the reviewer time | High | Severe | Treat review quality as the core engineering problem, measure reviewer time saved per issue | If this fails the product is administration software |
+| Review agent quality is not good enough to be the only review | High | Severe | Treat review quality as the core engineering problem, measure verdict agreement against human judgement on historical pull requests | The platform is the sole quality gate, so this is the whole product |
+| A publisher goes quiet after a passing verdict | Medium | Low | Release to the contributor after seven days | Bounded by the grace period, and it protects the side with less power |
 | Nobody claims a funded issue at launch | Medium | High | Seed supply from maintainer communities before opening to publishers | Kills the buyer relationship on first use |
 | A platform competitor copies the flow | Medium | Medium | The price dataset and the compliance reporting are not features you can copy in a sprint | Algora could, and the research document says so plainly |
 | Custody is forced on us by buyers who want to pay by card | Medium | Medium | Stay out of custody, accept funding by USDC or by a payment partner who holds the licence | Enterprise procurement may push back hard here |
@@ -144,7 +145,7 @@ The Circle threat deserves the most attention. Circle is not a neutral platform 
 
 ## Three things we should do about risk this month
 
-1. Ask five maintainers what they would need to accept a funded issue. If the answer is not "pay me for review", the review fee assumption is wrong and the product needs rethinking.
+1. Ask five maintainers what they would need to accept a funded issue they never review. If the answer is "I still want to read every diff", the review assumption is wrong and the product needs rethinking.
 2. Get one company to commit real money to one real issue, even if it is $50 and the money never moves on a live chain. The first transaction answers more than three months of design.
 3. Take a legal opinion on whether platform-mediated payment release is money transmission in our operating jurisdiction, and whether charging maintainers changes our status under the Cyber Resilience Act's manufacturer definition.
 

@@ -2,7 +2,7 @@
 
 ## The one-paragraph version
 
-Misthos is a marketplace where the unit of sale is a single GitHub issue. A company or a maintainer attaches a price to an issue, an AI agent sets and justifies that price using the issue's complexity and the buyer's own financial position, a contributor submits a pull request, and payment settles in USDC over x402 when the work is accepted. It runs on Arc, Circle's stablecoin-native chain, because settlement there costs about a cent and takes under half a second. That cost structure is what makes small jobs viable: a $40 fix is not worth a bank transfer, but it is worth a cent.
+Misthos is a marketplace where the unit of sale is a single GitHub issue. A company or a maintainer attaches a price to an issue, an AI agent sets and justifies that price using the issue's complexity and the buyer's own financial position, a contributor submits a pull request, and payment settles in USDC over x402 when the work is accepted. It runs on Arc, Circle's stablecoin-native chain, because settlement there costs about a cent and takes under half a second. That cost structure is what makes small jobs viable: a $40 fix is not worth a bank transfer, and it is barely worth a cent plus a review.
 
 ## The problem
 
@@ -16,10 +16,10 @@ Four pieces, described here at the level of who decides what.
 
 1. Issue publishing with a price on it. A company or maintainer turns an issue into a funded contract at one fixed price, with acceptance criteria attached. A human approves that price before it goes live.
 2. A valuation agent. It reads the issue, the repository, the surrounding code and the buyer's financial context, then proposes a price band with a written reason. The buyer can accept or override.
-3. A claim and review pipeline. The first contributor to claim the issue holds it exclusively, opens a pull request, and gets an automated first review against the acceptance criteria and the project's test suite. A human makes the final acceptance call.
+3. A claim and review pipeline. The first contributor to claim the issue holds it exclusively, opens a pull request, and the platform reviews it against the acceptance criteria and the project's test suite. The publisher then merges, and the merge is the acceptance call.
 4. Settlement in USDC. Funds are committed when the issue is published, released when the work is accepted, and refunded on a timeout if nothing acceptable arrives.
 
-Agents do the scoping, pricing, triage and first-pass review. Humans keep the two decisions with consequences: putting a real price on an issue, and declaring work done.
+Agents do the scoping, pricing, triage and review. Humans keep the two decisions with consequences: putting a real price on an issue, and merging the work as done.
 
 No part of that flow involves bidding. One price is set before publication and it is taken or left, which is what lets the publisher answer the budget question before committing money and lets the contributor know what the work pays before starting.
 
@@ -33,9 +33,9 @@ The supply of fixes arrived before the market for them. GitHub's 2025 data cover
 
 ## How we make money
 
-A take rate on matched work, in the range of 10 to 15 percent, split between the publisher and the contributor depending on who brought the demand. Subscription seats for organisations that want budget rules, approval thresholds and reporting are the second line, and the more durable one, because the compliance deadline makes the reporting a requirement rather than a preference.
+A take rate on matched work, in the range of 8 to 12 percent, split between the publisher and the contributor depending on who brought the demand. Subscription seats for organisations that want budget rules, approval thresholds and reporting are the second line, and the more durable one, because the compliance deadline makes the reporting a requirement rather than a preference.
 
-Settlement costs us roughly a cent per payment, so the gross margin on a $500 fix at a 12 percent take rate is thin in absolute terms and fine in percentage terms. Volume is the whole game, which is why the product has to work for $40 issues as well as $4,000 ones.
+Settlement costs us roughly a cent per payment, so the gross margin on a $500 fix at a 12 percent take rate is thin in absolute terms and fine in percentage terms. Volume is the whole game, which is why the product has to work for small fixes as well as $4,000 ones, and why the published floor sits at about $55.
 
 ## Where we are
 
