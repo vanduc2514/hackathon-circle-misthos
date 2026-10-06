@@ -7,6 +7,7 @@ testable without a database, a chain or a GitHub token.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from enum import StrEnum
 
 
@@ -20,7 +21,6 @@ class IssueState(StrEnum):
     REWORK = "REWORK"
     ACCEPTED = "ACCEPTED"
     PAID = "PAID"
-    REVIEWED = "REVIEWED"
     REJECTED = "REJECTED"
     REFUNDED = "REFUNDED"
 
@@ -34,9 +34,10 @@ TRANSITIONS: dict[IssueState, frozenset[IssueState]] = {
     IssueState.CLAIMED: frozenset({IssueState.IN_REVIEW, IssueState.FUNDED}),
     IssueState.IN_REVIEW: frozenset({IssueState.REWORK, IssueState.ACCEPTED, IssueState.REJECTED}),
     IssueState.REWORK: frozenset({IssueState.IN_REVIEW}),
+    # ACCEPTED means the platform's verdict passed and the publisher has not merged
+    # yet. That is the grace window, not a resting state.
     IssueState.ACCEPTED: frozenset({IssueState.PAID}),
-    IssueState.PAID: frozenset({IssueState.REVIEWED}),
-    IssueState.REVIEWED: frozenset(),
+    IssueState.PAID: frozenset(),
     IssueState.REJECTED: frozenset({IssueState.FUNDED}),
     IssueState.REFUNDED: frozenset(),
 }
@@ -51,7 +52,7 @@ OPEN_STATES = frozenset(
     }
 )
 
-TERMINAL_STATES = frozenset({IssueState.REVIEWED, IssueState.REFUNDED})
+TERMINAL_STATES = frozenset({IssueState.PAID, IssueState.REFUNDED})
 
 HUMAN_CHECKPOINTS = frozenset(
     {
@@ -59,6 +60,10 @@ HUMAN_CHECKPOINTS = frozenset(
         "accept_work",
     }
 )
+
+# A passing verdict releases without a signature once the publisher has been silent
+# this long. The only release path that does not carry one. See 08.
+SILENT_PUBLISHER_GRACE = timedelta(days=7)
 
 
 class IllegalTransition(Exception):

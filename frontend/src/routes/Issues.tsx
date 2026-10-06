@@ -12,7 +12,7 @@ const FILTERS = [
   { key: 'IN_REVIEW', label: 'In review' },
   { key: 'REWORK', label: 'Rework' },
   { key: 'PAID', label: 'Paid' },
-  { key: 'REVIEWED', label: 'Settled' },
+  { key: 'PAID', label: 'Settled' },
   { key: 'REFUNDED', label: 'Refunded' },
 ]
 

@@ -7,11 +7,13 @@ and lifecycle transitions.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 
 from misthos.domain.issue import (
+    SILENT_PUBLISHER_GRACE,
     IllegalTransition,
     IssueState,
     can_transition,
@@ -19,7 +21,7 @@ from misthos.domain.issue import (
     transition,
 )
 from misthos.domain.money import NativeUsdc, Usdc, format_usdc
-from misthos.domain.pricing import ComplexitySignals, confidence_for, propose
+from misthos.domain.pricing import MIN_FIX_PRICE, ComplexitySignals, confidence_for, propose
 
 
 class TestUsdc:
@@ -64,10 +66,9 @@ class TestLifecycle:
             IssueState.IN_REVIEW,
             IssueState.ACCEPTED,
             IssueState.PAID,
-            IssueState.REVIEWED,
         ):
             state = transition(state, nxt)
-        assert state is IssueState.REVIEWED
+        assert state is IssueState.PAID
 
     def test_cannot_skip_the_human_price_checkpoint(self) -> None:
         with pytest.raises(IllegalTransition):
@@ -88,8 +89,16 @@ class TestLifecycle:
         assert can_transition(IssueState.FUNDED, IssueState.REFUNDED)
 
     def test_terminal_states_are_terminal(self) -> None:
-        for state in (IssueState.REVIEWED, IssueState.REFUNDED):
+        for state in (IssueState.PAID, IssueState.REFUNDED):
             assert not is_open(state)
+
+    def test_nothing_follows_payment(self) -> None:
+        """Payment is the end of the line, now that the review fee is gone."""
+        for nxt in IssueState:
+            assert not can_transition(IssueState.PAID, nxt)
+
+    def test_a_silent_publisher_has_a_bounded_grace_window(self) -> None:
+        assert SILENT_PUBLISHER_GRACE == timedelta(days=7)
 
     def test_priced_issue_can_be_sent_back_for_repricing(self) -> None:
         assert can_transition(IssueState.AWAITING_APPROVAL, IssueState.DRAFT)
@@ -105,13 +114,18 @@ class TestPricing:
         p = propose(ComplexitySignals(3, 3, 3, 3, 3, 3))
         assert p.band_low < p.recommended < p.band_high
 
-    def test_review_fee_has_a_floor(self) -> None:
+    def test_the_cheapest_scoped_issue_clears_the_price_floor(self) -> None:
+        """The engine's own minimum output must not fall below break-even."""
         p = propose(ComplexitySignals(1, 1, 1, 1, 1, 1))
-        assert p.review_fee.decimal >= Decimal("25")
+        assert p.fundable
+        assert p.recommended >= MIN_FIX_PRICE
 
-    def test_publisher_total_is_price_plus_review_fee(self) -> None:
-        p = propose(ComplexitySignals(3, 2, 3, 2, 2, 2))
-        assert p.publisher_total.base_units == p.recommended.base_units + p.review_fee.base_units
+    def test_a_price_below_the_floor_is_declined_not_published(self) -> None:
+        """Below the floor, review costs more than the take it earns."""
+        p = propose(ComplexitySignals(1, 1, 1, 1, 1, 1), rate_per_hour=Usdc.from_decimal("10"))
+        assert p.recommended < MIN_FIX_PRICE
+        assert p.fundable is False
+        assert "minimum" in p.justification
 
     def test_compliance_obligation_raises_the_price(self) -> None:
         signals = ComplexitySignals(3, 3, 3, 3, 3, 3)
@@ -122,17 +136,17 @@ class TestPricing:
     def test_affordability_ceiling_caps_but_never_raises(self) -> None:
         signals = ComplexitySignals(4, 4, 4, 4, 4, 4)
         uncapped = propose(signals)
-        ceiling = Usdc.from_decimal("3200")
+        ceiling = Usdc.from_decimal("2000")
         capped = propose(signals, affordability_ceiling=ceiling)
         assert capped.fundable
-        assert capped.recommended + capped.review_fee <= ceiling
+        assert capped.recommended <= ceiling
         assert capped.recommended < uncapped.recommended
         assert "Capped" in capped.justification
 
-    def test_a_budget_below_the_review_fee_is_declined_not_capped(self) -> None:
-        """A ceiling smaller than the review fee cannot buy anything, so say so."""
+    def test_a_budget_that_buys_nothing_is_declined_not_capped(self) -> None:
+        """A ceiling of zero cannot buy anything, so say so."""
         signals = ComplexitySignals(5, 5, 5, 5, 5, 5)
-        p = propose(signals, affordability_ceiling=Usdc.from_decimal("10"))
+        p = propose(signals, affordability_ceiling=Usdc.from_decimal("0"))
         assert p.fundable is False
         assert "cannot be funded" in p.justification
 

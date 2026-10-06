@@ -67,9 +67,7 @@ contract MisthosEscrow {
     event Released(
         bytes32 indexed issueId,
         address indexed contributor,
-        address indexed reviewer,
-        uint256 fixAmount,
-        uint256 reviewFee
+        uint256 fixAmount
     );
     event Refunded(bytes32 indexed issueId, address indexed publisher, uint256 amount);
     event CeilingUpdated(bytes32 indexed issueId, uint256 ceiling);
@@ -118,8 +116,9 @@ contract MisthosEscrow {
     /**
      * @notice Commit the price for an issue. One commitment per issue id.
      * @param issueId  keccak256 of the platform issue identifier.
-     * @param amount   Total committed in 6-decimal USDC, covering the fix and
-     *                 the review fee.
+     * @param amount   Total committed in 6-decimal USDC. The publisher pays the fix
+     *                 price and nothing else: the platform reviews the submission,
+     *                 so there is no reviewer fee to fund alongside it.
      * @param deadline Unix seconds after which the publisher can reclaim.
      */
     function commit(bytes32 issueId, uint256 amount, uint64 deadline) external {
@@ -166,33 +165,26 @@ contract MisthosEscrow {
     /**
      * @notice Release the commitment on acceptance.
      *
-     * Splits the commitment between the contributor and the reviewer in one
-     * transaction. Paying the reviewer is the reason maintainers will accept
-     * funded issues at all: their complaint about bounty platforms is the
-     * unpaid review queue, not the money.
+     * Pays the contributor in one transfer. The platform performs the review, so
+     * there is no second party holding a verdict and nothing to split: the whole
+     * commitment is the fix price. The attestor decides nothing about quality; it
+     * only records that acceptance happened, whether that was the publisher's
+     * merge or the silent-publisher grace period expiring.
      */
-    function release(
-        bytes32 issueId,
-        address contributor,
-        uint256 fixAmount,
-        address reviewer,
-        uint256 reviewFee
-    ) external onlyAttestor {
+    function release(bytes32 issueId, address contributor, uint256 fixAmount)
+        external
+        onlyAttestor
+    {
         Commitment storage c = commitments[issueId];
         if (c.status != Status.Held) revert NotHeld();
         if (block.timestamp > c.deadline) revert DeadlinePassed();
         if (contributor == address(0)) revert ZeroAddress();
-        if (fixAmount + reviewFee != c.amount) revert AmountMismatch();
+        if (fixAmount != c.amount) revert AmountMismatch();
 
         c.status = Status.Released;
-        emit Released(issueId, contributor, reviewer, fixAmount, reviewFee);
+        emit Released(issueId, contributor, fixAmount);
 
         if (!IERC20(usdc).transfer(contributor, fixAmount)) revert TransferFailed();
-
-        if (reviewFee > 0) {
-            if (reviewer == address(0)) revert ZeroAddress();
-            if (!IERC20(usdc).transfer(reviewer, reviewFee)) revert TransferFailed();
-        }
     }
 
     // ------------------------------------------------------------------ admin

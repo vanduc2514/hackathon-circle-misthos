@@ -28,8 +28,11 @@ WEIGHTS: dict[str, float] = {
 # Reference rate per hour by rough seniority band.
 RATE_PER_HOUR = Usdc.from_decimal("90")
 
-REVIEW_FEE_RATIO = Decimal("0.20")
-REVIEW_FEE_MINIMUM = Usdc.from_decimal("25")
+# The floor is derived, not chosen: review costs roughly 6.31 per issue, so at the
+# Open tier's 12% take rate the break-even is about 53. Below it the platform
+# declines the issue rather than subsidising it. Tiers with a thinner take rate
+# need a higher floor (see docs/misthos/06-pricing-engine.md).
+MIN_FIX_PRICE = Usdc.from_decimal("55")
 
 BAND_LOW = Decimal("0.7")
 BAND_HIGH = Decimal("1.4")
@@ -67,8 +70,6 @@ class PriceProposal:
     band_low: Usdc
     band_high: Usdc
     recommended: Usdc
-    review_fee: Usdc
-    publisher_total: Usdc
     estimated_hours: float
     complexity_score: float
     confidence: str
@@ -132,67 +133,49 @@ def propose(
     low = Usdc(int(fix_price.base_units * float(BAND_LOW)))
     high = Usdc(int(fix_price.base_units * float(BAND_HIGH)))
 
-    review_fee = Usdc(int(fix_price.base_units * float(REVIEW_FEE_RATIO)))
-    if review_fee < REVIEW_FEE_MINIMUM:
-        review_fee = REVIEW_FEE_MINIMUM
-
     confidence = confidence_for(comparables)
     recommended = Usdc(int((low.base_units + high.base_units) / 2))
 
     # The ceiling never raises a price. It caps one, and it says so.
     fundable = True
     notes: list[str] = []
-    if affordability_ceiling is not None and recommended + review_fee > affordability_ceiling:
-        headroom = affordability_ceiling - review_fee
-        if headroom.base_units > 0:
-            recommended = headroom
-            high = headroom
-            low = Usdc(int(headroom.base_units * 0.6))
+    if affordability_ceiling is not None and recommended > affordability_ceiling:
+        if affordability_ceiling.base_units > 0:
+            recommended = affordability_ceiling
+            high = affordability_ceiling
+            low = Usdc(int(affordability_ceiling.base_units * 0.6))
             notes.append(
                 f"Capped at the publisher's remaining budget of {affordability_ceiling}."
             )
         else:
-            # The budget cannot even cover the review fee. Say so rather than
-            # producing a number nobody should accept.
+            # The budget covers nothing. Say so rather than producing a number
+            # nobody should accept.
             fundable = False
             notes.append(
                 f"The remaining budget of {affordability_ceiling} does not cover the "
-                f"{review_fee} review fee, so this issue cannot be funded as scoped. "
-                "Consider splitting it."
+                "work, so this issue cannot be funded as scoped. Consider splitting it."
             )
 
-    if not fundable:
-        return PriceProposal(
-            band_low=low,
-            band_high=high,
-            recommended=recommended,
-            review_fee=review_fee,
-            publisher_total=recommended + review_fee,
-            estimated_hours=hours,
-            complexity_score=round(
-                sum(signals.as_dict()[n] * w for n, w in WEIGHTS.items()), 2
-            ),
-            confidence=confidence,
-            signals=signals.as_dict(),
-            justification=_justify(signals, hours, confidence, compliance_driven, notes),
-            fundable=False,
+    if fundable and recommended < MIN_FIX_PRICE:
+        # Below the floor review costs more than the take it earns, so decline the
+        # issue rather than publish a price the platform loses money on.
+        fundable = False
+        notes.append(
+            f"At {recommended} this issue is below the {MIN_FIX_PRICE} minimum, which "
+            "is where review pays for itself. Consider bundling it with related work."
         )
-
-    justification = _justify(signals, hours, confidence, compliance_driven, notes)
 
     return PriceProposal(
         band_low=low,
         band_high=high,
         recommended=recommended,
-        review_fee=review_fee,
-        publisher_total=recommended + review_fee,
         estimated_hours=hours,
         complexity_score=round(
             sum(signals.as_dict()[n] * w for n, w in WEIGHTS.items()), 2
         ),
         confidence=confidence,
         signals=signals.as_dict(),
-        justification=justification,
+        justification=_justify(signals, hours, confidence, compliance_driven, notes),
         fundable=fundable,
     )
 

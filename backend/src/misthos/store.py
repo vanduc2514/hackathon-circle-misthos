@@ -27,7 +27,6 @@ from misthos.schemas import (
     MetricsOut,
     Publisher,
     Review,
-    Reviewer,
     Submission,
     TimelineEntry,
     Wallet,
@@ -70,7 +69,6 @@ class IssueRecord:
     compliance_driven: bool
     acceptance_criteria: list[str]
     publisher_id: str
-    reviewer_id: str
     created_at: datetime
     deadline: datetime | None = None
     proposal: PriceProposal | None = None
@@ -80,7 +78,6 @@ class IssueRecord:
     review: Review | None = None
     contributor_id: str | None = None
     paid: Usdc | None = None
-    review_fee_paid: Usdc | None = None
     decisions: list[Decision] = field(default_factory=list)
 
     @property
@@ -92,7 +89,6 @@ class Store:
     def __init__(self) -> None:
         self.publishers: dict[str, Publisher] = {}
         self.contributors: dict[str, Contributor] = {}
-        self.reviewers: dict[str, Reviewer] = {}
         self.issues: dict[str, IssueRecord] = {}
         self.reset()
 
@@ -106,7 +102,6 @@ class Store:
         random.seed(7)
         self.publishers = _seed_publishers()
         self.contributors = _seed_contributors()
-        self.reviewers = _seed_reviewers()
         self.issues = {}
         for spec in _ISSUE_SPECS:
             rec = self._build(spec)
@@ -133,7 +128,6 @@ class Store:
             compliance_driven=spec.get("compliance_driven", False),
             acceptance_criteria=spec["criteria"],
             publisher_id=spec["publisher_id"],
-            reviewer_id=spec["reviewer_id"],
             created_at=now - timedelta(days=spec["age_days"]),
             proposal=proposal,
         )
@@ -161,7 +155,7 @@ class Store:
             actor="publisher",
             action="price_approved",
             rule="human_checkpoint",
-            outcome=f"approved {proposal.recommended} plus {proposal.review_fee} review fee",
+            outcome=f"approved {proposal.recommended} and committed the funds",
         )
 
         if spec["state"] == IssueState.FUNDED:
@@ -199,12 +193,10 @@ class Store:
             return rec
 
         verdict = spec["verdict"]
-        agreed = spec.get("agreed", True)
         findings = spec["findings"]
         self._review(
             rec,
             verdict=verdict,
-            agreed=agreed,
             findings=findings,
             when=rec.created_at + timedelta(hours=44),
         )
@@ -212,13 +204,14 @@ class Store:
         if spec["state"] == IssueState.REWORK:
             return rec
 
-        rec.state = IssueState.ACCEPTED
+        # No human confirms the verdict, so a passing one lands in ACCEPTED: the
+        # grace window between the platform's decision and the publisher's merge.
         self._log(
             rec,
-            actor="reviewer",
-            action="accepted",
-            rule="human_checkpoint",
-            outcome="verdict confirmed by the reviewer",
+            actor="agent",
+            action="verdict_passed",
+            rule="review_agent_v1",
+            outcome="verdict passed, awaiting the publisher's merge",
             when=rec.created_at + timedelta(hours=45),
         )
 
@@ -226,11 +219,6 @@ class Store:
             return rec
 
         self._release(rec, when=rec.created_at + timedelta(hours=45, minutes=2))
-
-        if spec["state"] == IssueState.PAID:
-            return rec
-
-        self._pay_review_fee(rec, when=rec.created_at + timedelta(hours=45, minutes=2))
         return rec
 
     # ------------------------------------------------------------- primitives
@@ -261,7 +249,7 @@ class Store:
 
     def _fund(self, rec: IssueRecord, when: datetime | None = None) -> None:
         assert rec.proposal is not None
-        committed = rec.proposal.publisher_total
+        committed = rec.proposal.recommended
         rec.escrow = EscrowCommitment(
             issue_id=rec.id,
             contract=ESCROW_CONTRACT,
@@ -288,22 +276,28 @@ class Store:
         rec: IssueRecord,
         *,
         verdict: str,
-        agreed: bool,
         findings: list[str],
         when: datetime | None = None,
     ) -> None:
-        agent_draft = verdict if agreed else ("rework" if verdict == "accept" else "accept")
+        """Record the platform's verdict. It is the decision, not a draft for one."""
         rec.review = Review(
-            reviewer_id=rec.reviewer_id,
             verdict=verdict,  # type: ignore[arg-type]
-            agent_draft=agent_draft,  # type: ignore[arg-type]
-            agreed_with_agent=agreed,
             findings=findings,
             decided_at=when or _now(),
         )
-        rec.state = IssueState(verdict.upper() if verdict != "accept" else "IN_REVIEW")
+        rec.state = {
+            "accept": IssueState.ACCEPTED,
+            "rework": IssueState.REWORK,
+            "reject": IssueState.REJECTED,
+        }[verdict]
 
-    def _release(self, rec: IssueRecord, when: datetime | None = None) -> None:
+    def _release(
+        self,
+        rec: IssueRecord,
+        *,
+        rule: str = "escrow_acceptance_attestation",
+        when: datetime | None = None,
+    ) -> None:
         assert rec.escrow is not None and rec.proposal is not None
         rec.escrow.released = True
         rec.paid = rec.proposal.recommended
@@ -312,22 +306,8 @@ class Store:
             rec,
             actor="system",
             action="released",
-            rule="escrow_acceptance_attestation",
+            rule=rule,
             outcome=f"released {rec.paid} to contributor",
-            cost="0.01",
-            when=when,
-        )
-
-    def _pay_review_fee(self, rec: IssueRecord, when: datetime | None = None) -> None:
-        assert rec.proposal is not None
-        rec.review_fee_paid = rec.proposal.review_fee
-        rec.state = IssueState.REVIEWED
-        self._log(
-            rec,
-            actor="system",
-            action="review_fee_paid",
-            rule="review_is_paid_work",
-            outcome=f"paid {rec.review_fee_paid} review fee",
             cost="0.01",
             when=when,
         )
@@ -396,7 +376,6 @@ class Store:
                 self._review(
                     rec,
                     verdict="accept",
-                    agreed=True,
                     findings=[
                         "Acceptance criteria 1 and 3 are covered by new tests.",
                         "No changes outside the files the criteria named.",
@@ -405,22 +384,27 @@ class Store:
                 self._log(
                     rec,
                     actor="agent",
-                    action="review_drafted",
+                    action="verdict_issued",
                     rule="review_agent_v1",
-                    outcome="drafted accept: criteria met, checks passing, diff in scope",
+                    outcome="accepted: criteria met, checks passing, diff in scope",
                     cost="6.00",
                 )
+            case IssueState.ACCEPTED if (
+                rec.review is not None
+                and _now() > rec.review.decided_at + lifecycle.SILENT_PUBLISHER_GRACE
+            ):
+                # The verdict passed and the publisher went quiet past the grace
+                # window. Release rather than strand finished work.
+                self._release(rec, rule="silent_publisher_grace_period")
             case IssueState.ACCEPTED:
                 self._release(rec)
                 self._log(
                     rec,
-                    actor="reviewer",
-                    action="accepted",
-                    rule="human_checkpoint",
-                    outcome="reviewer confirmed the verdict, merge releases payment",
+                    actor="publisher",
+                    action="merged",
+                    rule="merge_is_acceptance",
+                    outcome="publisher merged the pull request, which is acceptance",
                 )
-            case IssueState.PAID:
-                self._pay_review_fee(rec)
             case IssueState.REWORK:
                 self._submit(
                     rec,
@@ -439,27 +423,7 @@ class Store:
         """Run the remainder of the happy path in one call, for demos."""
         rec = self.issues[issue_id]
         for _ in range(12):
-            if rec.state in {IssueState.REVIEWED, IssueState.REFUNDED}:
-                break
-            if rec.state is IssueState.IN_REVIEW:
-                self._review(rec, verdict="accept", agreed=True, findings=["Criteria met."])
-                self._log(
-                    rec,
-                    actor="agent",
-                    action="review_drafted",
-                    rule="review_agent_v1",
-                    outcome="drafted accept",
-                    cost="6.00",
-                )
-                self._log(
-                    rec,
-                    actor="reviewer",
-                    action="accepted",
-                    rule="human_checkpoint",
-                    outcome="reviewer confirmed the verdict",
-                )
-                self._release(rec)
-                self._pay_review_fee(rec)
+            if rec.state in lifecycle.TERMINAL_STATES:
                 break
             self.advance(issue_id)
         return rec
@@ -479,7 +443,6 @@ class Store:
                 "Public behaviour is documented in the changelog.",
             ],
             "publisher_id": payload.publisher_id,
-            "reviewer_id": next(iter(self.reviewers)),
             "age_days": 0,
             "comparables": random.randint(0, 7),
             "signals": payload.signals
@@ -515,8 +478,6 @@ class Store:
                 "band_low": money(p.band_low),
                 "band_high": money(p.band_high),
                 "recommended": money(p.recommended),
-                "review_fee": money(p.review_fee),
-                "publisher_total": money(p.publisher_total),
                 "estimated_hours": p.estimated_hours,
                 "complexity_score": p.complexity_score,
                 "confidence": p.confidence,
@@ -544,9 +505,7 @@ class Store:
             submission=rec.submission,
             review=rec.review,
             contributor_id=rec.contributor_id,
-            reviewer_id=rec.reviewer_id,
             paid_usdc=str(rec.paid.decimal) if rec.paid else None,
-            review_fee_paid_usdc=str(rec.review_fee_paid.decimal) if rec.review_fee_paid else None,
             github_url=rec.github_url,
         )
 
@@ -581,7 +540,7 @@ class Store:
 
     def metrics(self) -> MetricsOut:
         records = list(self.issues.values())
-        settled = [r for r in records if r.state in {IssueState.PAID, IssueState.REVIEWED}]
+        settled = [r for r in records if r.state is IssueState.PAID]
         funded = [r for r in records if r.deadline is not None]
         claimed_in_time = [
             r
@@ -589,7 +548,6 @@ class Store:
             if r.claim and (r.claim.issued_at - r.created_at) <= timedelta(hours=72)
         ]
         reviews = [r.review for r in records if r.review]
-        agreed = [x for x in reviews if x and x.agreed_with_agent]
         publishers_with_issues = {r.publisher_id for r in funded}
         repeat = [
             p
@@ -598,7 +556,6 @@ class Store:
         ]
 
         matched = sum((r.paid.base_units for r in settled if r.paid), start=0)
-        fees = sum((r.review_fee_paid.base_units for r in settled if r.review_fee_paid), start=0)
 
         durations = [
             (r.decisions[-1].created_at - r.claim.issued_at).total_seconds() / 3600
@@ -625,10 +582,11 @@ class Store:
                 round(len(repeat) / len(publishers_with_issues), 2) if publishers_with_issues else 0.0
             ),
             matched_volume_usdc=f"{Usdc(matched).decimal:.2f}",
-            total_review_fees_usdc=f"{Usdc(fees).decimal:.2f}",
             median_hours_to_payout=round(sorted(durations)[len(durations) // 2], 1) if durations else None,
             dispute_rate=0.0,
-            agent_agreement_rate=round(len(agreed) / len(reviews), 2) if reviews else 0.0,
+            # Not modelled yet: a publisher who declines a passing verdict has no
+            # transition, because silence past the grace window releases instead.
+            publisher_overturn_rate=0.0,
             open_issues=sum(1 for r in records if lifecycle.is_open(r.state)),
             by_state=by_state,
         )
@@ -681,17 +639,6 @@ def _seed_contributors() -> dict[str, Contributor]:
     }
 
 
-def _seed_reviewers() -> dict[str, Reviewer]:
-    rows = [
-        ("REV-1", "okafor_m", 64, "6,400.00"),
-        ("REV-2", "n.svensson", 41, "4,100.00"),
-        ("REV-3", "d.tanaka", 22, "2,200.00"),
-    ]
-    return {
-        r[0]: Reviewer(id=r[0], handle=r[1], reviews_completed=r[2], earned_usdc=r[3]) for r in rows
-    }
-
-
 _ISSUE_SPECS: list[dict] = [
     {
         "repo": "acme/ledger-core",
@@ -707,7 +654,6 @@ _ISSUE_SPECS: list[dict] = [
             "The existing rounding API keeps its signature.",
         ],
         "publisher_id": "PUB-1",
-        "reviewer_id": "REV-1",
         "age_days": 2,
         "comparables": 7,
         "signals": {
@@ -733,7 +679,6 @@ _ISSUE_SPECS: list[dict] = [
             "Core has no import of any concrete adapter.",
         ],
         "publisher_id": "PUB-1",
-        "reviewer_id": "REV-1",
         "age_days": 9,
         "comparables": 4,
         "contributor_id": "CON-2",
@@ -768,7 +713,6 @@ _ISSUE_SPECS: list[dict] = [
             "The fix ships with a regression test and a CVE reference in the changelog.",
         ],
         "publisher_id": "PUB-4",
-        "reviewer_id": "REV-2",
         "age_days": 5,
         "comparables": 2,
         "contributor_id": "CON-1",
@@ -797,7 +741,6 @@ _ISSUE_SPECS: list[dict] = [
             "A test asserts the jittered spread is non-zero.",
         ],
         "publisher_id": "PUB-2",
-        "reviewer_id": "REV-2",
         "age_days": 21,
         "comparables": 6,
         "contributor_id": "CON-3",
@@ -810,7 +753,6 @@ _ISSUE_SPECS: list[dict] = [
             "deletions": 31,
         },
         "verdict": "accept",
-        "agreed": True,
         "findings": ["Criteria met.", "Jitter spread verified in the new test."],
         "signals": {
             "code_surface": 2.0,
@@ -826,7 +768,7 @@ _ISSUE_SPECS: list[dict] = [
         "number": 55,
         "title": "Add a dry-run flag to schema migrations",
         "summary": "Operators have no way to see what a migration will do before running it.",
-        "state": "REVIEWED",
+        "state": "PAID",
         "labels": ["feature", "dx"],
         "compliance_driven": False,
         "criteria": [
@@ -834,7 +776,6 @@ _ISSUE_SPECS: list[dict] = [
             "The flag is documented in the CLI help.",
         ],
         "publisher_id": "PUB-5",
-        "reviewer_id": "REV-3",
         "age_days": 30,
         "comparables": 3,
         "contributor_id": "CON-4",
@@ -847,7 +788,6 @@ _ISSUE_SPECS: list[dict] = [
             "deletions": 12,
         },
         "verdict": "accept",
-        "agreed": True,
         "findings": ["Both criteria covered.", "Help text is accurate."],
         "signals": {
             "code_surface": 2.0,
@@ -872,7 +812,6 @@ _ISSUE_SPECS: list[dict] = [
             "Generation is deterministic and repeatable.",
         ],
         "publisher_id": "PUB-4",
-        "reviewer_id": "REV-2",
         "age_days": 1,
         "comparables": 1,
         "signals": {
@@ -898,7 +837,6 @@ _ISSUE_SPECS: list[dict] = [
             "Backwards compatibility is preserved for callers that pass nothing.",
         ],
         "publisher_id": "PUB-2",
-        "reviewer_id": "REV-2",
         "age_days": 11,
         "comparables": 4,
         "contributor_id": "CON-5",
@@ -911,7 +849,6 @@ _ISSUE_SPECS: list[dict] = [
             "deletions": 6,
         },
         "verdict": "rework",
-        "agreed": False,
         "findings": [
             "Criterion 3 is not covered: a caller passing no timeout changes behaviour.",
             "Add a regression test for the default path before resubmitting.",
@@ -935,7 +872,6 @@ _ISSUE_SPECS: list[dict] = [
         "compliance_driven": False,
         "criteria": ["Loader is pluggable.", "Existing TOML configs keep working."],
         "publisher_id": "PUB-5",
-        "reviewer_id": "REV-3",
         "age_days": 40,
         "comparables": 2,
         "signals": {

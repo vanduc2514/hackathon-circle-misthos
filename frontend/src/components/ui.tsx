@@ -10,7 +10,6 @@ const STATE_TONE: Record<string, string> = {
   REWORK: 'warn',
   ACCEPTED: 'ok',
   PAID: 'ok',
-  REVIEWED: 'ok',
   REJECTED: 'bad',
   REFUNDED: '',
 }
@@ -87,7 +86,6 @@ const MAIN_LINE = [
   'IN_REVIEW',
   'ACCEPTED',
   'PAID',
-  'REVIEWED',
 ]
 
 const BRANCHES = ['REWORK', 'REJECTED', 'REFUNDED']
