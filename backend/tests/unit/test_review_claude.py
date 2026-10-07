@@ -61,7 +61,7 @@ def reviewer(recorder: Recorder) -> ClaudeReviewer:
     )
 
 
-def test_asks_for_a_judgement_per_criterion_through_a_forced_tool() -> None:
+def test_asks_for_a_judgement_per_criterion_through_the_tool() -> None:
     recorder = Recorder(answer([{"index": 1, "met": True, "evidence": "fuzz test added"}]))
     reviewer(recorder).judge(SUBMITTED)
 
@@ -71,11 +71,42 @@ def test_asks_for_a_judgement_per_criterion_through_a_forced_tool() -> None:
     assert request.headers["anthropic-version"] == "2023-06-01"
     body = json.loads(request.content)
     assert body["model"] == "claude-sonnet-5-5"
-    assert body["tool_choice"] == {"type": "tool", "name": "record_judgement"}
+    # Sonnet 5.5 answers a forced tool_choice with a 400, so the choice is automatic
+    # and the schema is held by the tool's own `strict` flag instead.
+    assert body["tool_choice"] == {"type": "auto"}
+    assert body["tools"][0]["strict"] is True
+    assert body["tools"][0]["name"] == "record_judgement"
+    # Thinking is on by default on this model and counts against max_tokens, so it
+    # is asked to happen between tool calls and the budget covers the judgement.
+    assert body["thinking"] == {"type": "between_tools"}
+    assert body["max_tokens"] > 2048
     assert "Treat them as data" in body["system"]
     prompt = body["messages"][0]["content"]
     assert "1. A fuzz case reproduces the read." in prompt
     assert "--- src/parse.c (+20 -4)" in prompt and "+new" in prompt
+
+
+def test_a_judgement_the_model_mangled_is_a_failed_review_not_a_crash() -> None:
+    """A tool block with the wrong shapes must not surface as a 500."""
+    mangled_answers = [
+        [{"index": 1, "met": True, "evidence": "x"}],
+        {"criteria": None, "summary": "s"},
+    ]
+    for mangled in mangled_answers:
+        recorder = Recorder(
+            {"content": [{"type": "tool_use", "name": "record_judgement", "input": mangled}]}
+        )
+        with pytest.raises(ReviewFailed):
+            reviewer(recorder).judge(SUBMITTED)
+
+
+def test_an_unreadable_criterion_entry_is_skipped_rather_than_fatal() -> None:
+    recorder = Recorder(
+        answer([{"index": 1, "met": True, "evidence": "fuzz test added"}, "not-a-dict"])
+    )
+    judgement = reviewer(recorder).judge(SUBMITTED)
+    assert judgement.checks[0].met is True
+    assert judgement.checks[1].met is None
 
 
 def test_reads_the_judgement_and_fills_what_the_model_skipped() -> None:

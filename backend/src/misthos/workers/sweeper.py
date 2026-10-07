@@ -40,6 +40,40 @@ log = logging.getLogger("misthos.sweeper")
 # reviews a few submissions and leaves the rest for the next one.
 MAX_REVIEWS_PER_PASS = 5
 
+# A submission the reviewer cannot judge must not hold one of those slots forever, or
+# every submission queued behind it is never looked at while a billed model call is
+# made on the same broken one every pass. After this many consecutive failures the
+# sweeper stops retrying and logs an alert instead, because the answer is a person
+# rather than another attempt. Counts are keyed by the commit under review, so a
+# resubmission starts with a fresh budget.
+MAX_REVIEW_ATTEMPTS = 3
+
+# Issue id to (head sha, consecutive failures). Process-local on purpose: a restart
+# gives a poisoned submission another few attempts rather than forgetting it.
+_review_failures: dict[str, tuple[str, int]] = {}
+
+
+def reset_review_failures() -> None:
+    """Forget every failure count, as a full store reset does."""
+    _review_failures.clear()
+
+
+def _failures_for(store: Store, issue_id: str) -> int:
+    rec = store.get(issue_id)
+    sha = rec.submission.head_sha if rec is not None and rec.submission is not None else ""
+    recorded = _review_failures.get(issue_id)
+    if recorded is None or recorded[0] != sha:
+        return 0
+    return recorded[1]
+
+
+def _record_failure(store: Store, issue_id: str) -> int:
+    rec = store.get(issue_id)
+    sha = rec.submission.head_sha if rec is not None and rec.submission is not None else ""
+    count = _failures_for(store, issue_id) + 1
+    _review_failures[issue_id] = (sha, count)
+    return count
+
 
 @dataclass(frozen=True)
 class SweepReport:
@@ -83,18 +117,38 @@ def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
             if actions:
                 applied[rec.id] = [a.value for a in actions]
         reviewed: dict[str, str] = {}
-        for issue_id in store.reviews_due()[:MAX_REVIEWS_PER_PASS]:
+        # Least-failed first, so a submission that keeps failing cannot hold a slot
+        # while the ones behind it starve; anything past the cap is left alone.
+        queue = sorted(store.reviews_due(), key=lambda i: (_failures_for(store, i), i))
+        for issue_id in queue[:MAX_REVIEWS_PER_PASS]:
+            if _failures_for(store, issue_id) >= MAX_REVIEW_ATTEMPTS:
+                continue
             try:
                 rec = store.review(issue_id, now)
             except (Busy, StaleIssue):
                 skipped.append(issue_id)
                 continue
             except Exception:
-                log.exception("sweeper: review of %s failed, retrying next pass", issue_id)
                 failed.append(issue_id)
+                count = _record_failure(store, issue_id)
+                if count >= MAX_REVIEW_ATTEMPTS:
+                    log.error(
+                        "sweeper: %s could not be reviewed in %d attempts; it needs a "
+                        "person, not another retry",
+                        issue_id,
+                        count,
+                    )
+                else:
+                    log.exception(
+                        "sweeper: review of %s failed (%d/%d), retrying next pass",
+                        issue_id,
+                        count,
+                        MAX_REVIEW_ATTEMPTS,
+                    )
                 continue
             if rec is not None and rec.review is not None:
                 reviewed[issue_id] = rec.review.verdict
+            _review_failures.pop(issue_id, None)
         screened = store.rescreen(now)
         purged = store.purge_expired(now)
         divergences = store.reconcile(now)
