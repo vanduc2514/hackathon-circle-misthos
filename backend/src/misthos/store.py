@@ -1036,6 +1036,23 @@ class Store:
                 raise Busy(issue_id)
             yield
 
+    @contextmanager
+    def _publisher_exclusive(self, publisher_id: str) -> Iterator[None]:
+        """Hold the publisher for one commitment, or refuse at once with Busy.
+
+        A monthly category limit is a sum over the publisher's issues, so reading what
+        the month already holds and writing the new commitment have to be one step.
+        The issue lock cannot do that: two fundings of *different* issues of the same
+        publisher take different locks and both see the same untouched month.
+
+        Taken after the issue lock and never the other way round, so the two cannot
+        deadlock.
+        """
+        with self.coordinator.lock(f"publisher:{publisher_id}", ISSUE_LOCK_TTL) as held:
+            if not held:
+                raise Busy(publisher_id)
+            yield
+
     def reconcile(self, now: datetime | None = None) -> list[Divergence]:
         """Compare every issue's ledger with what the chain holds, and raise the alarm.
 
@@ -1194,8 +1211,12 @@ class Store:
         match rec.state:
             case IssueState.AWAITING_APPROVAL:
                 self._screen_publisher_for_funding(rec, now)
-                self._check_category_limits(rec, now)
-                self._fund(rec)
+                # The limit is a sum over the publisher's other issues, so the read and
+                # the commitment it authorises are one step under one lock. Without it
+                # two concurrent fundings of different issues both pass the check.
+                with self._publisher_exclusive(rec.publisher_id):
+                    self._check_category_limits(rec, now)
+                    self._fund(rec)
                 self._log(
                     rec,
                     actor="publisher",

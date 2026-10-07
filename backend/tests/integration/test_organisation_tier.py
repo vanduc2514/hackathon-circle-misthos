@@ -15,6 +15,7 @@ from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
 from misthos.domain.ledger import MoneyEventKind
 from misthos.domain.policy import PolicyRefusal
 from misthos.main import app
+from misthos.schemas import PublishRequest
 from misthos.store import store
 from misthos.workers.sweeper import sweep_once
 
@@ -185,8 +186,11 @@ class TestAuditExport:
         r = client.get(f"{API}/publishers/{PUBLISHER}/audit", params={"format": "csv"})
         assert r.headers["content-type"].startswith("text/csv")
         lines = r.text.splitlines()
-        assert lines[0].startswith("# SIMULATED")
-        rows = list(csv.DictReader(io.StringIO("\n".join(lines[1:]))))
+        # The header is the first line, so a reader that trusts it needs no special
+        # case; the simulation caveat is a last row among the data.
+        assert lines[0].startswith("record,")
+        assert lines[-1].startswith("# SIMULATED")
+        rows = list(csv.DictReader(io.StringIO("\n".join(lines[:-1]))))
         ours = [row for row in rows if row["issue_id"] == ISSUE]
         assert {row["record"] for row in ours} == {"decision", "money"}
         assert [row["at_utc"] for row in ours] == sorted(row["at_utc"] for row in ours)
@@ -198,3 +202,79 @@ class TestAuditExport:
         assert client.get(f"{API}/publishers/{PUBLISHER}/audit").status_code == 403
         assert client.get(f"{API}/publishers/{PUBLISHER}/spend").status_code == 403
         assert policy(client, approvers=[APPROVER]).status_code == 403
+
+
+class TestTheLimitIsAtomic:
+    """A monthly limit is a sum over the publisher's issues, so the read and the
+    commitment it authorises must be one step.
+
+    The issue lock alone is not enough: two fundings of *different* issues of the same
+    publisher take different locks and both see the same untouched month.
+    """
+
+    def test_two_concurrent_fundings_cannot_both_pass_the_limit(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+        import time
+
+        # Two issues of one publisher in one category, each able to pass alone but not
+        # together: ISS-1006 commits ~2601 and a second compliance issue ~259, against
+        # a 2700 cap.
+        policy(client, category_limits={"compliance": "2700"})
+        second = store.publish(
+            PublishRequest(
+                repo="acme/ledger",
+                title="Compliance: reconcile the monthly export",
+                labels=["compliance"],
+                publisher_id=PUBLISHER,
+                signals={"blast_radius": 2},
+            )
+        ).id
+        first = ISSUE
+        for issue_id in (first, second):
+            assert store.get(issue_id).state is IssueState.AWAITING_APPROVAL
+
+        # Widen the window between reading the month and committing it. Without a lock
+        # spanning the two, both threads read the same empty month and both commit.
+        original = store._check_category_limits
+
+        def slow_check(rec: object, now: object) -> None:
+            original(rec, now)  # type: ignore[arg-type]
+            time.sleep(0.3)
+
+        monkeypatch.setattr(store, "_check_category_limits", slow_check)
+
+        outcomes: list[str] = []
+        guard = threading.Lock()
+
+        def fund(issue_id: str) -> None:
+            try:
+                store.advance(issue_id)
+                result = "funded"
+            except Exception as exc:
+                result = type(exc).__name__
+            with guard:
+                outcomes.append(result)
+
+        threads = [threading.Thread(target=fund, args=(i,)) for i in (first, second)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        funded = [o for o in outcomes if o == "funded"]
+        assert len(funded) == 1, f"both fundings passed a 2700 limit: {outcomes}"
+        assert len(outcomes) == 2, f"a thread never finished: {outcomes}"
+
+        # And what the two of them committed together is inside what the organisation
+        # allowed. Scoped to these two: the publisher's seeded history is not part of
+        # this window.
+        together = sum(
+            e.amount.base_units
+            for other in store.list_issues()
+            if other.id in (first, second)
+            for e in other.money_events
+            if e.kind is MoneyEventKind.COMMITTED
+        )
+        assert together <= 2700 * 10**6, together
