@@ -16,8 +16,8 @@ from datetime import datetime
 from misthos.domain.compliance import PartyKind, Screening
 from misthos.domain.issue import IssueState
 from misthos.models.records import IssueRecord
-from misthos.repositories.base import AppendOnlyViolation, StaleIssue
-from misthos.schemas import Contributor, Decision, Publisher
+from misthos.repositories.base import AccountConflict, AppendOnlyViolation, StaleIssue
+from misthos.schemas import Account, Contributor, Decision, Publisher
 
 
 class MemoryRepository:
@@ -34,6 +34,7 @@ class MemoryRepository:
             self._counters: dict[str, int] = {}
             self._screenings: list[Screening] = []
             self._deliveries: dict[str, tuple[str, datetime]] = {}
+            self._accounts: dict[str, Account] = {}
 
     def is_empty(self) -> bool:
         with self._guard:
@@ -97,6 +98,24 @@ class MemoryRepository:
             purged = len(self._screenings) - len(kept)
             self._screenings = kept
             return purged
+
+    # ------------------------------------------------------------ accounts
+
+    def get_account(self, address: str) -> Account | None:
+        with self._guard:
+            found = self._accounts.get(address.lower())
+            return found.model_copy(deep=True) if found else None
+
+    def save_account(self, account: Account) -> None:
+        with self._guard:
+            if account.github_login and any(
+                other.github_login
+                and other.github_login.lower() == account.github_login.lower()
+                and other.address != account.address
+                for other in self._accounts.values()
+            ):
+                raise AccountConflict(f"{account.github_login} is linked to another wallet")
+            self._accounts[account.address.lower()] = account.model_copy(deep=True)
 
     # ---------------------------------------------------------- deliveries
 

@@ -42,6 +42,22 @@ class Publisher(BaseModel):
     """Issue label to the most that may be committed under it in a calendar month."""
 
 
+class PublisherListing(BaseModel):
+    """A publisher as anyone may see it. Its budget and spending policy are
+    commercially sensitive, so outside the simulation they are filled in only for
+    the signed-in publisher itself ([PRIVACY.md](../../docs/PRIVACY.md))."""
+
+    id: str
+    name: str
+    kind: Literal["company", "maintainer"]
+    tier: Tier
+    wallet: Wallet
+    budget_remaining_usdc: str | None = None
+    approval_threshold_usdc: str | None = None
+    approvers: list[str] = Field(default_factory=list)
+    category_limits: dict[str, str] = Field(default_factory=dict)
+
+
 class Contributor(BaseModel):
     """A contributor as the platform holds them. Never served as is: it carries the
     wallet, and a wallet next to a GitHub handle is exactly the link 08 says we must
@@ -254,6 +270,77 @@ class PublishRequest(BaseModel):
     publisher_id: str
     compliance_driven: bool = False
     signals: dict[str, float] = Field(default_factory=dict)
+
+
+Role = Literal["publisher", "contributor"]
+
+
+class Account(BaseModel):
+    """A signed-in wallet and the one role it chose (#70)."""
+
+    address: str
+    """Lowercase. The wallet is the identity that matches the chain."""
+    role: Role
+    party_id: str
+    """The Publisher or Contributor this wallet acts as."""
+    github_login: str | None = None
+    """Linked through GitHub OAuth (#80). Required before pricing or contributing."""
+    created_at: datetime
+
+
+class NonceOut(BaseModel):
+    nonce: str
+    domain: str
+    uri: str
+    chain_id: int
+    statement: str
+
+
+class SignInRequest(BaseModel):
+    message: str = Field(max_length=4000)
+    signature: str = Field(max_length=200)
+
+
+class SessionOut(BaseModel):
+    address: str
+    token: str
+    account: Account | None
+
+
+class MeOut(BaseModel):
+    address: str
+    account: Account | None
+
+
+class RoleRequest(BaseModel):
+    role: Role
+    name: str = Field(min_length=1, max_length=200)
+    """The organisation's name for a publisher; a working handle for a contributor
+    until their GitHub account is linked."""
+    budget_usdc: str = "5000"
+    """A publisher's declared budget, which caps every price it is offered."""
+
+
+class GitHubLinkStart(BaseModel):
+    authorize_url: str
+
+
+class SimulatedLink(BaseModel):
+    login: str = Field(min_length=1, max_length=39, pattern=r"^[A-Za-z0-9-]+$")
+
+
+class CriteriaRequest(BaseModel):
+    criteria: list[str] = Field(min_length=1, max_length=12)
+
+
+class ClaimRequest(BaseModel):
+    contributor_id: str | None = None
+    """The simulation's only: whom the demo claims as. A signed-in contributor claims
+    as themselves."""
+
+
+class SubmitRequest(BaseModel):
+    pr_number: int = Field(gt=0)
 
 
 class PolicyRequest(BaseModel):

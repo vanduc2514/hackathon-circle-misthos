@@ -4,6 +4,140 @@
  */
 
 export interface paths {
+    "/api/v1/auth/nonce": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Nonce
+         * @description A one-time nonce, and what the sign-in message must say around it.
+         */
+        post: operations["nonce_api_v1_auth_nonce_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify
+         * @description Check the signed message, spend its nonce, and start a session.
+         */
+        post: operations["verify_api_v1_auth_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["logout_api_v1_auth_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Me */
+        get: operations["me_api_v1_auth_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Choose Role
+         * @description The first sign-in's one choice: publisher or contributor.
+         */
+        post: operations["choose_role_api_v1_auth_role_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/github/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Github Link
+         * @description Where to send the user to approve linking their GitHub account.
+         */
+        post: operations["start_github_link_api_v1_auth_github_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/github/simulate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Simulate Github Link
+         * @description Link a GitHub login without OAuth, for the simulation's demo only.
+         */
+        post: operations["simulate_github_link_api_v1_auth_github_simulate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -84,7 +218,8 @@ export interface paths {
         put?: never;
         /**
          * Advance
-         * @description Move the issue one step along the demo path.
+         * @description Move the issue one step along the demo path. The simulation's only: it
+         *     fabricates the pull request, so a deployment uses the explicit actions.
          */
         post: operations["advance_api_v1_issues__issue_id__advance_post"];
         delete?: never;
@@ -104,7 +239,7 @@ export interface paths {
         put?: never;
         /**
          * Complete
-         * @description Run the rest of the happy path: verdict, merge, release.
+         * @description Run the rest of the happy path: verdict, merge, release. The simulation's only.
          */
         post: operations["complete_api_v1_issues__issue_id__complete_post"];
         delete?: never;
@@ -149,6 +284,109 @@ export interface paths {
          * @description A named approver approves a release held over the organisation's threshold.
          */
         post: operations["approve_release_api_v1_issues__issue_id__approve_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/criteria": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Criteria
+         * @description The publisher edits the drafted acceptance criteria and approves them. No
+         *     issue is funded without approved criteria (#21).
+         */
+        post: operations["approve_criteria_api_v1_issues__issue_id__criteria_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/fund": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fund
+         * @description The publisher approves the price, and the money is committed to the escrow.
+         */
+        post: operations["fund_api_v1_issues__issue_id__fund_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim
+         * @description A contributor takes the exclusive, time-boxed claim. First claim wins.
+         */
+        post: operations["claim_api_v1_issues__issue_id__claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit
+         * @description The claimant submits their pull request for review. GitHub says who opened it,
+         *     and only the claimant's own pull request counts.
+         */
+        post: operations["submit_api_v1_issues__issue_id__submit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Review
+         * @description Have the review agent judge the submitted commit now rather than on the
+         *     sweeper's next pass. The publisher or the claimant may ask.
+         */
+        post: operations["review_api_v1_issues__issue_id__review_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -204,7 +442,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Publishers */
+        /**
+         * List Publishers
+         * @description Every publisher. Outside the simulation a publisher's budget and spending
+         *     policy are served only to that publisher, signed in.
+         */
         get: operations["list_publishers_api_v1_publishers_get"];
         put?: never;
         post?: never;
@@ -321,8 +563,8 @@ export interface paths {
          * @description One contributor's payouts for one calendar year, to file from.
          *
          *     A statement is personal: its settlement references would link a wallet to a
-         *     handle. Until contributors can sign in it is served only by the simulation, whose
-         *     numbers are not real; outside it, an operator exports it with
+         *     handle. It is served to the signed-in contributor it belongs to, and by the
+         *     simulation, whose numbers are not real; an operator exports one with
          *     `python -m misthos.services.statements`.
          */
         get: operations["statement_api_v1_contributors__contributor_id__statements__year__get"];
@@ -419,6 +661,28 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * Account
+         * @description A signed-in wallet and the one role it chose (#70).
+         */
+        Account: {
+            /** Address */
+            address: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "publisher" | "contributor";
+            /** Party Id */
+            party_id: string;
+            /** Github Login */
+            github_login?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /**
          * AnnualStatement
          * @description Every payout one contributor received in one calendar year, in UTC.
@@ -546,6 +810,11 @@ export interface components {
              */
             active: boolean;
         };
+        /** ClaimRequest */
+        ClaimRequest: {
+            /** Contributor Id */
+            contributor_id?: string | null;
+        };
         /**
          * ContributorProfile
          * @description What anyone may see about a contributor: no wallet, no provider reference.
@@ -563,6 +832,11 @@ export interface components {
             earned_usdc: string;
             /** Verified */
             verified: boolean;
+        };
+        /** CriteriaRequest */
+        CriteriaRequest: {
+            /** Criteria */
+            criteria: string[];
         };
         /** Decision */
         Decision: {
@@ -659,6 +933,11 @@ export interface components {
             settled_at: string;
             /** Github Url */
             github_url: string;
+        };
+        /** GitHubLinkStart */
+        GitHubLinkStart: {
+            /** Authorize Url */
+            authorize_url: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -791,6 +1070,12 @@ export interface components {
             /** Github Url */
             github_url: string;
         };
+        /** MeOut */
+        MeOut: {
+            /** Address */
+            address: string;
+            account: components["schemas"]["Account"] | null;
+        };
         /**
          * MetricsOut
          * @description Every number is computed from the ledger and the lifecycle records (09).
@@ -848,6 +1133,19 @@ export interface components {
             median_review_seconds?: number | null;
             /** Median Review Cost Usdc */
             median_review_cost_usdc?: string | null;
+        };
+        /** NonceOut */
+        NonceOut: {
+            /** Nonce */
+            nonce: string;
+            /** Domain */
+            domain: string;
+            /** Uri */
+            uri: string;
+            /** Chain Id */
+            chain_id: number;
+            /** Statement */
+            statement: string;
         };
         /** PolicyRequest */
         PolicyRequest: {
@@ -956,6 +1254,39 @@ export interface components {
             };
         };
         /**
+         * PublisherListing
+         * @description A publisher as anyone may see it. Its budget and spending policy are
+         *     commercially sensitive, so outside the simulation they are filled in only for
+         *     the signed-in publisher itself ([PRIVACY.md](../../docs/PRIVACY.md)).
+         */
+        PublisherListing: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "company" | "maintainer";
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "open" | "team" | "enterprise";
+            wallet: components["schemas"]["Wallet"];
+            /** Budget Remaining Usdc */
+            budget_remaining_usdc?: string | null;
+            /** Approval Threshold Usdc */
+            approval_threshold_usdc?: string | null;
+            /** Approvers */
+            approvers?: string[];
+            /** Category Limits */
+            category_limits?: {
+                [key: string]: string;
+            };
+        };
+        /**
          * ReputationEventOut
          * @description One settled issue's contribution to a contributor's standing.
          */
@@ -1004,6 +1335,41 @@ export interface components {
             seconds?: number | null;
             /** Cost Usdc */
             cost_usdc?: string | null;
+        };
+        /** RoleRequest */
+        RoleRequest: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "publisher" | "contributor";
+            /** Name */
+            name: string;
+            /**
+             * Budget Usdc
+             * @default 5000
+             */
+            budget_usdc: string;
+        };
+        /** SessionOut */
+        SessionOut: {
+            /** Address */
+            address: string;
+            /** Token */
+            token: string;
+            account: components["schemas"]["Account"] | null;
+        };
+        /** SignInRequest */
+        SignInRequest: {
+            /** Message */
+            message: string;
+            /** Signature */
+            signature: string;
+        };
+        /** SimulatedLink */
+        SimulatedLink: {
+            /** Login */
+            login: string;
         };
         /** SpendCategory */
         SpendCategory: {
@@ -1107,6 +1473,11 @@ export interface components {
             /** Deletions */
             deletions: number;
         };
+        /** SubmitRequest */
+        SubmitRequest: {
+            /** Pr Number */
+            pr_number: number;
+        };
         /** TimelineEntry */
         TimelineEntry: {
             /** Id */
@@ -1160,6 +1531,183 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    nonce_api_v1_auth_nonce_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NonceOut"];
+                };
+            };
+        };
+    };
+    verify_api_v1_auth_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    logout_api_v1_auth_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    me_api_v1_auth_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeOut"];
+                };
+            };
+        };
+    };
+    choose_role_api_v1_auth_role_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_github_link_api_v1_auth_github_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubLinkStart"];
+                };
+            };
+        };
+    };
+    simulate_github_link_api_v1_auth_github_simulate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SimulatedLink"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_api_v1_health_get: {
         parameters: {
             query?: never;
@@ -1491,6 +2039,185 @@ export interface operations {
             };
         };
     };
+    approve_criteria_api_v1_issues__issue_id__criteria_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CriteriaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fund_api_v1_issues__issue_id__fund_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_api_v1_issues__issue_id__claim_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ClaimRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_api_v1_issues__issue_id__submit_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_api_v1_issues__issue_id__review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     loop_api_v1_loop_get: {
         parameters: {
             query?: {
@@ -1583,7 +2310,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Publisher"][];
+                    "application/json": components["schemas"]["PublisherListing"][];
                 };
             };
         };

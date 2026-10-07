@@ -5,8 +5,14 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.concurrency import run_in_threadpool
 
-from misthos.config import settings
-from misthos.schemas import AnnualStatement, ContributorProfile, ReputationEventOut, money
+from misthos.api.session import SIGNED_IN, require_owner_or_simulation
+from misthos.schemas import (
+    Account,
+    AnnualStatement,
+    ContributorProfile,
+    ReputationEventOut,
+    money,
+)
 from misthos.services.statements import annual_statement, to_csv
 from misthos.store import store
 
@@ -48,20 +54,16 @@ async def statement(
     contributor_id: str,
     year: int,
     format: Literal["json", "csv"] = Query(default="json"),
+    account: Account | None = SIGNED_IN,
 ) -> AnnualStatement | Response:
     """One contributor's payouts for one calendar year, to file from.
 
     A statement is personal: its settlement references would link a wallet to a
-    handle. Until contributors can sign in it is served only by the simulation, whose
-    numbers are not real; outside it, an operator exports it with
+    handle. It is served to the signed-in contributor it belongs to, and by the
+    simulation, whose numbers are not real; an operator exports one with
     `python -m misthos.services.statements`.
     """
-    if not settings.simulated:
-        raise HTTPException(
-            status_code=403,
-            detail="statements are served to the contributor once sign-in exists; "
-            "export one with python -m misthos.services.statements",
-        )
+    require_owner_or_simulation(account, contributor_id, "see this statement")
     found = await run_in_threadpool(annual_statement, store, contributor_id, year)
     if found is None:
         raise HTTPException(status_code=404, detail=f"no contributor {contributor_id}")

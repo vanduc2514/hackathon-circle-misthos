@@ -36,8 +36,9 @@ from misthos.domain.money import Usdc, format_usdc
 from misthos.domain.pricing import PriceProposal
 from misthos.models import tables as t
 from misthos.models.records import IssueRecord
-from misthos.repositories.base import AppendOnlyViolation, StaleIssue
+from misthos.repositories.base import AccountConflict, AppendOnlyViolation, StaleIssue
 from misthos.schemas import (
+    Account,
     Claim,
     Contributor,
     Decision,
@@ -235,6 +236,40 @@ class SqlRepository:
                 delete(t.screenings).where(t.screenings.c.checked_at < before)
             ).rowcount
 
+    # ------------------------------------------------------------ accounts
+
+    def get_account(self, address: str) -> Account | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            row = (
+                conn.execute(select(t.accounts).where(t.accounts.c.address == address.lower()))
+                .mappings()
+                .first()
+            )
+        if row is None:
+            return None
+        return Account(
+            address=row["address"],
+            role=row["role"],
+            party_id=row["party_id"],
+            github_login=row["github_login"],
+            created_at=_utc(row["created_at"]),
+        )
+
+    def save_account(self, account: Account) -> None:
+        self.migrate()
+        values = {
+            "role": account.role,
+            "party_id": account.party_id,
+            "github_login": account.github_login,
+            "created_at": account.created_at,
+        }
+        try:
+            with self.engine.begin() as conn:
+                _upsert(conn, t.accounts, {"address": account.address.lower()}, values)
+        except IntegrityError as exc:
+            raise AccountConflict(f"{account.github_login} is linked to another wallet") from exc
+
     # ---------------------------------------------------------- deliveries
 
     def record_delivery(self, delivery_id: str, event: str, at: datetime) -> bool:
@@ -349,6 +384,7 @@ def _save(conn: Connection, rec: IssueRecord) -> None:
         "accepted_by": rec.accepted_by,
         "payout_hold": rec.payout_hold,
         "payout_checked_at": rec.payout_checked_at,
+        "criteria_approved_at": rec.criteria_approved_at,
         "relisted_from": rec.relisted_from,
     }
     if rec.version == 0:
@@ -609,6 +645,7 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             accepted_by=row["accepted_by"],
             payout_hold=row["payout_hold"],
             payout_checked_at=_utc_or_none(row["payout_checked_at"]),
+            criteria_approved_at=_utc_or_none(row["criteria_approved_at"]),
             relisted_from=row["relisted_from"],
             decisions=logs[row["id"]],
             money_events=ledger[row["id"]],

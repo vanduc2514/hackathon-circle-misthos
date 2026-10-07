@@ -186,11 +186,8 @@ class TestAuditExport:
         r = client.get(f"{API}/publishers/{PUBLISHER}/audit", params={"format": "csv"})
         assert r.headers["content-type"].startswith("text/csv")
         lines = r.text.splitlines()
-        # The header is the first line, so a reader that trusts it needs no special
-        # case; the simulation caveat is a last row among the data.
-        assert lines[0].startswith("record,")
-        assert lines[-1].startswith("# SIMULATED")
-        rows = list(csv.DictReader(io.StringIO("\n".join(lines[:-1]))))
+        assert lines[0].startswith("# SIMULATED")
+        rows = list(csv.DictReader(io.StringIO("\n".join(lines[1:]))))
         ours = [row for row in rows if row["issue_id"] == ISSUE]
         assert {row["record"] for row in ours} == {"decision", "money"}
         assert [row["at_utc"] for row in ours] == sorted(row["at_utc"] for row in ours)
@@ -199,9 +196,10 @@ class TestAuditExport:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(settings, "simulated", False)
-        assert client.get(f"{API}/publishers/{PUBLISHER}/audit").status_code == 403
-        assert client.get(f"{API}/publishers/{PUBLISHER}/spend").status_code == 403
-        assert policy(client, approvers=[APPROVER]).status_code == 403
+        # Anonymous outside the simulation: sign in first.
+        assert client.get(f"{API}/publishers/{PUBLISHER}/audit").status_code == 401
+        assert client.get(f"{API}/publishers/{PUBLISHER}/spend").status_code == 401
+        assert policy(client, approvers=[APPROVER]).status_code == 401
 
 
 class TestTheLimitIsAtomic:
@@ -233,6 +231,7 @@ class TestTheLimitIsAtomic:
         ).id
         first = ISSUE
         for issue_id in (first, second):
+            store.approve_criteria(issue_id, ["criterion one", "criterion two"], APPROVER)
             assert store.get(issue_id).state is IssueState.AWAITING_APPROVAL
 
         # Widen the window between reading the month and committing it. Without a lock
@@ -250,7 +249,7 @@ class TestTheLimitIsAtomic:
 
         def fund(issue_id: str) -> None:
             try:
-                store.advance(issue_id)
+                store.approve_price(issue_id, APPROVER)
                 result = "funded"
             except Exception as exc:
                 result = type(exc).__name__

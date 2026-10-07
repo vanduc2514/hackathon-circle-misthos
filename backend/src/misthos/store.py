@@ -71,6 +71,7 @@ from misthos.observability.metrics import (
 )
 from misthos.repositories import MemoryRepository, Repository, StaleIssue, build_repository
 from misthos.schemas import (
+    Account,
     Claim,
     Contributor,
     Decision,
@@ -150,6 +151,14 @@ class NotTheSubmission(Exception):
 
 class DisputeRefused(Exception):
     """A dispute the verdict cannot take: one dispute per verdict."""
+
+
+class AccountExists(Exception):
+    """A wallet chooses its role once."""
+
+
+class CriteriaNotApproved(Exception):
+    """No funding before the publisher approves the acceptance criteria (#21)."""
 
 
 class DeclineRefused(Exception):
@@ -320,7 +329,8 @@ class Store:
         if target in _PRE_FUNDING:
             return rec
 
-        # Everything from FUNDED onward has approved money behind it.
+        # Everything from FUNDED onward has approved criteria and money behind it.
+        rec.criteria_approved_at = rec.created_at + timedelta(hours=5)
         self._fund(rec, when=rec.created_at + timedelta(hours=6))
         self._log(
             rec,
@@ -508,6 +518,10 @@ class Store:
 
     def _fund(self, rec: IssueRecord, when: datetime | None = None) -> None:
         assert rec.proposal is not None
+        if rec.criteria_approved_at is None:
+            raise CriteriaNotApproved(
+                f"{rec.id} cannot be funded until the publisher approves its acceptance criteria"
+            )
         publisher = self.repo.get_publisher(rec.publisher_id)
         assert publisher is not None
         # The state moves first so an illegal step never reaches the chain. If the
@@ -1210,19 +1224,10 @@ class Store:
 
         match rec.state:
             case IssueState.AWAITING_APPROVAL:
-                self._screen_publisher_for_funding(rec, now)
-                # The limit is a sum over the publisher's other issues, so the read and
-                # the commitment it authorises are one step under one lock. Without it
-                # two concurrent fundings of different issues both pass the check.
-                with self._publisher_exclusive(rec.publisher_id):
-                    self._check_category_limits(rec, now)
-                    self._fund(rec)
-                self._log(
-                    rec,
-                    actor="publisher",
-                    action="price_approved",
-                    rule="human_checkpoint",
-                    outcome="approved the price and committed funds",
+                # The demo's publisher approves the drafted criteria as they stand.
+                rec.criteria_approved_at = rec.criteria_approved_at or now
+                self._approve_and_fund(
+                    rec, now, "approved the criteria and the price, and committed funds"
                 )
             case IssueState.FUNDED:
                 contributors = [c.id for c in self.repo.list_contributors()]
@@ -1826,6 +1831,160 @@ class Store:
                 ChangedFile("CHANGELOG.md", additions=2),
             ],
         )
+
+    # ------------------------------------------------------------- accounts
+
+    def create_account(
+        self,
+        address: str,
+        role: str,
+        name: str,
+        *,
+        budget_usdc: str = "5000",
+        now: datetime | None = None,
+    ) -> Account:
+        """A wallet's first sign-in: it becomes a publisher or a contributor, once."""
+        self.ensure_ready()
+        address = address.lower()
+        if self.repo.get_account(address) is not None:
+            raise AccountExists(f"{address} already has a role")
+        name = name.strip()
+        if role == "publisher":
+            try:
+                budget = Usdc.from_decimal(budget_usdc.replace(",", ""))
+            except (ArithmeticError, ValueError) as exc:
+                raise AccountExists(f"not a budget: {budget_usdc}") from exc
+            party_id = f"PUB-{self.repo.next_value('publisher', 100)}"
+            self.repo.save_publisher(
+                Publisher(
+                    id=party_id,
+                    name=name,
+                    kind="company",
+                    tier="open",
+                    wallet=Wallet(address=address, chain=CHAIN),
+                    budget_remaining_usdc=_display(budget),
+                )
+            )
+        else:
+            party_id = f"CON-{self.repo.next_value('contributor', 100)}"
+            self.repo.save_contributor(
+                Contributor(
+                    id=party_id,
+                    handle=name,
+                    wallet=Wallet(address=address, chain=CHAIN),
+                    reputation=0,
+                    settled_issues=0,
+                    earned_usdc="0.00",
+                )
+            )
+        account = Account(
+            address=address, role=role, party_id=party_id, created_at=now or _now()  # type: ignore[arg-type]
+        )
+        self.repo.save_account(account)
+        return account
+
+    def link_github(self, address: str, login: str) -> Account:
+        """Link the wallet's GitHub account (#80). A contributor's handle is their login."""
+        self.ensure_ready()
+        account = self.repo.get_account(address)
+        if account is None:
+            raise KeyError(address)
+        linked = account.model_copy(update={"github_login": login})
+        self.repo.save_account(linked)
+        if account.role == "contributor":
+            contributor = self.repo.get_contributor(account.party_id)
+            assert contributor is not None
+            self.repo.save_contributor(contributor.model_copy(update={"handle": login}))
+        return linked
+
+    # ------------------------------------------------------- explicit actions
+
+    def approve_criteria(
+        self, issue_id: str, criteria: list[str], by: str, now: datetime | None = None
+    ) -> IssueRecord:
+        """The publisher edits the drafted acceptance criteria and approves them (#21).
+        Until the money is committed they can be revised and approved again."""
+        self.ensure_ready()
+        cleaned = [c.strip()[:500] for c in criteria if c.strip()]
+        if not cleaned:
+            raise CriteriaNotApproved("approve at least one acceptance criterion")
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.state not in _PRE_FUNDING:
+                raise lifecycle.IllegalTransition(rec.state, IssueState.FUNDED)
+            when = now or _now()
+            rec.acceptance_criteria = cleaned
+            rec.criteria_approved_at = when
+            self._log(
+                rec,
+                actor="publisher",
+                action="criteria_approved",
+                rule="human_checkpoint",
+                outcome=f"{by} approved {len(cleaned)} acceptance criteria",
+                when=when,
+            )
+            self.repo.save_issues(rec)
+            return rec
+
+    def approve_price(self, issue_id: str, by: str, now: datetime | None = None) -> IssueRecord:
+        """The publisher approves the price, and the money is committed."""
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.state is not IssueState.AWAITING_APPROVAL:
+                raise lifecycle.IllegalTransition(rec.state, IssueState.FUNDED)
+            self._approve_and_fund(
+                rec, now or _now(), f"{by} approved the price and committed the funds"
+            )
+            self.repo.save_issues(rec)
+            return rec
+
+    def _approve_and_fund(self, rec: IssueRecord, now: datetime, outcome: str) -> None:
+        if rec.criteria_approved_at is None:
+            raise CriteriaNotApproved(
+                f"{rec.id} cannot be funded until the publisher approves its acceptance criteria"
+            )
+        self._screen_publisher_for_funding(rec, now)
+        # The limit is a sum over the publisher's other issues, so the read and the
+        # commitment it authorises are one step under one lock. Without it two
+        # concurrent fundings of different issues both pass the check.
+        with self._publisher_exclusive(rec.publisher_id):
+            self._check_category_limits(rec, now)
+            self._fund(rec)
+        self._log(
+            rec,
+            actor="publisher",
+            action="price_approved",
+            rule="human_checkpoint",
+            outcome=outcome,
+        )
+
+    def claim(self, issue_id: str, contributor_id: str, now: datetime | None = None) -> IssueRecord:
+        """A contributor takes the exclusive, time-boxed claim. First claim wins."""
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.state is not IssueState.FUNDED:
+                raise lifecycle.IllegalTransition(rec.state, IssueState.CLAIMED)
+            when = now or _now()
+            self._claim(rec, contributor_id, when=when)
+            self._log(
+                rec,
+                actor="contributor",
+                action="claimed",
+                rule="first_claim_wins",
+                outcome=f"{self._handle(contributor_id)} took an exclusive "
+                f"{int(lifecycle.CLAIM_WINDOW.total_seconds() // 3600)}h claim",
+                when=when,
+            )
+            self.repo.save_issues(rec)
+            return rec
 
     # ------------------------------------------------------------ GitHub events
 

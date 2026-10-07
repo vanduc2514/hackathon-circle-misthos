@@ -19,6 +19,9 @@ dependencies = [
     "pyjwt[crypto]>=2.8",
     # Latency, cost, money-event and reconciliation metrics for Prometheus.
     "prometheus-client>=0.21",
+    # Sign-In with Ethereum: secp256k1 recovery and Keccak-256 (#70).
+    "coincurve>=20",
+    "pycryptodome>=3.20",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +44,8 @@ build-backend = "hatchling.build"
 packages = ["src/misthos"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# tests/ too, for the shared helpers (a test wallet that signs in).
+pythonpath = ["src", "tests"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 

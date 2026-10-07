@@ -16,12 +16,17 @@ The retention periods below are the defaults we hold ourselves to. They are not 
 
 **Identity documents.** We never receive them. A contributor hands them to the verification provider, and we keep only the provider's reference and the outcome.
 
+An account links a wallet to a GitHub login in our database, because that link is how we know who may act. It never leaves the database: `/auth/me` shows an account only to its own session, and no other response carries it.
+
+Outside the simulation, a publisher's remaining budget and spending policy are served only to that publisher, signed in. They are commercially sensitive.
+
 ## What we hold, and where
 
 | Data | Where it lives | Why we have it |
 | --- | --- | --- |
 | GitHub handle | Our database | Already public; it is how work is attributed |
 | Wallet address | Our database | To pay the contributor and to screen them |
+| Account: the signed-in wallet, its role and its linked GitHub login | Our database | To decide who may act. The GitHub access token from linking is used once to read the login and never stored |
 | Identity documents | The verification provider only | Required before a first payout, and only then |
 | Identity outcome and provider reference | Our database | To know whether a payout may leave the escrow |
 | Sanctions screening results | Our database, append-only | Evidence that every payout was screened |
@@ -42,9 +47,8 @@ Identity is verified at a contributor's first payout, never at signup. Claiming 
 
 ## Statements
 
-A contributor's annual statement lists every payout in a calendar year with its date, issue, counterparty, amount and settlement reference, built for a finance team to file from without asking us a question. Because the settlement references would link a wallet to a handle, a statement is served only to the contributor. Until contributors can sign in, the API serves statements only in the simulation, whose numbers are not real, and an operator exports a real one with `python -m misthos.services.statements <contributor> <year> --csv`.
+A contributor's annual statement lists every payout in a calendar year with its date, issue, counterparty, amount and settlement reference, built for a finance team to file from without asking us a question. Because the settlement references would link a wallet to a handle, a statement is served only to the contributor, signed in. The simulation serves any, because its numbers are not real, and an operator exports a real one with `python -m misthos.services.statements <contributor> <year> --csv`.
 
 ## Known gaps
 
-- `GET /publishers` still serves each publisher's remaining budget. Publisher spend is commercially sensitive and should be visible only to the publisher; that needs sign-in (#70, #80).
 - Retention for identity references and payout records is a commitment, not yet a job.

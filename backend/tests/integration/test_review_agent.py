@@ -189,7 +189,7 @@ class TestDisputes:
 
         monkeypatch.setattr(settings, "simulated", False)
         r = client.post(f"{API}/issues/{REWORK}/dispute", json={"reason": "x"})
-        assert r.status_code == 403
+        assert r.status_code == 401
 
 
 class TestMeasured:

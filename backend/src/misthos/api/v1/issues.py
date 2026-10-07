@@ -7,6 +7,12 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 
 from misthos.api.guards import idempotent, limit_actions, limit_publish
+from misthos.api.session import (
+    SIGNED_IN,
+    require_github,
+    require_owner_or_simulation,
+    require_role,
+)
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.issue import IllegalTransition, IssueState
@@ -14,7 +20,10 @@ from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import UnfundableIssue
 from misthos.repositories import StaleIssue
 from misthos.schemas import (
+    Account,
     ApproveReleaseRequest,
+    ClaimRequest,
+    CriteriaRequest,
     Decision,
     DeclineRequest,
     DisputeRequest,
@@ -24,7 +33,9 @@ from misthos.schemas import (
     LoopOut,
     MetricsOut,
     Publisher,
+    PublisherListing,
     PublishRequest,
+    SubmitRequest,
     TimelineEntry,
 )
 from misthos.services.chain import ChainRevert
@@ -32,9 +43,11 @@ from misthos.services.coordination import Busy
 from misthos.services.github import GitHubError
 from misthos.services.review import ReviewFailed
 from misthos.store import (
+    CriteriaNotApproved,
     DeclineRefused,
     DisputeRefused,
     IssueRecord,
+    NotTheSubmission,
     UnreadableIssue,
     store,
 )
@@ -71,6 +84,17 @@ IDEMPOTENCY_KEY = Header(
     description="Any unique string, such as a UUID. Retries with the same key get "
     "the first response back for 24 hours instead of running again.",
 )
+
+
+def _demo_only() -> None:
+    if not settings.simulated:
+        raise HTTPException(
+            status_code=403, detail="the demo stepper is the simulation's; use the explicit actions"
+        )
+
+
+def _who(account: Account | None, fallback: str) -> str:
+    return (account.github_login or account.address) if account else fallback
 
 
 def _refused(exc: Exception) -> HTTPException:
@@ -131,6 +155,8 @@ async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -
         ChainRevert,
         DisputeRefused,
         DeclineRefused,
+        CriteriaNotApproved,
+        NotTheSubmission,
     ) as exc:
         raise _conflict(exc) from exc
     except (ComplianceRefusal, PolicyRefusal) as exc:
@@ -150,7 +176,9 @@ async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -
 async def advance(
     issue_id: str, request: Request, idempotency_key: str | None = IDEMPOTENCY_KEY
 ) -> Any:
-    """Move the issue one step along the demo path."""
+    """Move the issue one step along the demo path. The simulation's only: it
+    fabricates the pull request, so a deployment uses the explicit actions."""
+    _demo_only()
     await _require(issue_id)
     return await idempotent(request, idempotency_key, lambda: _act(store.advance, issue_id))
 
@@ -164,7 +192,8 @@ async def advance(
 async def complete(
     issue_id: str, request: Request, idempotency_key: str | None = IDEMPOTENCY_KEY
 ) -> Any:
-    """Run the rest of the happy path: verdict, merge, release."""
+    """Run the rest of the happy path: verdict, merge, release. The simulation's only."""
+    _demo_only()
     await _require(issue_id)
     return await idempotent(
         request, idempotency_key, lambda: _act(store.approve_and_accept, issue_id)
@@ -182,14 +211,13 @@ async def decline(
     payload: DeclineRequest,
     request: Request,
     idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
 ) -> Any:
     """The publisher declines work the review passed, with a reason. Once per issue:
     the work goes back for rework, and after that the merge or the grace period
     settles it."""
-    # Only the publisher may decline, and publishers cannot sign in yet (#70).
-    if not settings.simulated:
-        raise HTTPException(status_code=403, detail="declining needs publisher sign-in")
-    await _require(issue_id)
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "decline this work")
     return await idempotent(
         request, idempotency_key, lambda: _act(store.decline, issue_id, payload.reason)
     )
@@ -209,14 +237,131 @@ async def approve_release(
     payload: ApproveReleaseRequest,
     request: Request,
     idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
 ) -> Any:
     """A named approver approves a release held over the organisation's threshold."""
-    if not settings.simulated:
-        raise HTTPException(status_code=403, detail="approving needs publisher sign-in")
-    await _require(issue_id)
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "approve this release")
     return await idempotent(
         request, idempotency_key, lambda: _act(store.approve_release, issue_id, payload.approver)
     )
+
+
+# ---------------------------------------------------------- explicit actions (#71)
+
+
+@router.post("/issues/{issue_id}/criteria", response_model=IssueOut, dependencies=[limit_actions])
+async def approve_criteria(
+    issue_id: str,
+    payload: CriteriaRequest,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
+) -> Any:
+    """The publisher edits the drafted acceptance criteria and approves them. No
+    issue is funded without approved criteria (#21)."""
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "approve these criteria")
+    if account is not None:
+        require_github(account, "approve criteria")
+    by = _who(account, "the publisher")
+    return await idempotent(
+        request,
+        idempotency_key,
+        lambda: _act(store.approve_criteria, issue_id, payload.criteria, by),
+    )
+
+
+@router.post("/issues/{issue_id}/fund", response_model=IssueOut, dependencies=[limit_actions])
+async def fund(
+    issue_id: str,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
+) -> Any:
+    """The publisher approves the price, and the money is committed to the escrow."""
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "fund this issue")
+    if account is not None:
+        require_github(account, "fund an issue")
+    by = _who(account, "the publisher")
+    return await idempotent(
+        request, idempotency_key, lambda: _act(store.approve_price, issue_id, by)
+    )
+
+
+@router.post("/issues/{issue_id}/claim", response_model=IssueOut, dependencies=[limit_actions])
+async def claim(
+    issue_id: str,
+    request: Request,
+    payload: ClaimRequest | None = None,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
+) -> Any:
+    """A contributor takes the exclusive, time-boxed claim. First claim wins."""
+    await _require(issue_id)
+    if account is not None:
+        require_role(account, "contributor", "claim an issue")
+        require_github(account, "claim an issue")
+        contributor_id = account.party_id
+    elif settings.simulated and payload is not None and payload.contributor_id:
+        contributor_id = payload.contributor_id
+    else:
+        raise HTTPException(status_code=401, detail="sign in as a contributor to claim")
+    if await run_in_threadpool(store.get_contributor, contributor_id) is None:
+        raise HTTPException(status_code=400, detail=f"no contributor {contributor_id}")
+    return await idempotent(
+        request, idempotency_key, lambda: _act(store.claim, issue_id, contributor_id)
+    )
+
+
+@router.post("/issues/{issue_id}/submit", response_model=IssueOut, dependencies=[limit_actions])
+async def submit(
+    issue_id: str,
+    payload: SubmitRequest,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
+) -> Any:
+    """The claimant submits their pull request for review. GitHub says who opened it,
+    and only the claimant's own pull request counts."""
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.contributor_id or "", "submit for this claim")
+    if account is not None:
+        require_github(account, "submit work")
+    try:
+        pr = await run_in_threadpool(store.github.read_pull_request, rec.repo, payload.pr_number)
+    except GitHubError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if account is not None and pr.author.lower() != (account.github_login or "").lower():
+        raise HTTPException(
+            status_code=403, detail=f"#{pr.number} was opened by {pr.author}, not by you"
+        )
+    return await idempotent(
+        request, idempotency_key, lambda: _act(store.submit_pull_request, issue_id, pr)
+    )
+
+
+@router.post("/issues/{issue_id}/review", response_model=IssueOut, dependencies=[limit_actions])
+async def review(
+    issue_id: str, account: Account | None = SIGNED_IN
+) -> IssueOut:
+    """Have the review agent judge the submitted commit now rather than on the
+    sweeper's next pass. The publisher or the claimant may ask."""
+    rec = await _require(issue_id)
+    if account is not None and account.party_id not in {rec.publisher_id, rec.contributor_id}:
+        raise HTTPException(status_code=403, detail="only the publisher or the claimant can ask")
+    if account is None and not settings.simulated:
+        raise HTTPException(status_code=401, detail="sign in to ask for a review")
+    try:
+        reviewed = await run_in_threadpool(store.review, issue_id)
+    except (ReviewFailed, GitHubError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except (Busy, StaleIssue) as exc:
+        raise _conflict(exc) from exc
+    if reviewed is None:
+        raise HTTPException(status_code=409, detail=f"{issue_id} has no commit awaiting a verdict")
+    return await run_in_threadpool(store.to_out, reviewed)
 
 
 @router.get("/loop", response_model=LoopOut)
@@ -239,14 +384,12 @@ async def dispute(
     payload: DisputeRequest,
     request: Request,
     idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
 ) -> Any:
     """The contributor challenges a rework or reject verdict: the same commit is
     reviewed again against the published criteria, and the outcome is recorded."""
-    # Only the contributor may dispute, and contributors cannot sign in yet (#70), so
-    # the endpoint is the simulation's until they can.
-    if not settings.simulated:
-        raise HTTPException(status_code=403, detail="disputes need contributor sign-in")
-    await _require(issue_id)
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.contributor_id or "", "dispute this verdict")
     return await idempotent(
         request, idempotency_key, lambda: _act(store.dispute, issue_id, payload.reason)
     )
@@ -259,8 +402,18 @@ async def dispute(
     dependencies=[limit_publish],
 )
 async def publish(
-    payload: PublishRequest, request: Request, idempotency_key: str | None = IDEMPOTENCY_KEY
+    payload: PublishRequest,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
 ) -> Any:
+    if account is not None:
+        require_role(account, "publisher", "publish an issue")
+        require_github(account, "publish an issue")
+        # A signed-in publisher publishes as itself, whatever the form says.
+        payload = payload.model_copy(update={"publisher_id": account.party_id})
+    elif not settings.simulated:
+        raise HTTPException(status_code=401, detail="sign in to publish an issue")
     if await run_in_threadpool(store.get_publisher, payload.publisher_id) is None:
         raise HTTPException(status_code=400, detail=f"unknown publisher {payload.publisher_id}")
 
@@ -279,9 +432,25 @@ async def publish(
     return await idempotent(request, idempotency_key, run, status_code=201)
 
 
-@router.get("/publishers", response_model=list[Publisher])
-async def list_publishers() -> list[Publisher]:
-    return await run_in_threadpool(store.list_publishers)
+@router.get("/publishers", response_model=list[PublisherListing])
+async def list_publishers(account: Account | None = SIGNED_IN) -> list[PublisherListing]:
+    """Every publisher. Outside the simulation a publisher's budget and spending
+    policy are served only to that publisher, signed in."""
+    rows = await run_in_threadpool(store.list_publishers)
+    mine = account.party_id if account is not None else None
+    return [_listing(p, own=settings.simulated or p.id == mine) for p in rows]
+
+
+def _listing(publisher: Publisher, *, own: bool) -> PublisherListing:
+    if own:
+        return PublisherListing(**publisher.model_dump())
+    return PublisherListing(
+        id=publisher.id,
+        name=publisher.name,
+        kind=publisher.kind,
+        tier=publisher.tier,
+        wallet=publisher.wallet,
+    )
 
 
 @router.get("/metrics", response_model=MetricsOut)

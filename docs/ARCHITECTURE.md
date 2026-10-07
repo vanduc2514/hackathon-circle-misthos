@@ -12,7 +12,7 @@ The diagrams below describe the target system. This table is what is actually in
 
 | Layer | Component | State |
 | --- | --- | --- |
-| Web | Vite + React SPA, generated API client | Built. Three routes, live against the API |
+| Web | Vite + React SPA, generated API client | Built. Five routes, live against the API. Sign-in screens are #73 |
 | Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
 | Core | FastAPI, lifecycle, pricing engine, review agent, decision log, money ledger | Built. Money moves through a chain gateway, simulated until #69. The review agent is Claude once `MISTHOS_ANTHROPIC_API_KEY` is set, and a rule reviewer otherwise |
 | Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
@@ -20,6 +20,7 @@ The diagrams below describe the target system. This table is what is actually in
 | Data | Postgres, Redis | Built and optional. Postgres once `MISTHOS_DATABASE_URL` is set, memory otherwise. Redis once `MISTHOS_REDIS_URL` is set, for the per-issue lock, idempotency keys and rate limits across processes |
 | Compliance | Screening, identity at first payout, statements | Built against simulated providers. See [PRIVACY.md](./PRIVACY.md) |
 | GitHub | App authentication, read path, write path, webhooks | Built behind one gateway. Simulated until `MISTHOS_GITHUB_APP_ID` and `MISTHOS_GITHUB_APP_PRIVATE_KEY` are set; `backend/github-app-manifest.json` registers the App |
+| Sign-in | Sign-In with Ethereum, a role per wallet, GitHub account linking, explicit lifecycle actions | Built. Linking is simulated until `MISTHOS_GITHUB_OAUTH_CLIENT_ID` is set. Outside the simulation every write needs a signed-in account |
 | Integrations | Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
 
 Everything marked not built has its interface in place, which is why the missing pieces are listed here as work rather than as risk.
@@ -168,7 +169,7 @@ This process exists for exactly two reasons and both are Node-only dependencies.
 
 | Component | Responsibility | Notes |
 | --- | --- | --- |
-| `backend/src/misthos/api/` | HTTP surface under `/api/v1` | FastAPI. Issues, proposals, lifecycle actions, metrics, decisions, webhook receiver |
+| `backend/src/misthos/api/` | HTTP surface under `/api/v1` | FastAPI. Sign-in, issues, proposals, lifecycle actions, metrics, decisions, webhook receiver. `api/session.py` decides who may do what |
 | `backend/src/misthos/domain/` | Lifecycle state machine, money units, pricing engine | Deliberately IO-free, so the two places a bug costs real funds are testable without a database |
 | `backend/src/misthos/store.py` | The lifecycle's single writer, and the seeded simulation | Every move is checked against the transition table and saved through a repository |
 | `backend/src/misthos/services/metrics.py` | Every dashboard number | Computed from money events and lifecycle records, so each one is reproducible from the database alone. `/loop` is the public view of the same numbers |
@@ -509,7 +510,7 @@ An organisation sets its own spending policy, and the store enforces it at the t
 - **Category limits.** A monthly cap per issue label. A commitment that would pass it is refused at funding, with the limit and the month's total in the reason.
 - **A release threshold with named approvers.** A payout above it is held as `await_approver` until one of them approves, whether the merge or the grace period triggered it. The approval is required, not requested.
 
-`/publishers/{id}/spend` reports what was budgeted, committed, released and refunded, by category against those limits, and the settled compliance and security fixes a security review can file (#50). `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are served by the simulation only until organisations can sign in. Plans, billing and SSO (#53) are not built.
+`/publishers/{id}/spend` reports what was budgeted, committed, released and refunded, by category against those limits, and the settled compliance and security fixes a security review can file (#50). `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are the organisation's alone: a signed-in publisher sees and sets its own, and only the simulation serves any. Plans, billing and SSO (#53) are not built.
 
 ## Trust boundaries
 
@@ -540,6 +541,20 @@ flowchart TB
     T3 --> T5
     T5 -.->|"enforces what T3 cannot be trusted to do"| T3
 ```
+
+### Who may do what
+
+The line between T1 and T2 is a wallet signature. A wallet signs in with a Sign-In with Ethereum message (EIP-4361) that names this site's domain, an Arc chain and a single-use nonce, and the session is an HMAC-signed token in an HttpOnly, SameSite=Lax cookie, or a bearer header for an API client (`auth/`, #70). A wallet takes one role, publisher or contributor, and links one GitHub account through OAuth, keeping only the login (#80). The link is what ties a GitHub identity to a party: a publisher's issues and a contributor's pull requests must match it.
+
+| Action | Who | Refused with |
+| --- | --- | --- |
+| Publish, approve criteria, fund, decline, approve a release, set policy | The publishing organisation, linked to GitHub | 401 signed out, 403 anyone else |
+| Claim, submit, dispute | A contributor linked to GitHub; a submission must be a pull request it opened | 401 signed out, 403 anyone else |
+| Ask for a review now | The publisher or the claimant | 401, 403 |
+| Spend, audit export, statements, a publisher's budget and policy | The party itself | 401, 403 |
+| Everything else read-only | Anyone | |
+
+Criteria are approved before the price, and funding is refused until they are (#21), so the contract a contributor claims is the one the publisher read. The simulation still lets an anonymous visitor drive the seeded demo, and only the simulation serves the demo stepper, which fabricates a pull request and a merge.
 
 The interesting line is between T3 and T4. Our services can produce an acceptance attestation, but only the escrow contract can act on it, and only for an issue whose funds are committed. Compromising a service gets an attacker the ability to request a release, not the ability to move a budget.
 
@@ -646,6 +661,7 @@ Technical terms only. Product and market terms are in [12 Glossary](./misthos/12
 | CCTP | Cross-Chain Transfer Protocol. Burns USDC on one chain and mints on another. Arc's domain is `26` |
 | Deterministic finality | A transaction is either unconfirmed or final, with no intermediate state and no reorg risk |
 | EIP-3009 | Standard for a signed transfer authorization, which is how an agent pays without holding gas |
+| EIP-4361 | Sign-In with Ethereum: a plain-text message a wallet signs to prove it controls an address, scoped to one site, chain and nonce |
 | Entity secret | Circle's 32-byte secret that authorizes signing for developer-controlled wallets. Circle does not store it |
 | EWMA | Exponentially weighted moving average, used by Arc to smooth the base fee |
 | Gateway | Circle's unified USDC balance. Nanopayments batch thousands of payments into one onchain transaction |

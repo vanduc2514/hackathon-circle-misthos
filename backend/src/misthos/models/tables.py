@@ -104,6 +104,7 @@ issues = Table(
     Column("accepted_by", String(16)),
     Column("payout_hold", String(32)),
     Column("payout_checked_at", Timestamp),
+    Column("criteria_approved_at", Timestamp),
     Column("relisted_from", Id, ForeignKey("issues.id")),
     Column("version", Integer, nullable=False),
 )
@@ -248,6 +249,17 @@ simulated_escrow = Table(
     Column("amount_base_units", BigInteger, nullable=False),
     Column("status", String(16), nullable=False),
     Column("last_tx_hash", String(80), nullable=False),
+)
+
+# A signed-in wallet and the role it chose (#70). One role per wallet.
+accounts = Table(
+    "accounts",
+    metadata,
+    Column("address", String(42), primary_key=True),
+    Column("role", String(16), nullable=False),
+    Column("party_id", Id, nullable=False, unique=True),
+    Column("github_login", String(64), unique=True),
+    Column("created_at", Timestamp, nullable=False),
 )
 
 # Every GitHub webhook delivery handled, so a redelivery is recognised and ignored.

@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     github_app_id: str = ""
     github_app_private_key: str = ""
     github_api_url: str = "https://api.github.com"
+    # Linking a user's own GitHub account (#80): the App's OAuth client credentials.
+    # Empty keeps linking simulated.
+    github_oauth_client_id: str = ""
+    github_oauth_client_secret: str = ""
+
+    # Sign-in (#70). Where the web app is served: the domain a sign-in message must
+    # name, and where GitHub returns after linking. The session secret signs session
+    # tokens; set it wherever more than one process, or a restart, must keep sessions.
+    public_url: str = "http://localhost:5173"
+    session_secret: str = ""
     circle_api_key: str = ""
 
     # The review agent. With a key, Claude judges each pull request against its
