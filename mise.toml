@@ -1,7 +1,11 @@
 [tools]
 node = "22"
 npm = "10.9.3"
-"npm:@circle-fin/cli" = "latest"
+# Circle's official CLI sits far below aube's reputation threshold (693 weekly
+# downloads against 1000), so mise refuses to install it without an explicit
+# approval. The exemption is scoped to this package: transitive dependencies stay
+# gated, and aube's malicious-package check still runs.
+"npm:@circle-fin/cli" = { version = "latest", allow_low_downloads = true }
 python = "3.11"
 uv = "0.11.6"
 foundry = "latest"
