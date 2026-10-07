@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from contextlib import AbstractContextManager
+from datetime import datetime
 from typing import Protocol
 
+from misthos.domain.compliance import PartyKind, Screening
 from misthos.domain.issue import IssueState
 from misthos.models.records import IssueRecord
 from misthos.schemas import Contributor, Decision, Publisher
@@ -44,7 +46,20 @@ class Repository(Protocol):
 
     def save_contributor(self, contributor: Contributor) -> None: ...
 
+    def get_contributor(self, contributor_id: str) -> Contributor | None: ...
+
     def list_contributors(self) -> list[Contributor]: ...
+
+    def record_screening(self, screening: Screening) -> None:
+        """Append one sanctions check to the audit trail. Never edited."""
+
+    def latest_screening(self, party_kind: PartyKind, party_id: str) -> Screening | None: ...
+
+    def list_screenings(self, party_kind: PartyKind, party_id: str) -> list[Screening]:
+        """Every check of one party, oldest first."""
+
+    def purge_screenings(self, before: datetime) -> int:
+        """Delete checks older than the retention period. Returns how many went."""
 
     def get_issue(self, issue_id: str) -> IssueRecord | None:
         """A private copy: changing it changes nothing until it is saved."""

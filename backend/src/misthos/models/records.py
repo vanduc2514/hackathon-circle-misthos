@@ -38,6 +38,16 @@ class IssueRecord:
     review: Review | None = None
     contributor_id: str | None = None
     paid: Usdc | None = None
+    paid_at: datetime | None = None
+    payout_tx_hash: str | None = None
+    """The release transfer. Kept off every public view: with the contributor's handle
+    on the issue page it would link their wallet to their GitHub identity."""
+    accepted_by: str | None = None
+    """What accepted the work and entitled the contributor to payment: a merge, or the
+    publisher's silence past the grace period. Set once, before the payout."""
+    payout_hold: str | None = None
+    """Why an entitled payout has not left the escrow yet, from the compliance gate."""
+    payout_checked_at: datetime | None = None
     relisted_from: str | None = None
     """The issue this one re-lists at a higher band after nobody claimed it."""
     decisions: list[Decision] = field(default_factory=list)

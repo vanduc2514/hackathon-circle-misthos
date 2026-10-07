@@ -1,11 +1,12 @@
 """Timers.
 
-Three things in the lifecycle happen because time passed rather than because
-someone acted: a claim lapses, a commitment reaches its deadline, and a passing
-verdict outlives the publisher's silence. Which of them is due is arithmetic over an
-issue's state and its timestamps, so it lives here, where it can be judged at any
-instant without a clock, a database or a worker. The sweeper asks this module what
-is due and the store carries it out; nothing here moves state.
+Four things in the lifecycle happen because time passed rather than because someone
+acted: a claim lapses, a commitment reaches its deadline, a passing verdict outlives
+the publisher's silence, and a payout that compliance held is checked again. Which of
+them is due is arithmetic over an issue's state and its timestamps, so it lives here,
+where it can be judged at any instant without a clock, a database or a worker. The
+sweeper asks this module what is due and the store carries it out; nothing here
+moves state.
 
 Work under review is deliberately never timed out. An issue in IN_REVIEW or REWORK
 past its deadline is the conflict #33 exists to settle in the contract, and refunding
@@ -18,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from misthos.domain.compliance import PAYOUT_RETRY_INTERVAL
 from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
 
 
@@ -25,6 +27,7 @@ class TimedAction(StrEnum):
     EXPIRE_CLAIM = "expire_claim"
     REFUND = "refund"
     RELEASE_AFTER_GRACE = "release_after_grace"
+    RETRY_PAYOUT = "retry_payout"
 
 
 # The only states a timer can move an issue out of.
@@ -39,6 +42,9 @@ class Clocks:
     deadline: datetime | None = None
     claim_expires_at: datetime | None = None
     verdict_passed_at: datetime | None = None
+    """When the verdict passed, while nothing has accepted the work yet."""
+    payout_held_since: datetime | None = None
+    """When compliance last held an owed payout. The retry waits an interval."""
 
 
 def due(clocks: Clocks, now: datetime) -> TimedAction | None:
@@ -51,6 +57,8 @@ def due(clocks: Clocks, now: datetime) -> TimedAction | None:
     match clocks.state:
         case IssueState.ACCEPTED if _elapsed(clocks.verdict_passed_at, now, SILENT_PUBLISHER_GRACE):
             return TimedAction.RELEASE_AFTER_GRACE
+        case IssueState.ACCEPTED if _elapsed(clocks.payout_held_since, now, PAYOUT_RETRY_INTERVAL):
+            return TimedAction.RETRY_PAYOUT
         case IssueState.CLAIMED if _elapsed(clocks.claim_expires_at, now) or _elapsed(
             clocks.deadline, now
         ):

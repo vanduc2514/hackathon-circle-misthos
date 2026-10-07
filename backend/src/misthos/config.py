@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     sweeper_in_process: bool = True
     sweep_interval_seconds: float = 60.0
 
+    # Wallets the simulated sanctions screening treats as listed, comma separated. A
+    # real screening provider replaces the simulated one; this is for demos and tests.
+    screening_denylist: str = ""
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

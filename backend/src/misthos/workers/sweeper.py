@@ -1,15 +1,20 @@
 """The sweeper.
 
-Claim expiry, deadline refunds and the silent-publisher release are owed to people
-whether or not anyone calls the API. Before this module they happened only when the
-demo stepper was pushed, which is to say they did not happen. The sweeper wakes on an
-interval, asks the store which open issues have a timer due, and has the store carry
-each one out, so the lifecycle keeps its single writer.
+Claim expiry, deadline refunds, the silent-publisher release and the retry of a
+payout that compliance held are owed to people whether or not anyone calls the API.
+Before this module they happened only when the demo stepper was pushed, which is to
+say they did not happen. The sweeper wakes on an interval, asks the store which open
+issues have a timer due, and has the store carry each one out, so the lifecycle keeps
+its single writer.
 
 It holds a named lock while it works, an advisory lock under Postgres, so a second
 API process or a dedicated worker never applies the same refund twice. An issue a
 person changed between the sweeper reading it and saving it is skipped and picked up
 on the next pass, never overwritten.
+
+Each pass also screens live counterparties whose last check is a day old, because
+screening once at onboarding is the mistake 08 is written against, and deletes
+screening records past their published retention period.
 """
 
 from __future__ import annotations
@@ -34,6 +39,10 @@ class SweepReport:
     """Issue id to the timed actions carried out on it."""
     skipped: list[str] = field(default_factory=list)
     """Issues that changed mid-sweep. They are retried on the next pass."""
+    screened: int = 0
+    """Counterparties screened again on schedule."""
+    purged: int = 0
+    """Screening records deleted at the end of their retention period."""
 
 
 def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
@@ -51,7 +60,11 @@ def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
                 continue
             if actions:
                 applied[rec.id] = [a.value for a in actions]
-        return SweepReport(ran=True, applied=applied, skipped=skipped)
+        screened = store.rescreen(now)
+        purged = store.purge_expired(now)
+        return SweepReport(
+            ran=True, applied=applied, skipped=skipped, screened=len(screened), purged=purged
+        )
 
 
 async def run_forever(store: Store, interval_seconds: float) -> None:

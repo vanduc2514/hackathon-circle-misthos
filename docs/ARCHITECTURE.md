@@ -18,6 +18,7 @@ The diagrams below describe the target system. This table is what is actually in
 | Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
 | Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
 | Data | Postgres, Redis | Postgres built and optional: memory by default, durable once `MISTHOS_DATABASE_URL` is set. Redis not built |
+| Compliance | Screening, identity at first payout, statements | Built against simulated providers. See [PRIVACY.md](./PRIVACY.md) |
 | Integrations | GitHub App, Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
 
 Everything marked not built has its interface in place, which is why the missing pieces are listed here as work rather than as risk.
@@ -514,9 +515,10 @@ Key material rules:
 | Control | Where it runs | Why there |
 | --- | --- | --- |
 | Sanctions screening before submission | Circle wallet and Facilitator Service | Blocked transfers never reach the chain |
-| Contributor identity verification | At first payout | Progressive. Verifying at signup is the main contributor drop-off cause |
-| Publisher screening | At organisation onboarding | Before the first commitment |
-| Continuous re-screening | Scheduled, plus on risk events | Point-in-time screening is the industry's mistake and the hackathon's fifth brief is about it |
+| Contributor identity verification | At first payout, in the store's payout gate | Progressive. Verifying at signup is the main contributor drop-off cause. Documents stay with the provider |
+| Publisher screening | Before the first commitment, when the price is approved | A listed publisher's commitment is refused |
+| Contributor screening | At every payout, not only the first | Someone listed after verification is caught before money moves |
+| Continuous re-screening | The sweeper, daily for every live counterparty; risk events to come | Point-in-time screening is the industry's mistake and the hackathon's fifth brief is about it |
 | Recipient allowlist | Wallet policy, enforced on-chain | Reduces the blast radius of a compromised key |
 | Blocklist awareness | Arc runtime plus our pre-checks | A blocklist revert still burns gas, so we check before sending |
 

@@ -98,6 +98,7 @@ class TestRestart:
         for rec in originals:
             assert repo.get_issue(rec.id) == replace(rec, version=1), rec.id
         assert repo.list_publishers() == sorted(built.list_publishers(), key=lambda p: p.id)
+        assert repo.list_contributors() == sorted(built.list_contributors(), key=lambda c: c.id)
 
     def test_new_ids_carry_on_after_a_restart(self, database_url: str) -> None:
         """The id sequences live in the database, so a second process cannot reuse one."""
@@ -168,3 +169,41 @@ class TestSchema:
         again = store.get("ISS-1006")
         assert again is not None and again.proposal is not None
         assert again.proposal.recommended == Usdc.from_decimal("999")
+
+
+class TestMigrations:
+    def test_verified_contributors_keep_their_status_through_the_identity_migration(
+        self, database_url: str
+    ) -> None:
+        """0002 turns the old boolean into the provider's outcome without losing anyone."""
+        from alembic import command
+        from alembic.config import Config
+        from sqlalchemy import text
+
+        repo = SqlRepository(database_url)
+        config = Config()
+        config.set_main_option("script_location", "misthos:migrations")
+
+        def run(step: str, revision: str) -> None:
+            with repo.engine.begin() as conn:
+                config.attributes["connection"] = conn
+                getattr(command, step)(config, revision)
+
+        run("upgrade", "head")
+        repo.reset()  # the downgrade below must not trip over rows from other tests
+        run("downgrade", "0001")
+        with repo.engine.begin() as conn:
+            for cid, verified in (("CON-A", True), ("CON-B", False)):
+                conn.execute(
+                    text(
+                        "INSERT INTO contributors (id, handle, wallet_address, chain, "
+                        "reputation, settled_issues, earned_base_units, verified) VALUES "
+                        "(:id, :id, '0x0', 'arc-testnet', 0, 0, 0, :verified)"
+                    ),
+                    {"id": cid, "verified": verified},
+                )
+        run("upgrade", "head")
+
+        statuses = {c.id: c.identity_status for c in repo.list_contributors()}
+        assert statuses == {"CON-A": "verified", "CON-B": "unverified"}
+        repo.reset()

@@ -11,7 +11,9 @@ import copy
 import threading
 from collections.abc import Collection, Iterator
 from contextlib import contextmanager
+from datetime import datetime
 
+from misthos.domain.compliance import PartyKind, Screening
 from misthos.domain.issue import IssueState
 from misthos.models.records import IssueRecord
 from misthos.repositories.base import AppendOnlyViolation, StaleIssue
@@ -30,6 +32,7 @@ class MemoryRepository:
             self._contributors: dict[str, Contributor] = {}
             self._issues: dict[str, IssueRecord] = {}
             self._counters: dict[str, int] = {}
+            self._screenings: list[Screening] = []
 
     def is_empty(self) -> bool:
         with self._guard:
@@ -60,9 +63,39 @@ class MemoryRepository:
         with self._guard:
             self._contributors[contributor.id] = contributor.model_copy(deep=True)
 
+    def get_contributor(self, contributor_id: str) -> Contributor | None:
+        with self._guard:
+            found = self._contributors.get(contributor_id)
+            return found.model_copy(deep=True) if found else None
+
     def list_contributors(self) -> list[Contributor]:
         with self._guard:
             return [c.model_copy(deep=True) for c in self._contributors.values()]
+
+    # --------------------------------------------------------- screenings
+
+    def record_screening(self, screening: Screening) -> None:
+        with self._guard:
+            self._screenings.append(screening)
+
+    def latest_screening(self, party_kind: PartyKind, party_id: str) -> Screening | None:
+        found = self.list_screenings(party_kind, party_id)
+        return found[-1] if found else None
+
+    def list_screenings(self, party_kind: PartyKind, party_id: str) -> list[Screening]:
+        with self._guard:
+            return [
+                s
+                for s in self._screenings
+                if s.party_kind is party_kind and s.party_id == party_id
+            ]
+
+    def purge_screenings(self, before: datetime) -> int:
+        with self._guard:
+            kept = [s for s in self._screenings if s.checked_at >= before]
+            purged = len(self._screenings) - len(kept)
+            self._screenings = kept
+            return purged
 
     # ------------------------------------------------------------- issues
 

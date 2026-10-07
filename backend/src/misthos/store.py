@@ -20,14 +20,23 @@ from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 from misthos.config import settings
+from misthos.domain import compliance, pricing, timers
 from misthos.domain import issue as lifecycle
-from misthos.domain import pricing, timers
+from misthos.domain.compliance import (
+    ComplianceRefusal,
+    IdentityStatus,
+    PartyKind,
+    PayoutGate,
+    Screening,
+    ScreeningOutcome,
+    ScreeningReason,
+)
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import ComplexitySignals, UnfundableIssue, propose
 from misthos.domain.timers import TimedAction
 from misthos.models.records import IssueRecord
-from misthos.repositories import MemoryRepository, Repository, build_repository
+from misthos.repositories import MemoryRepository, Repository, StaleIssue, build_repository
 from misthos.schemas import (
     Claim,
     Contributor,
@@ -42,6 +51,12 @@ from misthos.schemas import (
     TimelineEntry,
     Wallet,
     money,
+)
+from misthos.services.compliance import (
+    IdentityProvider,
+    ScreeningProvider,
+    SimulatedIdentity,
+    SimulatedScreening,
 )
 
 __all__ = ["IssueRecord", "Store", "store"]
@@ -72,9 +87,39 @@ def _budget(publisher: Publisher) -> Usdc:
     return Usdc.from_decimal(publisher.budget_remaining_usdc.replace(",", ""))
 
 
+# Why a payout waits, in the words the decision log uses for it.
+_HOLDS: dict[PayoutGate, tuple[str, str]] = {
+    PayoutGate.AWAIT_IDENTITY: (
+        "identity_at_first_payout",
+        "the payout waits for {handle}'s identity verification, the only step a first "
+        "payout needs",
+    ),
+    PayoutGate.BLOCKED_SANCTIONS: (
+        "sanctions_screening",
+        "{handle}'s wallet is on a sanctions list, so the payout is blocked until "
+        "compliance reviews it",
+    ),
+    PayoutGate.BLOCKED_IDENTITY: (
+        "identity_at_first_payout",
+        "{handle}'s identity verification failed, so the payout waits for a person to "
+        "review it",
+    ),
+}
+
+
 class Store:
-    def __init__(self, repository: Repository | None = None) -> None:
+    def __init__(
+        self,
+        repository: Repository | None = None,
+        *,
+        screening: ScreeningProvider | None = None,
+        identity: IdentityProvider | None = None,
+    ) -> None:
         self.repo: Repository = repository or MemoryRepository()
+        self.screening: ScreeningProvider = screening or SimulatedScreening(
+            settings.screening_denylist.split(",")
+        )
+        self.identity: IdentityProvider = identity or SimulatedIdentity()
         self._ready = False
         self._ready_guard = threading.Lock()
 
@@ -219,6 +264,7 @@ class Store:
         if target is IssueState.ACCEPTED:
             return rec
 
+        rec.accepted_by = "merge"
         self._release(rec, when=rec.created_at + timedelta(hours=45, minutes=2))
         return rec
 
@@ -248,9 +294,17 @@ class Store:
         self.ensure_ready()
         self.repo.save_publisher(publisher)
 
+    def get_contributor(self, contributor_id: str) -> Contributor | None:
+        self.ensure_ready()
+        return self.repo.get_contributor(contributor_id)
+
     def list_contributors(self) -> list[Contributor]:
         self.ensure_ready()
         return self.repo.list_contributors()
+
+    def save_contributor(self, contributor: Contributor) -> None:
+        self.ensure_ready()
+        self.repo.save_contributor(contributor)
 
     def list_decisions(self, limit: int) -> list[Decision]:
         self.ensure_ready()
@@ -359,6 +413,9 @@ class Store:
         self._move(rec, IssueState.PAID)
         rec.escrow.released = True
         rec.paid = rec.proposal.recommended
+        rec.paid_at = when or _now()
+        rec.payout_tx_hash = _tx_hash(self.repo.next_value("tx", 0x4A1))
+        rec.payout_hold = None
         self._log(
             rec,
             actor="system",
@@ -457,16 +514,214 @@ class Store:
         )
         return relisted
 
+    # ------------------------------------------------------------- compliance
+
+    def _screen(
+        self, kind: PartyKind, party_id: str, wallet: str, reason: ScreeningReason, now: datetime
+    ) -> Screening:
+        outcome, list_name = self.screening.screen(wallet)
+        screening = Screening(
+            party_kind=kind,
+            party_id=party_id,
+            wallet_address=wallet,
+            outcome=outcome,
+            provider=self.screening.name,
+            reason=reason,
+            checked_at=now,
+            list_name=list_name,
+        )
+        self.repo.record_screening(screening)
+        return screening
+
+    def _verify_identity(
+        self, rec: IssueRecord, contributor: Contributor, now: datetime
+    ) -> IdentityStatus:
+        """Verify at first payout and never before. Opens a provider session the first
+        time a contributor is owed money, and reads its outcome after that."""
+        current = IdentityStatus(contributor.identity_status)
+        if current in {IdentityStatus.VERIFIED, IdentityStatus.FAILED}:
+            return current
+
+        outcome = (
+            self.identity.status(contributor.identity_reference)
+            if contributor.identity_reference
+            else IdentityStatus.UNVERIFIED
+        )
+        if outcome is IdentityStatus.UNVERIFIED:
+            # Never started, or the provider has no record of it: open a session now.
+            contributor.identity_reference = self.identity.start(contributor.id)
+            self._log(
+                rec,
+                actor="system",
+                action="identity_check_started",
+                rule="identity_at_first_payout",
+                outcome=f"{contributor.handle} is owed a first payout, so {self.identity.name} "
+                "verifies their identity now; the documents go to the provider, never to us",
+                when=now,
+            )
+            outcome = self.identity.status(contributor.identity_reference)
+
+        if outcome is IdentityStatus.VERIFIED:
+            contributor.identity_verified_at = now
+            self._log(
+                rec,
+                actor="system",
+                action="identity_verified",
+                rule="identity_at_first_payout",
+                outcome=f"{self.identity.name} verified {contributor.handle}",
+                when=now,
+            )
+        contributor.identity_status = (
+            IdentityStatus.PENDING if outcome is IdentityStatus.UNVERIFIED else outcome
+        ).value
+        self.repo.save_contributor(contributor)
+        return IdentityStatus(contributor.identity_status)
+
+    def _pay(self, rec: IssueRecord, now: datetime) -> bool:
+        """Release an entitled payout if compliance allows it, or record why it waits.
+
+        Every payout screens the contributor again, not only the first, so someone
+        listed after they were verified is caught before money moves.
+        """
+        assert rec.accepted_by is not None and rec.contributor_id is not None
+        contributor = self.repo.get_contributor(rec.contributor_id)
+        assert contributor is not None
+        screening = self._screen(
+            PartyKind.CONTRIBUTOR,
+            contributor.id,
+            contributor.wallet.address,
+            ScreeningReason.PAYOUT,
+            now,
+        )
+        identity = (
+            self._verify_identity(rec, contributor, now)
+            if screening.outcome is ScreeningOutcome.CLEAR
+            else IdentityStatus(contributor.identity_status)
+        )
+        gate = compliance.payout_gate(screening.outcome, identity)
+        rec.payout_checked_at = now
+
+        if gate is PayoutGate.RELEASE:
+            rule = (
+                "silent_publisher_grace_period"
+                if rec.accepted_by == "grace"
+                else "escrow_acceptance_attestation"
+            )
+            self._release(rec, rule=rule, when=now)
+            return True
+
+        if rec.payout_hold != gate.value:
+            rule, outcome = _HOLDS[gate]
+            self._log(
+                rec,
+                actor="system",
+                action="payout_held",
+                rule=rule,
+                outcome=outcome.format(handle=contributor.handle),
+                when=now,
+            )
+        rec.payout_hold = gate.value
+        return False
+
+    def _screen_publisher_for_funding(self, rec: IssueRecord, now: datetime) -> None:
+        """Screen the publisher before the first money is committed, and refuse a hit."""
+        publisher = self.repo.get_publisher(rec.publisher_id)
+        assert publisher is not None
+        screening = self._screen(
+            PartyKind.PUBLISHER,
+            publisher.id,
+            publisher.wallet.address,
+            ScreeningReason.FUNDING,
+            now,
+        )
+        if screening.outcome is ScreeningOutcome.CLEAR:
+            return
+        reason = (
+            f"{publisher.name}'s wallet is on {screening.list_name}, so the commitment is "
+            "refused until compliance reviews it"
+        )
+        self._log(
+            rec,
+            actor="system",
+            action="funding_refused",
+            rule="sanctions_screening",
+            outcome=reason,
+            when=now,
+        )
+        self.repo.save_issues(rec)
+        raise ComplianceRefusal(reason)
+
+    def rescreen(self, now: datetime | None = None) -> list[Screening]:
+        """Screen every live counterparty whose last check is a day old.
+
+        Live means party to an issue with money committed and the work not settled. A
+        new hit is written on each of their open issues; the payout gate is what stops
+        the money, at the moment it would move.
+        """
+        self.ensure_ready()
+        now = now or _now()
+        live = self.repo.list_issues(lifecycle.OPEN_STATES)
+        parties: dict[tuple[PartyKind, str], list[IssueRecord]] = {}
+        for rec in live:
+            parties.setdefault((PartyKind.PUBLISHER, rec.publisher_id), []).append(rec)
+            if rec.contributor_id:
+                parties.setdefault((PartyKind.CONTRIBUTOR, rec.contributor_id), []).append(rec)
+
+        screened: list[Screening] = []
+        for (kind, party_id), issues in parties.items():
+            last = self.repo.latest_screening(kind, party_id)
+            if not compliance.rescreen_due(last.checked_at if last else None, now):
+                continue
+            party = (
+                self.repo.get_publisher(party_id)
+                if kind is PartyKind.PUBLISHER
+                else self.repo.get_contributor(party_id)
+            )
+            assert party is not None
+            screening = self._screen(
+                kind, party_id, party.wallet.address, ScreeningReason.SCHEDULED, now
+            )
+            screened.append(screening)
+            newly_listed = screening.outcome is ScreeningOutcome.HIT and (
+                last is None or last.outcome is ScreeningOutcome.CLEAR
+            )
+            if newly_listed:
+                for rec in issues:
+                    self._log(
+                        rec,
+                        actor="system",
+                        action="counterparty_flagged",
+                        rule="continuous_screening",
+                        outcome=f"the {kind.value} {party_id} is now on {screening.list_name}; "
+                        "no money moves on this issue until compliance clears it",
+                        when=now,
+                    )
+                    try:
+                        self.repo.save_issues(rec)
+                    except StaleIssue:
+                        # Someone acted on it meanwhile. The payout gate still screens.
+                        continue
+        return screened
+
+    def purge_expired(self, now: datetime | None = None) -> int:
+        """Delete screening records past the published retention period."""
+        self.ensure_ready()
+        return self.repo.purge_screenings((now or _now()) - compliance.SCREENING_RETENTION)
+
     # ----------------------------------------------------------------- timers
 
     @staticmethod
     def _clocks(rec: IssueRecord) -> timers.Clocks:
+        # The grace period only runs until something accepts the work; after that the
+        # payout is owed, and what is timed is retrying it when compliance held it.
         passed = rec.review is not None and rec.review.verdict == "accept"
+        awaiting_acceptance = passed and rec.accepted_by is None
         return timers.Clocks(
             state=rec.state,
             deadline=rec.deadline,
             claim_expires_at=rec.claim.expires_at if rec.claim else None,
-            verdict_passed_at=rec.review.decided_at if passed and rec.review else None,
+            verdict_passed_at=rec.review.decided_at if awaiting_acceptance and rec.review else None,
+            payout_held_since=rec.payout_checked_at if rec.payout_hold else None,
         )
 
     def _apply_due(
@@ -481,7 +736,10 @@ class Store:
                 case TimedAction.RELEASE_AFTER_GRACE:
                     # The verdict passed and the publisher went quiet past the grace
                     # window. Release rather than strand finished work.
-                    self._release(rec, rule="silent_publisher_grace_period", when=now)
+                    rec.accepted_by = "grace"
+                    self._pay(rec, now)
+                case TimedAction.RETRY_PAYOUT:
+                    self._pay(rec, now)
                 case TimedAction.EXPIRE_CLAIM:
                     rule = (
                         "deadline_passed"
@@ -534,6 +792,7 @@ class Store:
 
         match rec.state:
             case IssueState.AWAITING_APPROVAL:
+                self._screen_publisher_for_funding(rec, now)
                 self._fund(rec)
                 self._log(
                     rec,
@@ -590,7 +849,7 @@ class Store:
                     outcome="accepted: criteria met, checks passing, diff in scope",
                     cost="6.00",
                 )
-            case IssueState.ACCEPTED:
+            case IssueState.ACCEPTED if rec.accepted_by is None:
                 # Merging is acceptance, and acceptance is what releases the money,
                 # so the merge goes on the record before the release does.
                 self._log(
@@ -600,7 +859,11 @@ class Store:
                     rule="merge_is_acceptance",
                     outcome="publisher merged the pull request, which is acceptance",
                 )
-                self._release(rec)
+                rec.accepted_by = "merge"
+                self._pay(rec, now)
+            case IssueState.ACCEPTED:
+                # Accepted, and the payout is held: the step is checking it again.
+                self._pay(rec, now)
             case IssueState.REWORK:
                 self._submit(
                     rec,
@@ -852,7 +1115,9 @@ def _seed_contributors() -> dict[str, Contributor]:
             reputation=r[2],
             settled_issues=r[3],
             earned_usdc=r[4],
-            verified=r[5],
+            # Seeded contributors who have been paid before were verified then.
+            identity_status="verified" if r[5] else "unverified",
+            identity_reference="seeded" if r[5] else None,
         )
         for r in rows
     }
