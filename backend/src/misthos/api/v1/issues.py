@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from collections.abc import Callable
+from typing import Any
+
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 
+from misthos.api.guards import idempotent, limit_actions, limit_publish
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.issue import IllegalTransition, IssueState
@@ -18,6 +22,8 @@ from misthos.schemas import (
     PublishRequest,
     TimelineEntry,
 )
+from misthos.services.chain import ChainRevert
+from misthos.services.coordination import Busy
 from misthos.store import IssueRecord, store
 
 router = APIRouter(tags=["issues"])
@@ -36,7 +42,22 @@ async def _require(issue_id: str) -> IssueRecord:
 def _conflict(exc: Exception) -> HTTPException:
     # A stale copy means someone, or the sweeper, moved the issue first. Retrying
     # reads the new state; overwriting it could undo a refund or a release.
+    if isinstance(exc, Busy):
+        # Someone holds the issue for an action that takes well under a second.
+        return HTTPException(status_code=409, detail=str(exc), headers={"Retry-After": "1"})
+    if isinstance(exc, ChainRevert):
+        # The escrow refused the call, so no money moved and nothing was saved.
+        return HTTPException(status_code=409, detail=f"the escrow refused: {exc}")
     return HTTPException(status_code=409, detail=str(exc))
+
+
+# Sent with anything that moves money or creates work, so a retry after a timeout
+# gets the first answer back instead of a second payment or a duplicate issue.
+IDEMPOTENCY_KEY = Header(
+    default=None,
+    description="Any unique string, such as a UUID. Retries with the same key get "
+    "the first response back for 24 hours instead of running again.",
+)
 
 
 def _refused(exc: ComplianceRefusal) -> HTTPException:
@@ -87,43 +108,68 @@ async def get_timeline(issue_id: str) -> list[TimelineEntry]:
     return store.timeline(await _require(issue_id))
 
 
-@router.post("/issues/{issue_id}/advance", response_model=IssueOut)
-async def advance(issue_id: str) -> IssueOut:
+async def _act(step: Callable[[str], IssueRecord], issue_id: str) -> IssueOut:
+    try:
+        rec = await run_in_threadpool(step, issue_id)
+    except (IllegalTransition, StaleIssue, Busy, ChainRevert) as exc:
+        raise _conflict(exc) from exc
+    except ComplianceRefusal as exc:
+        raise _refused(exc) from exc
+    return await run_in_threadpool(store.to_out, rec)
+
+
+@router.post(
+    "/issues/{issue_id}/advance",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={409: {"description": "Illegal step, busy issue or refused by the escrow"}},
+)
+async def advance(
+    issue_id: str, request: Request, idempotency_key: str | None = IDEMPOTENCY_KEY
+) -> Any:
     """Move the issue one step along the demo path."""
     await _require(issue_id)
-    try:
-        rec = await run_in_threadpool(store.advance, issue_id)
-    except (IllegalTransition, StaleIssue) as exc:
-        raise _conflict(exc) from exc
-    except ComplianceRefusal as exc:
-        raise _refused(exc) from exc
-    return await run_in_threadpool(store.to_out, rec)
+    return await idempotent(request, idempotency_key, lambda: _act(store.advance, issue_id))
 
 
-@router.post("/issues/{issue_id}/complete", response_model=IssueOut)
-async def complete(issue_id: str) -> IssueOut:
+@router.post(
+    "/issues/{issue_id}/complete",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={409: {"description": "Illegal step, busy issue or refused by the escrow"}},
+)
+async def complete(
+    issue_id: str, request: Request, idempotency_key: str | None = IDEMPOTENCY_KEY
+) -> Any:
     """Run the rest of the happy path: verdict, merge, release."""
     await _require(issue_id)
-    try:
-        rec = await run_in_threadpool(store.approve_and_accept, issue_id)
-    except (IllegalTransition, StaleIssue) as exc:
-        raise _conflict(exc) from exc
-    except ComplianceRefusal as exc:
-        raise _refused(exc) from exc
-    return await run_in_threadpool(store.to_out, rec)
+    return await idempotent(
+        request, idempotency_key, lambda: _act(store.approve_and_accept, issue_id)
+    )
 
 
-@router.post("/issues", response_model=IssueOut, status_code=201)
-async def publish(payload: PublishRequest) -> IssueOut:
+@router.post(
+    "/issues",
+    response_model=IssueOut,
+    status_code=201,
+    dependencies=[limit_publish],
+)
+async def publish(
+    payload: PublishRequest, request: Request, idempotency_key: str | None = IDEMPOTENCY_KEY
+) -> Any:
     if await run_in_threadpool(store.get_publisher, payload.publisher_id) is None:
         raise HTTPException(status_code=400, detail=f"unknown publisher {payload.publisher_id}")
-    try:
-        rec = await run_in_threadpool(store.publish, payload)
-    except UnfundableIssue as exc:
-        # Well formed, but the work cannot carry its own review cost. Say why rather
-        # than publish a price the platform loses money on.
-        raise HTTPException(status_code=422, detail=exc.justification) from exc
-    return await run_in_threadpool(store.to_out, rec)
+
+    async def run() -> IssueOut:
+        try:
+            rec = await run_in_threadpool(store.publish, payload)
+        except UnfundableIssue as exc:
+            # Well formed, but the work cannot carry its own review cost. Say why
+            # rather than publish a price the platform loses money on.
+            raise HTTPException(status_code=422, detail=exc.justification) from exc
+        return await run_in_threadpool(store.to_out, rec)
+
+    return await idempotent(request, idempotency_key, run, status_code=201)
 
 
 @router.get("/publishers", response_model=list[Publisher])

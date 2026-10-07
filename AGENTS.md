@@ -32,8 +32,11 @@ agent reviews the pull request against the acceptance criteria, and payment sett
 ### Current status
 
 A scaffold with a working simulation. The lifecycle, pricing engine, escrow contract,
-decision log and its timers are real code; the GitHub calls and the money are fake — no
-chain is contacted. State is in memory unless `MISTHOS_DATABASE_URL` points at Postgres.
+decision log, money ledger and its timers are real code; the GitHub calls and the money
+are fake — no chain is contacted, and the escrow is a simulated one behind the chain
+gateway. State is in memory unless `MISTHOS_DATABASE_URL` points at Postgres, and the
+per-issue lock, idempotency keys and rate limits are per process unless
+`MISTHOS_REDIS_URL` points at Redis.
 Do not assume a live integration because a module names one.
 
 ## Project layout

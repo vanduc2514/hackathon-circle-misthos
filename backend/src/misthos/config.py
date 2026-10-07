@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     # real screening provider replaces the simulated one; this is for demos and tests.
     screening_denylist: str = ""
 
+    # Redis for the per-issue lock, idempotency keys and rate limits across processes.
+    # Empty keeps them in this process: right for one process, wrong for two.
+    redis_url: str = ""
+    # Requests per client per minute. Zero turns the limit off.
+    rate_limit_publish_per_minute: int = 30
+    rate_limit_actions_per_minute: int = 120
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

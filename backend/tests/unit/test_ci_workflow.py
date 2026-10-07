@@ -67,3 +67,12 @@ def test_the_backend_suite_also_runs_against_postgres(workflow: dict) -> None:
     assert commands == ["mise run setup:backend", "mise run test:backend"]
     assert job["env"]["MISTHOS_DATABASE_URL"].startswith("postgresql")
     assert "postgres" in job["services"]
+
+
+def test_the_guards_also_run_against_redis(workflow: dict) -> None:
+    """Without Redis the lock, idempotency keys and rate limits are per process, so this
+    job is the only thing that proves them where a deployment would keep them."""
+    job = workflow["jobs"]["backend-postgres"]
+
+    assert job["env"]["MISTHOS_REDIS_URL"].startswith("redis://")
+    assert "redis" in job["services"]

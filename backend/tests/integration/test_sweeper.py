@@ -125,16 +125,53 @@ class TestSweeping:
         assert report.ran is False
         assert get("ISS-1001").state is IssueState.FUNDED
 
-    def test_an_issue_changed_mid_sweep_is_skipped_not_overwritten(
+    def test_a_timer_acts_on_what_was_saved_not_on_the_copy_it_listed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A contributor claimed it after the sweeper read it: the claim stands."""
-        stale = get("ISS-1001")
-        assert stale.deadline is not None
-        store.advance("ISS-1001")  # claimed while the sweeper holds the old copy
+        """The contributor opened a pull request after the sweeper listed the issue:
+        the claim it would have expired no longer exists, and the submission stands."""
+        stale = get("ISS-1003")  # seeded CLAIMED
+        assert stale.claim is not None
+        store.advance("ISS-1003")  # submitted while the sweeper holds the old copy
         monkeypatch.setattr(store, "list_issues", lambda states=None: [stale])
 
-        report = sweep_once(store, now=stale.deadline + A_MINUTE)
+        report = sweep_once(store, now=stale.claim.expires_at + A_MINUTE)
 
+        assert "ISS-1003" not in report.applied
+        after = get("ISS-1003")
+        assert after.state is IssueState.IN_REVIEW
+        assert "claim_expired" not in [d.action for d in after.decisions]
+
+    def test_an_issue_someone_is_acting_on_is_skipped_until_the_next_pass(self) -> None:
+        funded = get("ISS-1001")
+        assert funded.deadline is not None
+        due = funded.deadline + A_MINUTE
+
+        with store.coordinator.lock("issue:ISS-1001", timedelta(seconds=30)) as held:
+            assert held
+            report = sweep_once(store, now=due)
         assert report.skipped == ["ISS-1001"]
-        assert get("ISS-1001").state is IssueState.CLAIMED
+        assert get("ISS-1001").state is IssueState.FUNDED
+
+        assert sweep_once(store, now=due).applied["ISS-1001"] == ["refund"]
+
+    def test_one_failing_issue_does_not_stop_the_others(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from misthos.services.chain import ChainRevert
+
+        funded = get("ISS-1001")
+        assert funded.deadline is not None
+        refund = store.chain.refund
+
+        def refuse_one(issue_id: str, at: object) -> str:
+            if issue_id == "ISS-1001":
+                raise ChainRevert("NotHeld")
+            return refund(issue_id, at)
+
+        monkeypatch.setattr(store.chain, "refund", refuse_one)
+        report = sweep_once(store, now=funded.deadline + timedelta(days=30))
+
+        assert report.failed == ["ISS-1001"]
+        assert get("ISS-1001").state is IssueState.FUNDED  # nothing half-saved
+        assert report.applied  # every other due issue still moved

@@ -31,11 +31,13 @@ jobs:
       - run: mise run lint:backend
       - run: mise run test:backend
 
-  # The same backend suite against a real Postgres. MISTHOS_DATABASE_URL switches the
-  # store from memory to the SQL repository, so every API and lifecycle test also
-  # proves the schema, the migrations and the save path (#23).
+  # The same backend suite against a real Postgres and a real Redis.
+  # MISTHOS_DATABASE_URL switches the store from memory to the SQL repository, so every
+  # API and lifecycle test also proves the schema, the migrations and the save path
+  # (#23). MISTHOS_REDIS_URL moves the per-issue lock, idempotency keys and rate limits
+  # into Redis, so the guard tests prove them across processes (#67).
   backend-postgres:
-    name: backend - pytest against Postgres
+    name: backend - pytest against Postgres and Redis
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -51,8 +53,18 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       MISTHOS_DATABASE_URL: postgresql+psycopg://misthos:misthos@localhost:5432/misthos
+      MISTHOS_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5

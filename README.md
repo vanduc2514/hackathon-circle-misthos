@@ -101,6 +101,14 @@ MISTHOS_DATABASE_URL=postgresql://user:pass@localhost/misthos mise run dev:api
 MISTHOS_DATABASE_URL=sqlite:///misthos.db mise run dev:api
 ```
 
+To run more than one API process, add Redis as well. It holds the per-issue lock, the
+`Idempotency-Key` answers and the rate-limit counters, which otherwise live in each
+process:
+
+```bash
+MISTHOS_REDIS_URL=redis://localhost:6379/0 mise run dev:api
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

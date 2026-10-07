@@ -215,6 +215,34 @@ screenings = Table(
     Index("ix_screenings_party", "party_kind", "party_id", "checked_at"),
 )
 
+# The money ledger: every commitment, release and refund, appended and never edited.
+# Reconciled against the chain, which is the authority; see domain/ledger.py.
+money_events = Table(
+    "money_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("issue_id", Id, ForeignKey("issues.id"), nullable=False),
+    Column("position", Integer, nullable=False),
+    Column("kind", String(16), nullable=False),
+    Column("amount_base_units", BigInteger, nullable=False),
+    Column("counterparty_id", Id, nullable=False),
+    Column("tx_hash", String(80), nullable=False, unique=True),
+    Column("occurred_at", Timestamp, nullable=False),
+    UniqueConstraint("issue_id", "position"),
+)
+
+# The simulated chain's own books. Not the ledger: the thing the ledger is reconciled
+# against while no real chain is contacted. Unused once the Arc client runs (#69).
+simulated_escrow = Table(
+    "simulated_escrow",
+    metadata,
+    Column("issue_id", Id, primary_key=True),
+    Column("publisher_wallet", String(64), nullable=False),
+    Column("amount_base_units", BigInteger, nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("last_tx_hash", String(80), nullable=False),
+)
+
 # Sequences for the human-readable ids (ISS-1001, DEC-0001), shared by every process.
 counters = Table(
     "counters",

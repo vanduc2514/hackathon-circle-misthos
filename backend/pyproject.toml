@@ -12,6 +12,8 @@ dependencies = [
     "sqlalchemy>=2.0.30",
     "alembic>=1.13",
     "psycopg[binary]>=3.2",
+    # The per-issue lock, idempotency keys and rate limits across processes.
+    "redis>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +24,8 @@ dev = [
     "ruff>=0.7",
     # The CI workflow guard test reads .github/workflows/ci.yml.
     "pyyaml>=6.0",
+    # An in-process Redis for the coordinator's tests.
+    "fakeredis[lua]>=2.26",
 ]
 
 [build-system]

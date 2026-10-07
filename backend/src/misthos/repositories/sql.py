@@ -30,6 +30,7 @@ from misthos.domain.compliance import (
     ScreeningReason,
 )
 from misthos.domain.issue import IssueState
+from misthos.domain.ledger import MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc, format_usdc
 from misthos.domain.pricing import PriceProposal
 from misthos.models import tables as t
@@ -335,6 +336,7 @@ def _save(conn: Connection, rec: IssueRecord) -> None:
     _save_submission(conn, rec)
     _save_review(conn, rec)
     _save_decisions(conn, rec)
+    _save_money_events(conn, rec)
 
 
 def _save_proposal(conn: Connection, rec: IssueRecord) -> None:
@@ -461,6 +463,31 @@ def _save_decisions(conn: Connection, rec: IssueRecord) -> None:
         )
 
 
+def _save_money_events(conn: Connection, rec: IssueRecord) -> None:
+    stored = conn.execute(
+        select(func.count()).select_from(t.money_events).where(t.money_events.c.issue_id == rec.id)
+    ).scalar_one()
+    if len(rec.money_events) < stored:
+        raise AppendOnlyViolation(f"issue {rec.id} would lose money events")
+    fresh = rec.money_events[stored:]
+    if fresh:
+        conn.execute(
+            insert(t.money_events),
+            [
+                {
+                    "issue_id": rec.id,
+                    "position": stored + offset,
+                    "kind": e.kind.value,
+                    "amount_base_units": e.amount.base_units,
+                    "counterparty_id": e.counterparty_id,
+                    "tx_hash": e.tx_hash,
+                    "occurred_at": e.occurred_at,
+                }
+                for offset, e in enumerate(fresh)
+            ],
+        )
+
+
 def _upsert(conn: Connection, table: Any, key: dict[str, Any], values: dict[str, Any]) -> None:
     where = [table.c[k] == v for k, v in key.items()]
     if conn.execute(update(table).where(*where).values(**values)).rowcount == 0:
@@ -501,6 +528,14 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
     ).mappings():
         logs[row["issue_id"]].append(_decision(row))
 
+    ledger: dict[str, list[MoneyEvent]] = defaultdict(list)
+    for row in conn.execute(
+        select(t.money_events)
+        .where(t.money_events.c.issue_id.in_(ids))
+        .order_by(t.money_events.c.issue_id, t.money_events.c.position)
+    ).mappings():
+        ledger[row["issue_id"]].append(_money_event(row))
+
     return [
         IssueRecord(
             id=row["id"],
@@ -529,6 +564,7 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             payout_checked_at=_utc_or_none(row["payout_checked_at"]),
             relisted_from=row["relisted_from"],
             decisions=logs[row["id"]],
+            money_events=ledger[row["id"]],
             version=row["version"],
         )
         for row in issue_rows
@@ -651,4 +687,15 @@ def _screening(row: Row) -> Screening:
         reason=ScreeningReason(row["reason"]),
         checked_at=_utc(row["checked_at"]),
         list_name=row["list_name"],
+    )
+
+
+def _money_event(row: Row) -> MoneyEvent:
+    return MoneyEvent(
+        issue_id=row["issue_id"],
+        kind=MoneyEventKind(row["kind"]),
+        amount=Usdc(row["amount_base_units"]),
+        counterparty_id=row["counterparty_id"],
+        tx_hash=row["tx_hash"],
+        occurred_at=_utc(row["occurred_at"]),
     )

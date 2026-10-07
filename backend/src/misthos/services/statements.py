@@ -6,10 +6,11 @@ that work on. The statement is the record a contributor, or their accountant, fi
 from: every payout in a calendar year with its date, issue, counterparty, amount and
 settlement reference, and a total.
 
-It is built from settled issues, so it shows what was paid rather than what was
-promised. Statements are personal: they carry settlement references that would link
-a wallet to a GitHub handle, so they are served only to the contributor (see
-docs/PRIVACY.md), and from the command line for an operator:
+It is built from the money ledger's releases, each carrying the transfer the chain
+returned, so it shows what was paid rather than what was promised. Statements are
+personal: they carry settlement references that would link a wallet to a GitHub
+handle, so they are served only to the contributor (see docs/PRIVACY.md), and from
+the command line for an operator:
 
     python -m misthos.services.statements CON-1 2026 --csv
 """
@@ -24,6 +25,7 @@ from datetime import UTC, datetime
 
 from misthos.config import settings
 from misthos.domain.issue import IssueState
+from misthos.domain.ledger import MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.schemas import AnnualStatement, StatementLine, money
 from misthos.store import Store
@@ -49,33 +51,33 @@ def annual_statement(store: Store, contributor_id: str, year: int) -> AnnualStat
     if contributor is None:
         return None
     publishers = {p.id: p.name for p in store.list_publishers()}
-    paid = sorted(
+    releases = sorted(
         (
-            rec
+            (event, rec)
             for rec in store.list_issues({IssueState.PAID})
-            if rec.contributor_id == contributor_id
-            and rec.paid is not None
-            and rec.paid_at is not None
-            and rec.paid_at.year == year
+            for event in rec.money_events
+            if event.kind is MoneyEventKind.RELEASED
+            and event.counterparty_id == contributor_id
+            and event.occurred_at.astimezone(UTC).year == year
         ),
-        key=lambda rec: rec.paid_at,  # type: ignore[arg-type, return-value]
+        key=lambda pair: pair[0].occurred_at,
     )
     lines = [
         StatementLine(
-            paid_at=rec.paid_at,  # type: ignore[arg-type]
+            paid_at=event.occurred_at,
             issue_id=rec.id,
             repo=rec.repo,
             issue_number=rec.number,
             issue_title=rec.title,
             counterparty_id=rec.publisher_id,
             counterparty_name=publishers.get(rec.publisher_id, rec.publisher_id),
-            amount=money(rec.paid),  # type: ignore[arg-type]
+            amount=money(event.amount),
             chain=rec.escrow.chain if rec.escrow else settings.chain,
-            tx_hash=rec.payout_tx_hash,
+            tx_hash=event.tx_hash,
         )
-        for rec in paid
+        for event, rec in releases
     ]
-    total = Usdc(sum(rec.paid.base_units for rec in paid if rec.paid))
+    total = Usdc(sum(event.amount.base_units for event, _ in releases))
     return AnnualStatement(
         contributor_id=contributor.id,
         handle=contributor.handle,
