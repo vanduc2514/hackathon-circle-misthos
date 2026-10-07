@@ -193,15 +193,33 @@ class IssueSummaryOut(BaseModel):
 
 
 class MetricsOut(BaseModel):
+    """Every number is computed from the ledger and the lifecycle records (09)."""
+
     settled_issues: int
+    """Releases booked in the ledger, all time."""
+    settled_issues_7d: int = 0
+    """The North Star: releases booked in the last seven days."""
     funded_issues_published: int
+    """Commitments booked in the ledger, all time."""
+    funded_issues_7d: int = 0
     claim_rate_72h: float
+    """Of the issues funded at least 72 hours ago or already claimed, the share
+    claimed within 72 hours of the money arriving."""
     acceptance_rate_first_review: float
+    """The share of reviewed issues whose first verdict was accept."""
     repeat_publisher_rate: float
+    """Publishers who funded a second issue within 60 days of an earlier one."""
     matched_volume_usdc: str
     median_hours_to_payout: float | None
+    refund_rate: float = 0.0
+    """Of the commitments that closed, the share refunded rather than paid."""
     dispute_rate: float
     publisher_overturn_rate: float
+    """Of the issues that passed review, the share whose publisher declined it."""
+    earners_over_500_share: float | None = None
+    """Of the contributors paid in the last 30 days, the share paid $500 or more."""
+    top10_payout_share: float | None = None
+    """The ten best-paid contributors' share of everything paid out."""
     open_issues: int
     by_state: dict[str, int]
     reviews_issued: int = 0
@@ -230,6 +248,45 @@ class PublishRequest(BaseModel):
     publisher_id: str
     compliance_driven: bool = False
     signals: dict[str, float] = Field(default_factory=dict)
+
+
+class DeclineRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+    """What the work still lacks, in the publisher's words."""
+
+
+class ReputationEventOut(BaseModel):
+    """One settled issue's contribution to a contributor's standing."""
+
+    issue_id: str
+    repo: str
+    amount: dict[str, str | int]
+    points: int
+    settled_at: datetime
+
+
+class LoopSettlement(BaseModel):
+    issue_id: str
+    repo: str
+    number: int
+    title: str
+    amount: dict[str, str | int]
+    contributor: str
+    """The contributor's GitHub handle, which the settlement comment already shows."""
+    settled_at: datetime
+    github_url: str
+
+
+class LoopOut(BaseModel):
+    """The loop in public: what was funded, settled and paid, for one repository or
+    all of them. No wallet and no transfer appears here."""
+
+    repo: str | None
+    funded_open: int
+    settled_issues: int
+    settled_issues_7d: int
+    matched_volume_usdc: str
+    recent: list[LoopSettlement]
 
 
 class DisputeRequest(BaseModel):

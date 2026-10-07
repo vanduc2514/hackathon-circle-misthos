@@ -95,8 +95,9 @@ class TestTheVerdict:
         assert rec.decisions[-1].rule == "criteria_unmet"
 
     def test_rework_is_bounded(self, undocumented: None) -> None:
-        states = [resubmit_and_review(REWORK).state for _ in range(3)]
-        assert states == [IssueState.REWORK, IssueState.REWORK, IssueState.REJECTED]
+        """The seeded issue is already on its second round, so one more is the last."""
+        states = [resubmit_and_review(REWORK).state for _ in range(2)]
+        assert states == [IssueState.REWORK, IssueState.REJECTED]
         assert get(REWORK).decisions[-1].rule == "rework_rounds_exhausted"
 
     def test_a_push_during_the_review_discards_the_stale_verdict(
@@ -158,7 +159,7 @@ class TestDisputes:
     def test_an_overturned_rejection_is_accepted(
         self, undocumented: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        for _ in range(3):
+        for _ in range(2):
             resubmit_and_review(REWORK)
         assert get(REWORK).state is IssueState.REJECTED
         monkeypatch.setattr(store, "second_reviewer", Agrees())
@@ -198,7 +199,7 @@ class TestMeasured:
         store.dispute(REWORK, "Please look again.")
 
         m = store.metrics()
-        assert m.reviews_issued == 2
+        assert m.reviews_issued == 3  # the seeded rework verdict, and these two
         assert m.median_review_cost_usdc == "0.00"
         assert m.median_review_seconds is not None
         assert m.dispute_rate > 0

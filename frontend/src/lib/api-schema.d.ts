@@ -113,6 +113,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issues/{issue_id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decline
+         * @description The publisher declines work the review passed, with a reason. Once per issue:
+         *     the work goes back for rework, and after that the merge or the grace period
+         *     settles it.
+         */
+        post: operations["decline_api_v1_issues__issue_id__decline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/loop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Loop
+         * @description The loop in public: issues funded, settled and paid, for one repository or all.
+         *     Built for a repository's watchers to see, so it carries no wallet or transfer.
+         */
+        get: operations["loop_api_v1_loop_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/issues/{issue_id}/dispute": {
         parameters: {
             query?: never;
@@ -217,6 +260,27 @@ export interface paths {
          * @description Public profiles. A wallet is never served next to a handle; see docs/PRIVACY.md.
          */
         get: operations["list_contributors_api_v1_contributors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/contributors/{contributor_id}/reputation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reputation
+         * @description What a contributor's reputation is made of: one event per settled issue, from
+         *     the money ledger and nothing else. Public, like the settlement comment it mirrors.
+         */
+        get: operations["reputation_api_v1_contributors__contributor_id__reputation_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -367,6 +431,11 @@ export interface components {
              */
             created_at: string;
         };
+        /** DeclineRequest */
+        DeclineRequest: {
+            /** Reason */
+            reason: string;
+        };
         /** DisputeRequest */
         DisputeRequest: {
             /** Reason */
@@ -490,12 +559,68 @@ export interface components {
             /** Github Url */
             github_url: string;
         };
-        /** MetricsOut */
+        /**
+         * LoopOut
+         * @description The loop in public: what was funded, settled and paid, for one repository or
+         *     all of them. No wallet and no transfer appears here.
+         */
+        LoopOut: {
+            /** Repo */
+            repo: string | null;
+            /** Funded Open */
+            funded_open: number;
+            /** Settled Issues */
+            settled_issues: number;
+            /** Settled Issues 7D */
+            settled_issues_7d: number;
+            /** Matched Volume Usdc */
+            matched_volume_usdc: string;
+            /** Recent */
+            recent: components["schemas"]["LoopSettlement"][];
+        };
+        /** LoopSettlement */
+        LoopSettlement: {
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Number */
+            number: number;
+            /** Title */
+            title: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /** Contributor */
+            contributor: string;
+            /**
+             * Settled At
+             * Format: date-time
+             */
+            settled_at: string;
+            /** Github Url */
+            github_url: string;
+        };
+        /**
+         * MetricsOut
+         * @description Every number is computed from the ledger and the lifecycle records (09).
+         */
         MetricsOut: {
             /** Settled Issues */
             settled_issues: number;
+            /**
+             * Settled Issues 7D
+             * @default 0
+             */
+            settled_issues_7d: number;
             /** Funded Issues Published */
             funded_issues_published: number;
+            /**
+             * Funded Issues 7D
+             * @default 0
+             */
+            funded_issues_7d: number;
             /** Claim Rate 72H */
             claim_rate_72h: number;
             /** Acceptance Rate First Review */
@@ -506,10 +631,19 @@ export interface components {
             matched_volume_usdc: string;
             /** Median Hours To Payout */
             median_hours_to_payout: number | null;
+            /**
+             * Refund Rate
+             * @default 0
+             */
+            refund_rate: number;
             /** Dispute Rate */
             dispute_rate: number;
             /** Publisher Overturn Rate */
             publisher_overturn_rate: number;
+            /** Earners Over 500 Share */
+            earners_over_500_share?: number | null;
+            /** Top10 Payout Share */
+            top10_payout_share?: number | null;
             /** Open Issues */
             open_issues: number;
             /** By State */
@@ -612,6 +746,27 @@ export interface components {
             wallet: components["schemas"]["Wallet"];
             /** Budget Remaining Usdc */
             budget_remaining_usdc: string;
+        };
+        /**
+         * ReputationEventOut
+         * @description One settled issue's contribution to a contributor's standing.
+         */
+        ReputationEventOut: {
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /** Points */
+            points: number;
+            /**
+             * Settled At
+             * Format: date-time
+             */
+            settled_at: string;
         };
         /**
          * Review
@@ -978,6 +1133,83 @@ export interface operations {
             };
         };
     };
+    decline_api_v1_issues__issue_id__decline_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeclineRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Not awaiting the merge, or already declined once */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    loop_api_v1_loop_get: {
+        parameters: {
+            query?: {
+                /** @description owner/name; every repository if empty */
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoopOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     dispute_api_v1_issues__issue_id__dispute_post: {
         parameters: {
             query?: never;
@@ -1132,6 +1364,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContributorProfile"][];
+                };
+            };
+        };
+    };
+    reputation_api_v1_contributors__contributor_id__reputation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                contributor_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReputationEventOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

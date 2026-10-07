@@ -171,6 +171,7 @@ This process exists for exactly two reasons and both are Node-only dependencies.
 | `backend/src/misthos/api/` | HTTP surface under `/api/v1` | FastAPI. Issues, proposals, lifecycle actions, metrics, decisions, webhook receiver |
 | `backend/src/misthos/domain/` | Lifecycle state machine, money units, pricing engine | Deliberately IO-free, so the two places a bug costs real funds are testable without a database |
 | `backend/src/misthos/store.py` | The lifecycle's single writer, and the seeded simulation | Every move is checked against the transition table and saved through a repository |
+| `backend/src/misthos/services/metrics.py` | Every dashboard number | Computed from money events and lifecycle records, so each one is reproducible from the database alone. `/loop` is the public view of the same numbers |
 | `backend/src/misthos/repositories/` | Persistence behind one protocol | Memory by default and as the test double; Postgres, or a SQLite file, when `MISTHOS_DATABASE_URL` is set. Alembic migrations in `migrations/` |
 | Pricing engine | Produces the price band and its justification | Scores six signals, then applies market context and the publisher's affordability ceiling |
 | Review service | `backend/src/misthos/services/review/`: judges each criterion against the diff, and the verdict follows by fixed rules (`domain/review.py`) | The verdict is the decision. Only a merge or the grace period moves money |
@@ -432,7 +433,7 @@ Every verdict records its reviewer, the commit, how long it took and what it cos
 
 The review service issues the verdict and never releases money. That separation is C2, and it is also the answer to the hackathon's own framing of delegated authority: the agent can decide, but the limit sits somewhere it cannot reach.
 
-Rework rounds are bounded. An unbounded review loop costs more than the fix is worth, which is the exact problem the product exists to solve. After two rework rounds, work that still misses a criterion is rejected, and each rework verdict restates exactly which criteria are unmet. A contributor can dispute a rework or reject verdict once: the same commit is reviewed again by the second reviewer, and the outcome is recorded either way. An overturned rejection goes to `ACCEPTED`, which is the one transition the dispute adds.
+Rework rounds are bounded. An unbounded review loop costs more than the fix is worth, which is the exact problem the product exists to solve. After two rework rounds, work that still misses a criterion is rejected, and each rework verdict restates exactly which criteria are unmet. A contributor can dispute a rework or reject verdict once: the same commit is reviewed again by the second reviewer, and the outcome is recorded either way. An overturned rejection goes to `ACCEPTED`, which is the one transition the dispute adds. A publisher can decline a passing verdict once, with a reason: the work goes back to `REWORK` with that reason as its finding and counts as a rework round, and after that the merge or the grace period settles it. Declines are what the publisher overturn rate counts.
 
 Merge is acceptance. Payment is triggered by the merge event rather than by a separate click, so a publisher cannot take the patch and skip the payment.
 
@@ -486,7 +487,7 @@ Reputation derives only from settled issues. Anything else rewards activity rath
 | Submission | `submissions` | Unique on `(issue_id, head_sha)` |
 | Review | `reviews` | The platform's verdict with its findings. There is no draft to confirm, so the publisher's merge is the only reversal |
 | Decision | `decisions` | Append-only, ordered by `created_at`. No update or delete grants |
-| ReputationEvent | `reputation_events` | Derived. Rebuildable from settled issues, so it is safe to recompute |
+| ReputationEvent | None: derived on read | One per release in `money_events`, so it cannot drift. The contributor's `reputation`, `settled_issues` and `earned` are a cache of it, refreshed after each release and checked by `python -m misthos.services.reputation --check` |
 | MoneyEvent | `money_events` | Append-only. One row per commitment, release or refund, with the transaction hash as the unique key. Every money figure is derived from it |
 
 | Redis key | Purpose | TTL |
