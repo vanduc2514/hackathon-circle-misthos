@@ -1,0 +1,19 @@
+{
+  "name": "Misthos",
+  "url": "https://github.com/vanduc2514/hackathon-circle-misthos",
+  "description": "Prices GitHub issues, holds the payment in escrow on Arc, and pays whoever fixes them when the pull request merges.",
+  "public": false,
+  "hook_attributes": {
+    "url": "https://REPLACE-WITH-YOUR-HOST/api/v1/webhooks/github",
+    "active": true
+  },
+  "default_permissions": {
+    "metadata": "read",
+    "contents": "read",
+    "issues": "write",
+    "pull_requests": "write",
+    "checks": "read",
+    "statuses": "write"
+  },
+  "default_events": ["issues", "pull_request", "check_run"]
+}

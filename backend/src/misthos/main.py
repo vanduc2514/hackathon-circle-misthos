@@ -17,10 +17,11 @@ Marketplace where a company or a maintainer puts a **fixed price** on a GitHub
 issue and pays whoever fixes it, settled in USDC on Arc.
 
 This build is **simulated**. The lifecycle is real code with real state
-transitions, and the prices come from the actual pricing engine, but the money
-and the GitHub calls are fake. No chain is contacted. State is in memory unless
-`MISTHOS_DATABASE_URL` points at a database, and a sweeper applies claim expiry,
-deadline refunds and the silent-publisher release on its own.
+transitions, and the prices come from the actual pricing engine, but the money is
+fake: no chain is contacted. GitHub is simulated too until a GitHub App is
+configured, and then pull request events drive the lifecycle. State is in memory
+unless `MISTHOS_DATABASE_URL` points at a database, and a sweeper applies claim
+expiry, deadline refunds and the silent-publisher release on its own.
 
 Everything lives under `/api/v1`.
 """

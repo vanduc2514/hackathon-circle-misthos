@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     github_webhook_secret: str = "dev-secret"
+    # The GitHub App. With both set, the platform reads issues and repositories and
+    # posts criteria, reviews and statuses as the App; empty keeps GitHub simulated.
+    # The key is the App's PEM private key; escaped newlines (\n) are accepted.
+    github_app_id: str = ""
+    github_app_private_key: str = ""
+    github_api_url: str = "https://api.github.com"
     circle_api_key: str = ""
 
     # Empty keeps state in memory: the zero-config demo, reset on every restart. A

@@ -109,6 +109,23 @@ process:
 MISTHOS_REDIS_URL=redis://localhost:6379/0 mise run dev:api
 ```
 
+### Connecting a real repository
+
+GitHub is simulated until a GitHub App is configured. Register one from
+`backend/github-app-manifest.json` (replace the webhook host first), install it on
+the repository, and set its id, private key and webhook secret:
+
+```bash
+MISTHOS_GITHUB_APP_ID=123456 \
+MISTHOS_GITHUB_APP_PRIVATE_KEY="$(cat misthos.private-key.pem)" \
+MISTHOS_GITHUB_WEBHOOK_SECRET=... \
+mise run dev:api
+```
+
+Publishing an issue with its number then reads it from GitHub and prices it from the
+issue and the repository. A pull request from the claimant that says `Fixes #<n>`
+puts the issue in review, and merging it releases the payment.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

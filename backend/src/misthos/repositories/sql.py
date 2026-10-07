@@ -22,6 +22,7 @@ from typing import Any
 
 from sqlalchemy import Connection, create_engine, delete, func, insert, select, text, update
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from misthos.domain.compliance import (
     PartyKind,
@@ -224,6 +225,30 @@ class SqlRepository:
                 delete(t.screenings).where(t.screenings.c.checked_at < before)
             ).rowcount
 
+    # ---------------------------------------------------------- deliveries
+
+    def record_delivery(self, delivery_id: str, event: str, at: datetime) -> bool:
+        self.migrate()
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    insert(t.webhook_deliveries).values(
+                        delivery_id=delivery_id, event=event, received_at=at
+                    )
+                )
+        except IntegrityError:
+            return False
+        return True
+
+    def forget_delivery(self, delivery_id: str) -> None:
+        self.migrate()
+        with self.engine.begin() as conn:
+            conn.execute(
+                delete(t.webhook_deliveries).where(
+                    t.webhook_deliveries.c.delivery_id == delivery_id
+                )
+            )
+
     # -------------------------------------------------------------- issues
 
     def get_issue(self, issue_id: str) -> IssueRecord | None:
@@ -420,10 +445,10 @@ def _save_submission(conn: Connection, rec: IssueRecord) -> None:
     s = rec.submission
     if s is None:
         return
+    # One row per submitted commit. The project's checks on that commit finish after
+    # it is submitted, so the row is updated when their result arrives.
     key = {"issue_id": rec.id, "head_sha": s.head_sha}
-    if _exists(conn, t.submissions, key):
-        return
-    conn.execute(insert(t.submissions).values(**key, **s.model_dump(exclude={"head_sha"})))
+    _upsert(conn, t.submissions, key, s.model_dump(exclude={"head_sha"}))
 
 
 def _save_review(conn: Connection, rec: IssueRecord) -> None:

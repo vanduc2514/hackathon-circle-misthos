@@ -15,6 +15,13 @@ Money moves only through the chain gateway, and every movement is appended to th
 issue's ledger with the transaction the chain returned. Each action on an issue holds
 that issue's lock, so a person, a second API process and the sweeper take turns
 rather than racing between the chain call and the save.
+
+GitHub is read when an issue is published or edited, and its pull request events
+drive the lifecycle (see `services/github/events.py`). What the platform posts back,
+the acceptance criteria, the review, the commit status and the settlement, is queued
+during an action and sent only once the action has been saved, so GitHub never
+shows a step the database does not have. A failed post is logged and never undoes
+the step.
 """
 
 from __future__ import annotations
@@ -22,7 +29,7 @@ from __future__ import annotations
 import logging
 import random
 import threading
-from collections.abc import Collection, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -42,6 +49,7 @@ from misthos.domain.issue import IssueState
 from misthos.domain.ledger import Divergence, MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import ComplexitySignals, UnfundableIssue, propose
+from misthos.domain.signals import read as read_signals
 from misthos.domain.timers import TimedAction
 from misthos.models.records import IssueRecord
 from misthos.repositories import MemoryRepository, Repository, StaleIssue, build_repository
@@ -68,6 +76,14 @@ from misthos.services.compliance import (
     SimulatedScreening,
 )
 from misthos.services.coordination import ISSUE_LOCK_TTL, Busy, Coordinator, build_coordinator
+from misthos.services.github import (
+    GitHubError,
+    GitHubGateway,
+    PullRequest,
+    ReviewEvent,
+    StatusState,
+    build_github,
+)
 
 __all__ = ["IssueRecord", "Store", "store"]
 
@@ -86,6 +102,24 @@ _PRE_FUNDING = frozenset({IssueState.DRAFT, IssueState.PRICED, IssueState.AWAITI
 
 
 log = logging.getLogger("misthos.store")
+
+# Comparables behind each confidence level, so a re-price keeps the confidence the
+# first price had until #42 counts comparables from settled issues.
+_COMPARABLES_FOR = {"high": 6, "medium": 2, "low": 0}
+
+_REVIEW_EVENTS = {
+    "accept": (ReviewEvent.APPROVE, StatusState.SUCCESS),
+    "rework": (ReviewEvent.REQUEST_CHANGES, StatusState.FAILURE),
+    "reject": (ReviewEvent.REQUEST_CHANGES, StatusState.FAILURE),
+}
+
+
+class UnreadableIssue(Exception):
+    """GitHub would not give us the issue the publisher asked to price."""
+
+
+class NotTheSubmission(Exception):
+    """A pull request event about a pull request this issue is not waiting on."""
 
 
 def _now() -> datetime:
@@ -125,6 +159,7 @@ class Store:
         identity: IdentityProvider | None = None,
         chain: ChainGateway | None = None,
         coordinator: Coordinator | None = None,
+        github: GitHubGateway | None = None,
     ) -> None:
         self.repo: Repository = repository or MemoryRepository()
         # The simulated escrow keeps its books beside the repository's tables when
@@ -133,6 +168,11 @@ class Store:
         self.coordinator: Coordinator = coordinator or build_coordinator(
             settings.redis_url, self.repo
         )
+        self.github: GitHubGateway = github or build_github(
+            settings.github_app_id, settings.github_app_private_key, settings.github_api_url
+        )
+        # GitHub posts queued by the action running on this thread, sent after it saves.
+        self._outbox = threading.local()
         self.screening: ScreeningProvider = screening or SimulatedScreening(
             settings.screening_denylist.split(",")
         )
@@ -163,6 +203,9 @@ class Store:
             self.repo.reset()
             self.chain.reset()
             self.coordinator.reset()
+            reset_github = getattr(self.github, "reset", None)
+            if reset_github is not None:
+                reset_github()  # the simulation's fixtures and sent posts
             self._seed()
             self._ready = True
 
@@ -211,6 +254,14 @@ class Store:
             proposal=proposal,
         )
 
+        if spec.get("signals_read"):
+            self._log(
+                rec,
+                actor="agent",
+                action="signals_read",
+                rule="github_read_path",
+                outcome=spec["signals_read"],
+            )
         self._log(
             rec,
             actor="agent",
@@ -421,6 +472,11 @@ class Store:
             deadline=deadline,
         )
         rec.deadline = rec.escrow.deadline
+        criteria = _criteria_comment(rec)
+        self._post(
+            f"criteria on {rec.repo}#{rec.number}",
+            lambda gh: gh.comment(rec.repo, rec.number, criteria),
+        )
 
     def _claim(self, rec: IssueRecord, contributor_id: str, when: datetime | None = None) -> None:
         self._move(rec, IssueState.CLAIMED)
@@ -433,6 +489,16 @@ class Store:
     def _submit(self, rec: IssueRecord, pr: dict) -> None:
         self._move(rec, IssueState.IN_REVIEW)
         rec.submission = Submission(**pr)
+        sha = rec.submission.head_sha
+        self._post(
+            f"pending status on {rec.repo}@{sha[:7]}",
+            lambda gh: gh.status(
+                rec.repo,
+                sha,
+                StatusState.PENDING,
+                "Misthos is reviewing this against the acceptance criteria",
+            ),
+        )
 
     def _review(
         self,
@@ -456,6 +522,18 @@ class Store:
             findings=findings,
             decided_at=when or _now(),
         )
+        if rec.submission is not None:
+            pr, sha = rec.submission.pr_number, rec.submission.head_sha
+            event, state = _REVIEW_EVENTS[verdict]
+            body = _review_comment(verdict, findings)
+            self._post(
+                f"review on {rec.repo}#{pr}",
+                lambda gh: gh.review(rec.repo, pr, sha, event, body),
+            )
+            self._post(
+                f"{state.value} status on {rec.repo}@{sha[:7]}",
+                lambda gh: gh.status(rec.repo, sha, state, f"Misthos verdict: {verdict}"),
+            )
 
     def _release(
         self,
@@ -477,6 +555,16 @@ class Store:
         rec.paid_at = at
         rec.payout_tx_hash = tx
         rec.payout_hold = None
+        # Public: the amount and who earned it, as the issue's price already was. The
+        # transfer and the wallet stay private (docs/PRIVACY.md).
+        note = (
+            f"Paid **{amount} USDC** to @{contributor.handle}. The payment was released "
+            f"from escrow on {CHAIN} when the work was accepted."
+        )
+        self._post(
+            f"settlement on {rec.repo}#{rec.number}",
+            lambda gh: gh.comment(rec.repo, rec.number, note),
+        )
         self._log(
             rec,
             actor="system",
@@ -495,6 +583,14 @@ class Store:
         tx = self.chain.refund(rec.id, at)
         self._book(rec, MoneyEventKind.REFUNDED, amount, rec.publisher_id, tx, at)
         rec.escrow.refunded = True
+        note = (
+            f"The deadline passed without accepted work, so the {amount} USDC "
+            "commitment went back to the publisher."
+        )
+        self._post(
+            f"refund on {rec.repo}#{rec.number}",
+            lambda gh: gh.comment(rec.repo, rec.number, note),
+        )
         self._log(
             rec,
             actor="system",
@@ -777,6 +873,33 @@ class Store:
         self.ensure_ready()
         return self.repo.purge_screenings((now or _now()) - compliance.SCREENING_RETENTION)
 
+    # ------------------------------------------------------------- GitHub posts
+
+    def _post(self, what: str, send: Callable[[GitHubGateway], None]) -> None:
+        """Queue a post for after the save. Outside an action (seeding) it is dropped:
+        the seed is history, and history was posted when it happened."""
+        pending = getattr(self._outbox, "pending", None)
+        if pending is not None:
+            pending.append((what, send))
+
+    @contextmanager
+    def _posting(self) -> Iterator[None]:
+        """Send what the enclosed action queued, once it has returned, which is after
+        it saved. An action that raises saved nothing, so its posts are dropped."""
+        self._outbox.pending = []
+        try:
+            yield
+            queued = list(self._outbox.pending)
+        finally:
+            self._outbox.pending = None
+        for what, send in queued:
+            try:
+                send(self.github)
+            except Exception:
+                # The step is saved and stands. The post can be redone; the outbox
+                # that retries it arrives with the settlement orchestrator (#69).
+                log.exception("GitHub post failed: %s", what)
+
     # ------------------------------------------------------------ money
 
     @contextmanager
@@ -900,7 +1023,7 @@ class Store:
         the copy the sweeper listed. Raises Busy when someone else holds the issue.
         """
         self.ensure_ready()
-        with self._exclusive(issue_id):
+        with self._exclusive(issue_id), self._posting():
             rec = self.repo.get_issue(issue_id)
             if rec is None:
                 return []
@@ -919,7 +1042,7 @@ class Store:
         any more than real time would let it.
         """
         self.ensure_ready()
-        with self._exclusive(issue_id):
+        with self._exclusive(issue_id), self._posting():
             return self._advance(issue_id)
 
     def _advance(self, issue_id: str) -> IssueRecord:
@@ -1047,6 +1170,14 @@ class Store:
         publisher = self.repo.get_publisher(payload.publisher_id)
         if publisher is None:
             raise KeyError(payload.publisher_id)
+        facts = None
+        if payload.number and not payload.signals:
+            try:
+                facts = self.github.read_issue(payload.repo, payload.number)
+            except GitHubError as exc:
+                raise UnreadableIssue(
+                    f"could not read {payload.repo}#{payload.number} from GitHub: {exc}"
+                ) from exc
         spec = {
             "repo": payload.repo,
             "number": payload.number or random.randint(100, 999),
@@ -1074,6 +1205,14 @@ class Store:
                 "blast_radius": 2.0,
             },
         }
+        if facts is not None:
+            # The issue itself, not the form, says what the work is.
+            reading = read_signals(facts)
+            spec["title"] = facts.title
+            spec["summary"] = _summary(facts.body) or spec["summary"]
+            spec["labels"] = list(facts.labels) or spec["labels"]
+            spec["signals"] = reading.signals.as_dict()
+            spec["signals_read"] = f"read {facts.repo}#{facts.number}: {reading.summary()}"
         rec = self._build(spec)
         if rec.proposal is not None and not rec.proposal.fundable:
             # Refuse rather than publish a price the platform would lose money on.
@@ -1088,6 +1227,231 @@ class Store:
         )
         self.repo.save_issues(rec)
         return rec
+
+    # ------------------------------------------------------------ GitHub events
+
+    def find_open(self, repo: str, number: int) -> IssueRecord | None:
+        """The live listing of a GitHub issue. A re-list shares the issue with the
+        refunded original, so the newest one that is not finished wins."""
+        found = [
+            r
+            for r in self.list_issues()
+            if r.repo.lower() == repo.lower()
+            and r.number == number
+            and r.state not in lifecycle.TERMINAL_STATES
+        ]
+        return max(found, key=lambda r: r.created_at) if found else None
+
+    def find_by_pull_request(self, repo: str, pr_number: int) -> IssueRecord | None:
+        for rec in self.list_issues():
+            if (
+                rec.repo.lower() == repo.lower()
+                and rec.submission is not None
+                and rec.submission.pr_number == pr_number
+                and rec.state not in lifecycle.TERMINAL_STATES
+            ):
+                return rec
+        return None
+
+    def reprice(self, issue_id: str, now: datetime | None = None) -> IssueRecord:
+        """Price an issue again from what GitHub says now, while it is still unfunded.
+
+        A changed issue is a changed job: the new price is a new proposal, and it
+        waits for the publisher's approval like the first one did. Once money is
+        committed the price is a promise and an edit does not move it.
+        """
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.state not in {IssueState.PRICED, IssueState.AWAITING_APPROVAL}:
+                raise lifecycle.IllegalTransition(rec.state, IssueState.PRICED)
+            facts = self.github.read_issue(rec.repo, rec.number)
+            if facts is None or rec.proposal is None:
+                return rec
+            publisher = self.repo.get_publisher(rec.publisher_id)
+            assert publisher is not None
+            reading = read_signals(facts)
+            proposal = propose(
+                reading.signals,
+                compliance_driven=rec.compliance_driven,
+                comparables=_COMPARABLES_FOR.get(rec.proposal.confidence, 0),
+                affordability_ceiling=_budget(publisher),
+                tier=publisher.tier,
+            )
+            rec.title, rec.labels = facts.title, list(facts.labels) or rec.labels
+            if proposal.recommended == rec.proposal.recommended:
+                self.repo.save_issues(rec)
+                return rec
+            previous = rec.proposal.recommended
+            rec.proposal = proposal
+            when = now or _now()
+            self._log(
+                rec,
+                actor="agent",
+                action="signals_read",
+                rule="github_read_path",
+                outcome=f"read {facts.repo}#{facts.number}: {reading.summary()}",
+                when=when,
+            )
+            self._log(
+                rec,
+                actor="agent",
+                action="price_proposed",
+                rule="issue_changed",
+                outcome=f"the issue changed, so it is re-priced at {proposal.recommended}, "
+                f"from {previous}, for the publisher to approve",
+                when=when,
+            )
+            self.repo.save_issues(rec)
+            return rec
+
+    def submit_pull_request(
+        self, issue_id: str, pr: PullRequest, now: datetime | None = None
+    ) -> IssueRecord:
+        """A pull request that closes the issue was opened, or pushed to after rework.
+
+        Only the contributor holding the claim submits: anyone can open a pull
+        request that mentions an issue, and only one of them is owed money.
+        """
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.contributor_id is None or rec.state not in {
+                IssueState.CLAIMED,
+                IssueState.REWORK,
+            }:
+                raise lifecycle.IllegalTransition(rec.state, IssueState.IN_REVIEW)
+            claimant = self._handle(rec.contributor_id)
+            if pr.author.lower() != claimant.lower():
+                raise NotTheSubmission(
+                    f"{pr.author} opened #{pr.number}, but {claimant} holds the claim"
+                )
+            if rec.state is IssueState.REWORK and rec.submission is not None:
+                if rec.submission.pr_number != pr.number:
+                    raise NotTheSubmission(
+                        f"rework continues on #{rec.submission.pr_number}, not #{pr.number}"
+                    )
+            resubmitted = rec.state is IssueState.REWORK
+            history = self.github.merged_pull_requests(rec.repo, pr.author)
+            self._submit(
+                rec,
+                {
+                    "pr_number": pr.number,
+                    "head_sha": pr.head_sha,
+                    # Unknown until the project's own checks finish; check_run says.
+                    "checks_passed": bool(self.github.checks_passed(rec.repo, pr.head_sha)),
+                    "files_changed": pr.files_changed,
+                    "additions": pr.additions,
+                    "deletions": pr.deletions,
+                },
+            )
+            self._log(
+                rec,
+                actor="contributor",
+                action="resubmitted" if resubmitted else "submitted",
+                rule="pull_request_synchronized" if resubmitted else "pull_request_opened",
+                outcome=f"{claimant} {'pushed rework to' if resubmitted else 'opened'} "
+                f"PR #{pr.number}; {history} earlier pull request(s) of theirs merged in "
+                f"{rec.repo}",
+                when=now,
+            )
+            self.repo.save_issues(rec)
+            return rec
+
+    def record_checks(self, issue_id: str, head_sha: str, now: datetime | None = None) -> bool:
+        """Read the project's own checks on the submitted commit. True if that changed
+        what the submission records."""
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None or rec.submission is None or rec.submission.head_sha != head_sha:
+                return False
+            passed = self.github.checks_passed(rec.repo, head_sha)
+            if passed is None or passed == rec.submission.checks_passed:
+                return False
+            rec.submission = rec.submission.model_copy(update={"checks_passed": passed})
+            self._log(
+                rec,
+                actor="system",
+                action="checks_completed",
+                rule="project_checks",
+                outcome=f"the project's checks on {head_sha[:7]} "
+                f"{'passed' if passed else 'failed'}",
+                when=now,
+            )
+            self.repo.save_issues(rec)
+            return True
+
+    def pull_request_closed(
+        self, issue_id: str, pr_number: int, *, merged: bool, now: datetime | None = None
+    ) -> IssueRecord:
+        """The submitted pull request was closed. Merged is acceptance, and acceptance
+        is what releases the money; closed without a merge changes nothing, because
+        the claim and the deadline already decide what happens next."""
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.submission is None or rec.submission.pr_number != pr_number:
+                raise NotTheSubmission(f"{rec.id} is not waiting on #{pr_number}")
+            when = now or _now()
+            if not merged:
+                self._log(
+                    rec,
+                    actor="publisher",
+                    action="pull_request_closed",
+                    rule="merge_is_acceptance",
+                    outcome=f"PR #{pr_number} was closed without merging; nothing is owed "
+                    "for it",
+                    when=when,
+                )
+            elif rec.state is IssueState.REJECTED:
+                # Taking a rejected patch is the move escrow exists to make costly.
+                # REJECTED has no road to PAID, so a person settles it (#39).
+                self._log(
+                    rec,
+                    actor="publisher",
+                    action="merged_after_rejection",
+                    rule="merge_is_acceptance",
+                    outcome=f"the publisher merged PR #{pr_number} after the verdict "
+                    "rejected it; flagged for a person to settle",
+                    when=when,
+                )
+            else:
+                self._accept_by_merge(rec, pr_number, when)
+            self.repo.save_issues(rec)
+            return rec
+
+    def _accept_by_merge(self, rec: IssueRecord, pr_number: int, now: datetime) -> None:
+        if rec.state is IssueState.REWORK:
+            # The publisher merged what was there, so that is the submission.
+            self._move(rec, IssueState.IN_REVIEW)
+        if rec.state is IssueState.IN_REVIEW:
+            self._move(rec, IssueState.ACCEPTED)
+            outcome = (
+                f"the publisher merged PR #{pr_number} before the review finished, "
+                "which is acceptance"
+            )
+        elif rec.state is IssueState.ACCEPTED:
+            outcome = f"the publisher merged PR #{pr_number}, which is acceptance"
+        else:
+            raise lifecycle.IllegalTransition(rec.state, IssueState.PAID)
+        if rec.accepted_by is None:
+            self._log(
+                rec,
+                actor="publisher",
+                action="merged",
+                rule="merge_is_acceptance",
+                outcome=outcome,
+                when=now,
+            )
+            rec.accepted_by = "merge"
+        self._pay(rec, now)
 
     # ------------------------------------------------------------ projections
 
@@ -1228,6 +1592,38 @@ class Store:
             open_issues=sum(1 for r in records if lifecycle.is_open(r.state)),
             by_state=by_state,
         )
+
+
+# ------------------------------------------------------------------ GitHub text
+
+
+def _summary(body: str) -> str:
+    """The issue's first paragraph, short enough for a listing."""
+    first = body.strip().split("\n\n", 1)[0].strip()
+    return first if len(first) <= 280 else first[:277].rstrip() + "..."
+
+
+def _criteria_comment(rec: IssueRecord) -> str:
+    assert rec.proposal is not None and rec.deadline is not None
+    criteria = "\n".join(f"- [ ] {c}" for c in rec.acceptance_criteria)
+    return (
+        f"**Funded on Misthos: {rec.proposal.recommended} USDC**, held in escrow until "
+        f"{rec.deadline:%d %B %Y}.\n\n"
+        "The first contributor to claim it has 72 hours to open a pull request that "
+        "closes this issue. The pull request is accepted when it meets these "
+        f"criteria:\n\n{criteria}\n\n"
+        "Merging it is acceptance, and acceptance releases the payment."
+    )
+
+
+def _review_comment(verdict: str, findings: list[str]) -> str:
+    heading = {
+        "accept": "Accepted: the acceptance criteria are met.",
+        "rework": "Rework needed before this can be accepted.",
+        "reject": "Rejected: this does not meet the acceptance criteria.",
+    }[verdict]
+    listed = "\n".join(f"- {f}" for f in findings)
+    return f"**Misthos review.** {heading}\n\n{listed}" if listed else heading
 
 
 # ------------------------------------------------------------------ seed data
