@@ -296,3 +296,84 @@ class TestWhoMayDoWhat:
         assert client.post(f"{API}/issues/ISS-1001/claim").status_code == 401
         # The demo stepper fabricates pull requests, so a deployment refuses it outright.
         assert client.post(f"{API}/issues/ISS-1006/advance").status_code == 403
+
+
+class TestTheLinkCannotBeHijacked:
+    """A link must be finished by the wallet that started it.
+
+    Without that, an attacker starts a link with their own wallet, sends the authorize
+    URL to a victim, and the victim's GitHub login is bound to the attacker's account.
+    `github_login` is what gates publishing, claiming and submitting, so the attacker
+    would then be paid for work the victim opened -- and the victim could never link
+    their own login, because a login belongs to one wallet.
+    """
+
+    def _oauth(self, monkeypatch: pytest.MonkeyPatch, login: str) -> None:
+        def github(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/login/oauth/access_token":
+                return httpx.Response(200, json={"access_token": "gho_once"})
+            return httpx.Response(200, json={"login": login})
+
+        client = GitHubOAuth("c", "s", transport=httpx.MockTransport(github))
+        monkeypatch.setattr(auth_routes, "oauth", lambda: client)
+
+    def test_another_wallets_session_cannot_finish_the_link(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._oauth(monkeypatch, "victim-dev")
+
+        attacker = TestClient(app)
+        sign_in(attacker, Wallet(31))
+        attacker.post(f"{API}/auth/role", json={"role": "contributor", "name": "mallory"})
+        start = attacker.post(f"{API}/auth/github/start").json()["authorize_url"]
+        state = parse_qs(urlsplit(start).query)["state"][0]
+
+        # The victim follows the link the attacker sent them, signed in as themselves.
+        victim = TestClient(app)
+        sign_in(victim, Wallet(32))
+        victim.post(f"{API}/auth/role", json={"role": "contributor", "name": "ada"})
+        r = victim.get(
+            f"{API}/auth/github/callback", params={"code": "c0de", "state": state},
+            follow_redirects=False,
+        )  # fmt: skip
+        assert r.status_code == 403
+
+        # The victim's login was not bound to the attacker.
+        assert victim.get(f"{API}/auth/me").json()["account"]["github_login"] is None
+        assert attacker.get(f"{API}/auth/me").json()["account"]["github_login"] is None
+        # And the state was spent, so it cannot be retried by the right wallet later.
+        again = attacker.get(
+            f"{API}/auth/github/callback", params={"code": "c0de", "state": state}
+        )  # fmt: skip
+        assert again.status_code == 400
+
+    def test_an_anonymous_callback_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._oauth(monkeypatch, "someone")
+        starter = TestClient(app)
+        sign_in(starter, Wallet(33))
+        starter.post(f"{API}/auth/role", json={"role": "contributor", "name": "a"})
+        start = starter.post(f"{API}/auth/github/start").json()["authorize_url"]
+        state = parse_qs(urlsplit(start).query)["state"][0]
+
+        anonymous = TestClient(app)
+        r = anonymous.get(f"{API}/auth/github/callback", params={"code": "c", "state": state})
+        assert r.status_code == 401
+
+
+class TestTheApiDoesNotCrashOnChosenInput:
+    def test_a_timestamp_without_a_zone_is_a_refused_sign_in_not_a_500(self) -> None:
+        client = TestClient(app)
+        wallet = Wallet(34)
+        nonce = client.post(f"{API}/auth/nonce").json()["nonce"]
+        # The message's own timestamp, with its zone stripped. RFC 3339 allows a
+        # local time here, so this is input a caller can choose.
+        import re
+
+        naive = re.sub(
+            r"Issued At: \S+", "Issued At: 2026-10-07T22:17:37", wallet.message(nonce)
+        )
+        assert "Issued At: 2026-10-07T22:17:37" in naive
+        r = client.post(
+            f"{API}/auth/verify", json={"message": naive, "signature": wallet.sign(naive)}
+        )
+        assert r.status_code == 401

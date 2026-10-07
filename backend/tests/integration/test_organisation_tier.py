@@ -186,8 +186,11 @@ class TestAuditExport:
         r = client.get(f"{API}/publishers/{PUBLISHER}/audit", params={"format": "csv"})
         assert r.headers["content-type"].startswith("text/csv")
         lines = r.text.splitlines()
-        assert lines[0].startswith("# SIMULATED")
-        rows = list(csv.DictReader(io.StringIO("\n".join(lines[1:]))))
+        # The header is the first line, so a reader that trusts it needs no special
+        # case; the simulation caveat is a last row among the data.
+        assert lines[0].startswith("record,")
+        assert lines[-1].startswith("# SIMULATED")
+        rows = list(csv.DictReader(io.StringIO("\n".join(lines[:-1]))))
         ours = [row for row in rows if row["issue_id"] == ISSUE]
         assert {row["record"] for row in ours} == {"decision", "money"}
         assert [row["at_utc"] for row in ours] == sorted(row["at_utc"] for row in ours)

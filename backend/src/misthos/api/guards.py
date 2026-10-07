@@ -86,6 +86,7 @@ def rate_limited(bucket: str, per_minute: Callable[[], int]) -> Any:
 
 limit_publish = rate_limited("publish", lambda: settings.rate_limit_publish_per_minute)
 limit_actions = rate_limited("actions", lambda: settings.rate_limit_actions_per_minute)
+limit_signin = rate_limited("signin", lambda: settings.rate_limit_signin_per_minute)
 
 
 async def idempotent(

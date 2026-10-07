@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # Requests per client per minute. Zero turns the limit off.
     rate_limit_publish_per_minute: int = 30
     rate_limit_actions_per_minute: int = 120
+    # Sign-in is the only unauthenticated write, and each attempt costs a secp256k1
+    # recovery and a nonce the store has to remember, so it is budgeted like publish.
+    rate_limit_signin_per_minute: int = 20
 
     @property
     def cors_list(self) -> list[str]:
