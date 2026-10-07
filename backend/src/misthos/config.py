@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     github_webhook_secret: str = "dev-secret"
     circle_api_key: str = ""
 
+    # The name of the acceptance attestation key in the managed secret store. A
+    # reference, never the key: see docs/runbooks/attestor-rotation.md.
+    attestor_secret_ref: str = ""
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

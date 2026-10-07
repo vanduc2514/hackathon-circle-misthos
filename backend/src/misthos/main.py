@@ -5,6 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from misthos.api.router import api_router
 from misthos.config import settings
+from misthos.services.attestor import (
+    assert_key_is_not_in_the_environment,
+    assert_secrets_are_configured,
+)
 
 DESCRIPTION = """
 Marketplace where a company or a maintainer puts a **fixed price** on a GitHub
@@ -19,6 +23,11 @@ Everything lives under `/api/v1`.
 
 
 def create_app() -> FastAPI:
+    # Key material in the environment means the boundary has already been crossed,
+    # so the process refuses to start rather than serving with a key an agent can read.
+    assert_key_is_not_in_the_environment()
+    assert_secrets_are_configured(settings.simulated, settings.attestor_secret_ref)
+
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
