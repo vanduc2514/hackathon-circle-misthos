@@ -42,6 +42,10 @@ CSV_COLUMNS = [
     "decision_id",
 ]
 
+# A last row rather than a first one, so the header stays the header. Written into the
+# `record` column, which is where a reader looks for what kind of row it is.
+SIMULATED_NOTE = ["# SIMULATED: no chain was contacted; not an audit record"]
+
 
 def export(store: Store, publisher_id: str) -> AuditExport | None:
     publisher = store.get_publisher(publisher_id)
@@ -86,11 +90,15 @@ def export(store: Store, publisher_id: str) -> AuditExport | None:
 
 
 def to_csv(audit: AuditExport) -> str:
-    """One row per decision and per money event, in time order within each issue."""
+    """One row per decision and per money event, in time order within each issue.
+
+    The header is the first line, so `csv.DictReader` and a spreadsheet agree on what
+    the columns are. The simulation caveat goes in the last row instead: a reader that
+    takes the first line for the header would otherwise misalign every column, and a
+    comment before it is what the round trip cannot survive.
+    """
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
-    if audit.simulated:
-        writer.writerow(["# SIMULATED: no chain was contacted; not an audit record"])
     writer.writerow(CSV_COLUMNS)
     for issue in audit.issues:
         rows: list[tuple[datetime, list[object]]] = []
@@ -114,6 +122,11 @@ def to_csv(audit: AuditExport) -> str:
             )  # fmt: skip
         for _, row in sorted(rows, key=lambda pair: pair[0]):
             writer.writerow(row)
+    if audit.simulated:
+        # A data row, not a comment, so every column stays where the header put it.
+        writer.writerow(
+            SIMULATED_NOTE + [""] * (len(CSV_COLUMNS) - len(SIMULATED_NOTE))
+        )
     return out.getvalue()
 
 
