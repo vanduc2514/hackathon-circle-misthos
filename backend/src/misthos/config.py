@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     # tokens; set it wherever more than one process, or a restart, must keep sessions.
     public_url: str = "http://localhost:5173"
     session_secret: str = ""
+
+    # A publisher's books, read-only, for the affordability ceiling (#43). JSON from
+    # publisher id to a connection; see services/finance. Empty uses the declared
+    # budget alone.
+    finance_connections: str = ""
     circle_api_key: str = ""
 
     # The review agent. With a key, Claude judges each pull request against its

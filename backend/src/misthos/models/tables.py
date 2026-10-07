@@ -124,6 +124,8 @@ price_proposals = Table(
     Column("signals", Json, nullable=False),
     Column("justification", Text, nullable=False),
     Column("fundable", Boolean, nullable=False),
+    # The settled issues the price was compared with (#42); null before they were kept.
+    Column("comparables", Json),
     Column("created_at", Timestamp, nullable=False),
     UniqueConstraint("issue_id", "seq"),
 )

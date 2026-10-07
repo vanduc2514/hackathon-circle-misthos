@@ -202,8 +202,26 @@ export default function IssueDetail() {
 
               <div className="justify">{p.justification}</div>
               <div className="confidence-note">
-                Confidence: {p.confidence}. {p.comparables_note}
+                Confidence: {p.confidence}.{' '}
+                {p.comparables?.length
+                  ? 'Compared with settled issues of similar shape:'
+                  : p.comparables_note}
               </div>
+              {p.comparables && p.comparables.length > 0 && (
+                <ul className="comparables">
+                  {p.comparables.map((c) => (
+                    <li key={c.issue_id}>
+                      <Link to={`/issues/${c.issue_id}`}>
+                        <span className="cell-title">{c.title}</span>
+                        <span className="cell-repo">
+                          {c.repo} &middot; settled {shortTime(c.settled_at)}
+                        </span>
+                      </Link>
+                      <span className="mono-num">${money(c.price_usdc)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </Panel>
           ) : (
             <Panel title="Proposed price">

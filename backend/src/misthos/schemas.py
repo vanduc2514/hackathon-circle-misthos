@@ -113,6 +113,16 @@ class Decision(BaseModel):
     created_at: datetime
 
 
+class ComparableOut(BaseModel):
+    """A settled issue of similar shape the price was compared with (#42)."""
+
+    issue_id: str
+    repo: str
+    title: str
+    price_usdc: str
+    settled_at: datetime
+
+
 class PriceProposalOut(BaseModel):
     band_low: dict[str, str | int]
     band_high: dict[str, str | int]
@@ -126,6 +136,8 @@ class PriceProposalOut(BaseModel):
     signals: dict[str, float]
     justification: str
     comparables_note: str
+    comparables: list[ComparableOut] = Field(default_factory=list)
+    """Closest first. Confidence follows these, and nothing else."""
 
 
 class EscrowCommitment(BaseModel):
@@ -346,6 +358,23 @@ class ClaimRequest(BaseModel):
 
 class SubmitRequest(BaseModel):
     pr_number: int = Field(gt=0)
+
+
+class FinanceOut(BaseModel):
+    """A publisher's money as the pricing engine sees it, for that publisher alone (#43)."""
+
+    publisher_id: str
+    declared_budget_usdc: str
+    connected: bool
+    """Whether the operator connected this publisher's books."""
+    source: str | None = None
+    budget_remaining_usdc: str | None = None
+    """What the books say remains of the budget this work comes out of."""
+    cash_usdc: str | None = None
+    as_of: datetime | None = None
+    caps_prices_at_usdc: str
+    """The lower of the declared budget and what the books say remains."""
+    note: str = ""
 
 
 class DemoPullRequestOut(BaseModel):

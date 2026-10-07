@@ -42,6 +42,11 @@ description = "Replay the review agent over the regression corpus and report agr
 dir = "backend"
 run = "uv run python -m misthos.services.review.harness"
 
+[tasks."pricing:calibrate"]
+description = "Replay the pricing engine over issues of known worth and fit the rate and weights"
+dir = "backend"
+run = "uv run python -m misthos.services.calibration"
+
 [tasks."compose:up"]
 description = "Build and run the whole system: web, api, worker, edge, Postgres and Redis"
 run = "docker compose up --build"

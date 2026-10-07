@@ -24,6 +24,7 @@ from sqlalchemy import Connection, create_engine, delete, func, insert, select, 
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from misthos.domain.comparables import ComparableRef
 from misthos.domain.compliance import (
     PartyKind,
     Screening,
@@ -424,6 +425,8 @@ def _save_proposal(conn: Connection, rec: IssueRecord) -> None:
         "signals": dict(p.signals),
         "justification": p.justification,
         "fundable": p.fundable,
+        # None rather than an empty list, so a proposal saved before #42 is unchanged.
+        "comparables": [_comparable_row(c) for c in p.comparables] or None,
     }
     latest = (
         conn.execute(
@@ -714,6 +717,29 @@ def _proposal(row: Row) -> PriceProposal:
         signals=dict(row["signals"]),
         justification=row["justification"],
         fundable=row["fundable"],
+        comparables=tuple(_comparable(c) for c in row["comparables"] or []),
+    )
+
+
+def _comparable_row(ref: ComparableRef) -> dict:
+    return {
+        "issue_id": ref.issue_id,
+        "repo": ref.repo,
+        "title": ref.title,
+        "price_base_units": ref.price.base_units,
+        "settled_at": ref.settled_at.isoformat(),
+        "distance": ref.distance,
+    }
+
+
+def _comparable(row: dict) -> ComparableRef:
+    return ComparableRef(
+        issue_id=row["issue_id"],
+        repo=row["repo"],
+        title=row["title"],
+        price=Usdc(int(row["price_base_units"])),
+        settled_at=datetime.fromisoformat(row["settled_at"]),
+        distance=float(row["distance"]),
     )
 
 

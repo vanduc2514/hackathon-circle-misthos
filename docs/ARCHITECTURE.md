@@ -398,6 +398,12 @@ flowchart LR
     A --> D["Decision log"]
 ```
 
+How it is built today (epic #11):
+
+- **Comparables are the platform's own settled issues** (`domain/comparables.py`, #42). An issue is compared with work settled in the last year whose signals are within three quarters of a point, as a weighted root mean square, with the same repository ranked first. Each settled price is scaled by how much more or less effort this issue is. The median of those moves the formula's price a quarter of the way for one comparable, and at most half of the way however many there are. Confidence follows them and nothing else: low with none, high with three or more that agree within a factor of 1.5, medium otherwise. The proposal keeps the three closest, and the issue page shows them.
+- **The books cap the price** (`services/finance`, #43). The declared budget always applies. When the operator connects a publisher's books in `MISTHOS_FINANCE_CONNECTIONS` (Firefly III, or a beancount ledger with a Fava budget), the lower of the declared budget and what the books say remains caps every price. If the books cannot be read, that never blocks a price: the declared budget still holds. Connections are configured by the operator and never through the API, because a connection carries a credential or a server path. What remains of a budget, and the cash, are shown to the publisher alone (`/publishers/{id}/finance`). The public justification says that a price was capped and by which source, never the amount.
+- **The weights are calibrated by a harness, not by the engine itself** (`python -m misthos.services.calibration`, #41). It replays the engine over issues whose worth is known and reports how often the worth falls inside the band. It fits the rate, and the weights once there are twenty issues. The corpus holds real issues only, and it is empty until the team scores them; `--settled` runs the harness on the platform's own settlements instead.
+
 The finance adapter is read-only by design. It answers two questions: what is left in the relevant budget, and what the cash position looks like. It never writes.
 
 Firefly III is the first adapter because the hackathon brief points at it, and it comes with limits worth recording. It is a personal finance manager with no chart of accounts, its own documentation refuses programmatic write access as unreliable, and its rules engine can delete a journal. That is why the adapter interface exists rather than a Firefly integration: the first customer running Odoo should be a new adapter, not a rewrite.

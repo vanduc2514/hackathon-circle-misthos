@@ -5,14 +5,21 @@ market context and the publisher's affordability ceiling to produce a band rathe
 than a single number. A band invites the publisher to pick a position; a single
 figure invites an argument about whether it is exactly right.
 
-Weights are a starting guess and should be tuned against real settlements.
+Weights are a starting guess and should be tuned against real settlements
+(`python -m misthos.services.calibration`, #41). Comparables come from the
+platform's own settled issues (`domain/comparables.py`, #42): they move the price
+toward what similar work actually settled at, and they alone set the confidence.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
+from statistics import median
 
+from misthos.domain import comparables as history
+from misthos.domain.comparables import Comparable, ComparableRef
 from misthos.domain.money import Usdc
 
 # Signal weights, summing to 1.0.
@@ -110,34 +117,43 @@ class PriceProposal:
     signals: dict[str, float] = field(default_factory=dict)
     justification: str = ""
     fundable: bool = True
+    comparables: tuple[ComparableRef, ...] = ()
+    """The settled issues of similar shape the engine found, closest first."""
 
     @property
     def comparables_note(self) -> str:
+        if not self.comparables:
+            return "No settled issue of similar shape yet. The band rests on the signals above."
+        prices = ", ".join(f"{c.issue_id} at {c.price}" for c in self.comparables)
         if self.confidence == "high":
-            return "Backed by several recently settled issues of similar shape."
-        if self.confidence == "medium":
-            return "A few comparable issues settled recently. Treat the band as indicative."
-        return "Little comparable history. The band rests on the signals above."
+            return f"Backed by settled issues of similar shape that agree: {prices}."
+        return f"Comparable settled issues: {prices}. Treat the band as indicative."
 
 
-def estimate_hours(signals: ComplexitySignals) -> float:
+def score(signals: ComplexitySignals, weights: dict[str, float] | None = None) -> float:
+    """The weighted complexity score, 1 to 5."""
+    w = WEIGHTS if weights is None else weights
+    return sum(signals.as_dict()[name] * weight for name, weight in w.items())
+
+
+def estimate_hours(signals: ComplexitySignals, weights: dict[str, float] | None = None) -> float:
     signals.validate()
-    score = sum(signals.as_dict()[name] * weight for name, weight in WEIGHTS.items())
+    score_ = score(signals, weights)
     # A 1.0 score is a trivial change; a 5.0 is a substantial one. Map to hours.
-    return round(2 + (score - 1) * 6.5, 1)
+    return round(2 + (score_ - 1) * 6.5, 1)
 
 
-def complexity_multiplier(signals: ComplexitySignals) -> Decimal:
-    score = sum(signals.as_dict()[name] * weight for name, weight in WEIGHTS.items())
-    return Decimal("1.0") + (Decimal(str(score)) - Decimal("1.0")) * Decimal("0.15")
+def complexity_multiplier(
+    signals: ComplexitySignals, weights: dict[str, float] | None = None
+) -> Decimal:
+    score_ = score(signals, weights)
+    return Decimal("1.0") + (Decimal(str(score_)) - Decimal("1.0")) * Decimal("0.15")
 
 
-def confidence_for(comparables: int) -> str:
-    if comparables >= 6:
-        return "high"
-    if comparables >= 2:
-        return "medium"
-    return "low"
+def effort(signals: ComplexitySignals, weights: dict[str, float] | None = None) -> float:
+    """Hours times the complexity multiplier: what the formula charges the rate for,
+    and what scales one settled price to another issue."""
+    return estimate_hours(signals, weights) * float(complexity_multiplier(signals, weights))
 
 
 def propose(
@@ -147,13 +163,21 @@ def propose(
     risk_premium: Usdc | None = None,
     rate_per_hour: Usdc = RATE_PER_HOUR,
     compliance_driven: bool = False,
-    comparables: int = 0,
+    comparables: Sequence[Comparable] = (),
     affordability_ceiling: Usdc | None = None,
+    ceiling_source: str | None = None,
     tier: str = "open",
+    weights: dict[str, float] | None = None,
 ) -> PriceProposal:
-    """Produce a price band with a written justification."""
-    hours = estimate_hours(signals)
-    multiplier = complexity_multiplier(signals)
+    """Produce a price band with a written justification.
+
+    `comparables` are settled issues of similar shape (`comparables.find`); they
+    move the price toward what that work settled at and set the confidence. The
+    ceiling is the publisher's remaining budget, from `ceiling_source` when it was
+    read from their books rather than declared.
+    """
+    hours = estimate_hours(signals, weights)
+    multiplier = complexity_multiplier(signals, weights)
 
     fix_price = Usdc(int(rate_per_hour.base_units * hours * float(multiplier)))
     if risk_premium is not None:
@@ -165,29 +189,43 @@ def propose(
     if compliance_driven:
         fix_price = fix_price * Decimal("1.15")
 
+    notes: list[str] = []
+    if comparables:
+        # History moves the formula's recommendation toward what it implies; the band
+        # keeps its shape around wherever the recommendation lands.
+        midpoint = (BAND_LOW + BAND_HIGH) / 2
+        formula = Usdc(int(fix_price.base_units * float(midpoint)))
+        moved = history.anchored(formula, comparables)
+        fix_price = Usdc(int(Decimal(moved.base_units) / midpoint))
+        share = int(history.pull(len(comparables)) * 100)
+        noun = "issue" if len(comparables) == 1 else "issues"
+        notes.append(
+            f"{len(comparables)} settled {noun} of similar shape put it nearer "
+            f"{_implied(comparables)}, so the price moved {share}% of the way there."
+        )
+
     low = Usdc(int(fix_price.base_units * float(BAND_LOW)))
     high = Usdc(int(fix_price.base_units * float(BAND_HIGH)))
 
-    confidence = confidence_for(comparables)
+    confidence = history.confidence(comparables)
     recommended = Usdc(int((low.base_units + high.base_units) / 2))
 
-    # The ceiling never raises a price. It caps one, and it says so.
+    # The ceiling never raises a price. It caps one, and it says so, without saying
+    # how much budget is left: the justification is public, the budget is not.
     fundable = True
-    notes: list[str] = []
+    where = f", as {ceiling_source} reports it" if ceiling_source else ""
     if affordability_ceiling is not None and recommended > affordability_ceiling:
         if affordability_ceiling.base_units > 0:
             recommended = affordability_ceiling
             high = affordability_ceiling
             low = Usdc(int(affordability_ceiling.base_units * 0.6))
-            notes.append(
-                f"Capped at the publisher's remaining budget of {affordability_ceiling}."
-            )
+            notes.append(f"Capped at what remains of the publisher's budget{where}.")
         else:
             # The budget covers nothing. Say so rather than producing a number
             # nobody should accept.
             fundable = False
             notes.append(
-                f"The remaining budget of {affordability_ceiling} does not cover the "
+                f"What remains of the publisher's budget{where} does not cover the "
                 "work, so this issue cannot be funded as scoped. Consider splitting it."
             )
 
@@ -207,14 +245,17 @@ def propose(
         band_high=high,
         recommended=recommended,
         estimated_hours=hours,
-        complexity_score=round(
-            sum(signals.as_dict()[n] * w for n, w in WEIGHTS.items()), 2
-        ),
+        complexity_score=round(score(signals, weights), 2),
         confidence=confidence,
         signals=signals.as_dict(),
         justification=_justify(signals, hours, confidence, compliance_driven, notes),
         fundable=fundable,
+        comparables=history.refs(comparables),
     )
+
+
+def _implied(comparables: Sequence[Comparable]) -> Usdc:
+    return Usdc(int(median(c.implied.base_units for c in comparables)))
 
 
 def _justify(
@@ -259,7 +300,7 @@ def relist(proposal: PriceProposal, *, ceiling: Usdc | None = None) -> PriceProp
             return None
         recommended = high = ceiling
         low = low if low < ceiling else ceiling
-        notes.append(f"Capped at the publisher's remaining budget of {ceiling}.")
+        notes.append("Capped at what remains of the publisher's budget.")
 
     return replace(
         proposal,
