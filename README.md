@@ -156,6 +156,20 @@ in the browser, and GitHub is simulated, so the contributor opens their pull req
 and the publisher merges it with a button. Use two browsers, or a private window, to
 be both sides at once.
 
+### Pricing from history and from the publisher's books
+
+A price moves toward what similar work settled at on the platform, and its confidence
+is only as high as that history allows. A publisher's own books can cap it too: the
+operator connects Firefly III, or a beancount ledger with a Fava budget, in
+`MISTHOS_FINANCE_CONNECTIONS` (see `backend/.env.example`), and the lower of the
+declared budget and what the books say remains caps every price. To check the weights
+against issues whose worth is known:
+
+```bash
+mise run pricing:calibrate                       # the corpus of real, scored issues
+cd backend && uv run python -m misthos.services.calibration --settled
+```
+
 ### The whole system
 
 To run the web app, the API, the worker and the edge against Postgres and Redis, the

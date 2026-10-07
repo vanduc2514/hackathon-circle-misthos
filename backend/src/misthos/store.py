@@ -36,8 +36,9 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from misthos.config import settings
-from misthos.domain import compliance, ledger, pricing, timers
+from misthos.domain import comparables, compliance, ledger, pricing, timers
 from misthos.domain import issue as lifecycle
+from misthos.domain.comparables import Comparable, SettledWork
 from misthos.domain.compliance import (
     ComplianceRefusal,
     IdentityStatus,
@@ -57,7 +58,7 @@ from misthos.domain.policy import (
     may_approve,
     needs_approval,
 )
-from misthos.domain.pricing import ComplexitySignals, UnfundableIssue, propose
+from misthos.domain.pricing import WEIGHTS, ComplexitySignals, UnfundableIssue, effort, propose
 from misthos.domain.review import ChangedFile, Judgement, Submitted, Verdict, decide
 from misthos.domain.signals import read as read_signals
 from misthos.domain.timers import TimedAction
@@ -101,6 +102,7 @@ from misthos.services.compliance import (
     SimulatedScreening,
 )
 from misthos.services.coordination import ISSUE_LOCK_TTL, Busy, Coordinator, build_coordinator
+from misthos.services.finance import Finance, FinanceContext, FinanceError, build_finance
 from misthos.services.github import (
     GitHubError,
     GitHubGateway,
@@ -125,6 +127,7 @@ def _demo_files(repo: str) -> list[ChangedFile]:
         ChangedFile("CHANGELOG.md", additions=2),
     ]
 
+
 # Recorded on every commitment. Set MISTHOS_ESCROW_CONTRACT to the deployed address.
 ESCROW_CONTRACT = settings.escrow_contract
 CHAIN = settings.chain
@@ -141,10 +144,6 @@ _PRE_FUNDING = frozenset({IssueState.DRAFT, IssueState.PRICED, IssueState.AWAITI
 
 
 log = logging.getLogger("misthos.store")
-
-# Comparables behind each confidence level, so a re-price keeps the confidence the
-# first price had until #42 counts comparables from settled issues.
-_COMPARABLES_FOR = {"high": 6, "medium": 2, "low": 0}
 
 _REVIEW_EVENTS = {
     "accept": (ReviewEvent.APPROVE, StatusState.SUCCESS),
@@ -222,8 +221,11 @@ class Store:
         github: GitHubGateway | None = None,
         reviewer: Reviewer | None = None,
         second_reviewer: Reviewer | None = None,
+        finance: Finance | None = None,
     ) -> None:
         self.repo: Repository = repository or MemoryRepository()
+        # A publisher's books, read-only, where the operator connected them (#43).
+        self.finance: Finance = finance or build_finance()
         # The simulated escrow keeps its books beside the repository's tables when
         # there is a database, so a restart does not make every issue look divergent.
         self.chain: ChainGateway = chain or SimulatedChain(getattr(self.repo, "engine", None))
@@ -296,12 +298,14 @@ class Store:
         proposal = propose(
             signals,
             compliance_driven=spec.get("compliance_driven", False),
-            comparables=spec.get("comparables", 0),
+            # Settled issues of the same shape, from the platform's own history (#42).
+            comparables=self._comparables_for(signals, spec["repo"]),
             urgency=Usdc.from_decimal(spec["urgency"]) if spec.get("urgency") else None,
             risk_premium=Usdc.from_decimal(spec["risk"]) if spec.get("risk") else None,
             # The publisher's remaining budget actually constrains the price, which
             # is the whole point of reading it. Seeded demo issues declare none.
             affordability_ceiling=spec.get("affordability_ceiling"),
+            ceiling_source=spec.get("ceiling_source"),
             # The floor depends on the tier's take rate, so the tier has to reach
             # the engine rather than being assumed.
             tier=publisher.tier,
@@ -721,15 +725,16 @@ class Store:
             return None
         publisher = self.repo.get_publisher(rec.publisher_id)
         assert publisher is not None
-        proposal = pricing.relist(rec.proposal, ceiling=_budget(publisher))
+        proposal = pricing.relist(rec.proposal, ceiling=self._ceiling(publisher)[0])
         if proposal is None:
             self._log(
                 rec,
                 actor="agent",
                 action="relist_declined",
                 rule="affordability_ceiling",
-                outcome=f"the remaining budget of {_budget(publisher)} cannot carry a "
-                "higher price, so the issue was not re-listed",
+                # The log is public and the budget is not, so the figure stays out.
+                outcome="what remains of the publisher's budget cannot carry a higher "
+                "price, so the issue was not re-listed",
                 when=when,
             )
             return None
@@ -1341,7 +1346,10 @@ class Store:
                 raise UnreadableIssue(
                     f"could not read {payload.repo}#{payload.number} from GitHub: {exc}"
                 ) from exc
+        ceiling, ceiling_source = self._ceiling(publisher)
         spec = {
+            "affordability_ceiling": ceiling,
+            "ceiling_source": ceiling_source,
             "repo": payload.repo,
             "number": payload.number or random.randint(100, 999),
             "title": payload.title,
@@ -1355,9 +1363,7 @@ class Store:
                 "Public behaviour is documented in the changelog.",
             ],
             "publisher_id": payload.publisher_id,
-            "affordability_ceiling": _budget(publisher),
             "age_days": 0,
-            "comparables": random.randint(0, 7),
             "signals": payload.signals
             or {
                 "code_surface": 2.0,
@@ -1391,6 +1397,72 @@ class Store:
         self.repo.save_issues(rec)
         _observe_price(rec, "github" if facts is not None else "form", started)
         return rec
+
+    # ------------------------------------------------------------- pricing
+
+    def _settled_history(self) -> list[SettledWork]:
+        """Every issue the platform settled, as the pricing engine's comparables read it."""
+        works = []
+        for rec in self.repo.list_issues({IssueState.PAID}):
+            if rec.proposal is None or rec.paid is None or rec.paid_at is None:
+                continue
+            works.append(
+                SettledWork(
+                    issue_id=rec.id,
+                    repo=rec.repo,
+                    title=rec.title,
+                    signals=dict(rec.proposal.signals),
+                    effort=effort(ComplexitySignals(**rec.proposal.signals)),
+                    price=rec.paid,
+                    settled_at=rec.paid_at,
+                )
+            )
+        return works
+
+    def _comparables_for(
+        self, signals: ComplexitySignals, repo: str, *, exclude: str | None = None
+    ) -> list[Comparable]:
+        """Settled issues of the same shape as this one, closest first (#42)."""
+        return comparables.find(
+            signals.as_dict(),
+            effort(signals),
+            self._settled_history(),
+            weights=WEIGHTS,
+            now=_now(),
+            repo=repo,
+            exclude=exclude,
+        )
+
+    def _ceiling(self, publisher: Publisher) -> tuple[Usdc, str | None]:
+        """What a price may not exceed: the declared budget, or less where the
+        publisher's connected books say less is left (#43). The books failing to answer
+        never blocks a price; the declared budget still holds."""
+        declared = _budget(publisher)
+        source = self.finance(publisher.id)
+        if source is None:
+            return declared, None
+        try:
+            read = source.read(_now())
+        except FinanceError as exc:
+            log.warning("finance for %s could not be read: %s", publisher.id, exc)
+            return declared, None
+        if read.budget_remaining is None or declared < read.budget_remaining:
+            return declared, None
+        return read.budget_remaining, read.source
+
+    def finance_context(self, publisher_id: str) -> tuple[Publisher, FinanceContext | None, str]:
+        """The publisher's declared budget and what its books say, for its own eyes."""
+        self.ensure_ready()
+        publisher = self.repo.get_publisher(publisher_id)
+        if publisher is None:
+            raise KeyError(publisher_id)
+        source = self.finance(publisher_id)
+        if source is None:
+            return publisher, None, ""
+        try:
+            return publisher, source.read(_now()), ""
+        except FinanceError as exc:
+            return publisher, None, str(exc)
 
     # ------------------------------------------------------------- review
 
@@ -2093,11 +2165,13 @@ class Store:
             publisher = self.repo.get_publisher(rec.publisher_id)
             assert publisher is not None
             reading = read_signals(facts)
+            ceiling, ceiling_source = self._ceiling(publisher)
             proposal = propose(
                 reading.signals,
                 compliance_driven=rec.compliance_driven,
-                comparables=_COMPARABLES_FOR.get(rec.proposal.confidence, 0),
-                affordability_ceiling=_budget(publisher),
+                comparables=self._comparables_for(reading.signals, rec.repo, exclude=rec.id),
+                affordability_ceiling=ceiling,
+                ceiling_source=ceiling_source,
                 tier=publisher.tier,
             )
             rec.title, rec.labels = facts.title, list(facts.labels) or rec.labels
@@ -2293,6 +2367,16 @@ class Store:
                 "signals": p.signals,
                 "justification": p.justification,
                 "comparables_note": p.comparables_note,
+                "comparables": [
+                    {
+                        "issue_id": c.issue_id,
+                        "repo": c.repo,
+                        "title": c.title,
+                        "price_usdc": str(c.price.decimal),
+                        "settled_at": c.settled_at,
+                    }
+                    for c in p.comparables
+                ],
             }
         return IssueOut(
             id=rec.id,
@@ -2574,7 +2658,6 @@ _ISSUE_SPECS: list[dict] = [
         ],
         "publisher_id": "PUB-1",
         "age_days": 2,
-        "comparables": 7,
         "signals": {
             "code_surface": 2.0,
             "requirement_clarity": 1.0,
@@ -2599,7 +2682,6 @@ _ISSUE_SPECS: list[dict] = [
         ],
         "publisher_id": "PUB-1",
         "age_days": 9,
-        "comparables": 4,
         "contributor_id": "CON-2",
         "pr": {
             "pr_number": 903,
@@ -2635,7 +2717,6 @@ _ISSUE_SPECS: list[dict] = [
         # Claimed 52 hours ago, so the 72-hour claim is still live when the demo
         # starts and the sweeper only returns it to the pool if nobody acts for a day.
         "age_days": 3,
-        "comparables": 2,
         "contributor_id": "CON-1",
         "risk": "1200.00",
         "urgency": "800.00",
@@ -2663,7 +2744,6 @@ _ISSUE_SPECS: list[dict] = [
         ],
         "publisher_id": "PUB-2",
         "age_days": 21,
-        "comparables": 6,
         "contributor_id": "CON-3",
         "pr": {
             "pr_number": 611,
@@ -2698,7 +2778,6 @@ _ISSUE_SPECS: list[dict] = [
         ],
         "publisher_id": "PUB-5",
         "age_days": 30,
-        "comparables": 3,
         "contributor_id": "CON-4",
         "pr": {
             "pr_number": 302,
@@ -2734,7 +2813,6 @@ _ISSUE_SPECS: list[dict] = [
         ],
         "publisher_id": "PUB-4",
         "age_days": 1,
-        "comparables": 1,
         "signals": {
             "code_surface": 4.0,
             "requirement_clarity": 4.0,
@@ -2759,7 +2837,6 @@ _ISSUE_SPECS: list[dict] = [
         ],
         "publisher_id": "PUB-2",
         "age_days": 11,
-        "comparables": 4,
         "contributor_id": "CON-5",
         "pr": {
             "pr_number": 640,
@@ -2794,7 +2871,6 @@ _ISSUE_SPECS: list[dict] = [
         "criteria": ["Loader is pluggable.", "Existing TOML configs keep working."],
         "publisher_id": "PUB-5",
         "age_days": 40,
-        "comparables": 2,
         "signals": {
             "code_surface": 5.0,
             "requirement_clarity": 5.0,

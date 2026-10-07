@@ -10,6 +10,14 @@ describe('money', () => {
     expect(money('1473.63')).toBe('1,473.63')
   })
 
+  it('reads a figure that arrives already grouped', () => {
+    expect(money('48,500.00')).toBe('48,500.00')
+  })
+
+  it('renders an em dash rather than NaN for a string that is not a number', () => {
+    expect(money('n/a')).toBe('—')
+  })
+
   it('formats a number', () => {
     expect(money(12)).toBe('12.00')
   })

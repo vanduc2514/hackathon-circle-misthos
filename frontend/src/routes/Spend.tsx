@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { api, money, shortTime, type Publisher, type SpendOut } from '../lib/client'
+import { api, money, shortTime, type FinanceOut, type Publisher, type SpendOut } from '../lib/client'
 import { Panel, Stat } from '../components/ui'
 
 /**
@@ -28,7 +28,20 @@ export default function Spend() {
       ).data as SpendOut | undefined,
   })
 
+  // What caps every price: the declared budget, or less where the books say so (#43).
+  const books = useQuery({
+    queryKey: ['finance', chosen],
+    enabled: Boolean(chosen),
+    queryFn: async () =>
+      (
+        await api.GET('/api/v1/publishers/{publisher_id}/finance', {
+          params: { path: { publisher_id: chosen as string } },
+        })
+      ).data as FinanceOut | undefined,
+  })
+
   const s = spend.data
+  const f = books.data
   const publisher = publishers.data?.find((p) => p.id === chosen)
 
   return (
@@ -67,6 +80,30 @@ export default function Spend() {
         <Stat label="Released this year" value={`$${money(s?.released)}`} />
         <Stat label="Refunded this year" value={`$${money(s?.refunded)}`} />
       </div>
+
+      {f && (
+        <div className="banner">
+          {f.connected && f.source ? (
+            <>
+              Read from {f.source}
+              {f.as_of ? ` at ${shortTime(f.as_of)}` : ''}:{' '}
+              {f.budget_remaining_usdc !== null && f.budget_remaining_usdc !== undefined
+                ? `$${money(f.budget_remaining_usdc)} left in the budget`
+                : 'no budget figure'}
+              {f.cash_usdc ? `, $${money(f.cash_usdc)} in cash` : ''}. Prices are capped at $
+              {money(f.caps_prices_at_usdc)}, the lower of that and the declared budget.
+            </>
+          ) : f.connected ? (
+            <>Your books could not be read ({f.note}). The declared budget caps prices.</>
+          ) : (
+            <>
+              Prices are capped at the declared budget, ${money(f.declared_budget_usdc)}. Connect
+              Firefly III or a beancount ledger to cap them at what your books say is left.
+            </>
+          )}
+          {f.connected && f.source && f.note ? ` Note: ${f.note}.` : ''}
+        </div>
+      )}
 
       {publisher?.approval_threshold_usdc && (
         <div className="banner">

@@ -20,6 +20,8 @@ An account links a wallet to a GitHub login in our database, because that link i
 
 Outside the simulation, a publisher's remaining budget and spending policy are served only to that publisher, signed in. They are commercially sensitive.
 
+The same goes for a publisher's connected books (#43). We read two figures, what remains of one budget and the cash across the asset accounts, when a price is proposed and when the publisher asks. We keep neither. A price's public justification says when it was capped by the budget, and which source capped it, but never the amount. The decision log does not name the amount either.
+
 ## What we hold, and where
 
 | Data | Where it lives | Why we have it |

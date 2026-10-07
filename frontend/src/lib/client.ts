@@ -16,6 +16,7 @@ export type Decision = components['schemas']['Decision']
 export type Publisher = components['schemas']['PublisherListing']
 export type LoopOut = components['schemas']['LoopOut']
 export type SpendOut = components['schemas']['SpendOut']
+export type FinanceOut = components['schemas']['FinanceOut']
 
 export type Account = components['schemas']['Account']
 export type MeOut = components['schemas']['MeOut']
@@ -65,7 +66,10 @@ export const money = (value: unknown): string => {
     })
   }
   if (typeof value === 'string' || typeof value === 'number') {
-    return Number(value).toLocaleString('en-US', {
+    // Tolerate a figure that arrives already grouped, such as "48,500.00".
+    const amount = typeof value === 'string' ? Number(value.replace(/,/g, '')) : value
+    if (Number.isNaN(amount)) return '—'
+    return amount.toLocaleString('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })

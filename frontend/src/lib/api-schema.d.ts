@@ -682,6 +682,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/publishers/{publisher_id}/finance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Finance
+         * @description The declared budget, what the publisher's connected books say, and the lower of
+         *     the two, which is what caps every price it is offered. Read-only, and the
+         *     publisher's alone: cash and budgets are commercially sensitive.
+         */
+        get: operations["finance_api_v1_publishers__publisher_id__finance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/webhooks/github": {
         parameters: {
             query?: never;
@@ -859,6 +881,25 @@ export interface components {
             contributor_id?: string | null;
         };
         /**
+         * ComparableOut
+         * @description A settled issue of similar shape the price was compared with (#42).
+         */
+        ComparableOut: {
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Title */
+            title: string;
+            /** Price Usdc */
+            price_usdc: string;
+            /**
+             * Settled At
+             * Format: date-time
+             */
+            settled_at: string;
+        };
+        /**
          * ContributorProfile
          * @description What anyone may see about a contributor: no wallet, no provider reference.
          */
@@ -988,6 +1029,33 @@ export interface components {
             settled_at: string;
             /** Github Url */
             github_url: string;
+        };
+        /**
+         * FinanceOut
+         * @description A publisher's money as the pricing engine sees it, for that publisher alone (#43).
+         */
+        FinanceOut: {
+            /** Publisher Id */
+            publisher_id: string;
+            /** Declared Budget Usdc */
+            declared_budget_usdc: string;
+            /** Connected */
+            connected: boolean;
+            /** Source */
+            source?: string | null;
+            /** Budget Remaining Usdc */
+            budget_remaining_usdc?: string | null;
+            /** Cash Usdc */
+            cash_usdc?: string | null;
+            /** As Of */
+            as_of?: string | null;
+            /** Caps Prices At Usdc */
+            caps_prices_at_usdc: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** GitHubLinkStart */
         GitHubLinkStart: {
@@ -1256,6 +1324,8 @@ export interface components {
             justification: string;
             /** Comparables Note */
             comparables_note: string;
+            /** Comparables */
+            comparables?: components["schemas"]["ComparableOut"][];
         };
         /** PublishRequest */
         PublishRequest: {
@@ -2718,6 +2788,37 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AuditExport"];
                     "text/csv": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finance_api_v1_publishers__publisher_id__finance_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FinanceOut"];
                 };
             };
             /** @description Validation Error */
