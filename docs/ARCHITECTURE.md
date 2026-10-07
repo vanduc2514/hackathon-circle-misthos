@@ -518,7 +518,16 @@ An organisation sets its own spending policy, and the store enforces it at the t
 - **Category limits.** A monthly cap per issue label. A commitment that would pass it is refused at funding, with the limit and the month's total in the reason.
 - **A release threshold with named approvers.** A payout above it is held as `await_approver` until one of them approves, whether the merge or the grace period triggered it. The approval is required, not requested.
 
-`/publishers/{id}/spend` reports what was budgeted, committed, released and refunded, by category against those limits, and the settled compliance and security fixes a security review can file (#50). `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are the organisation's alone: a signed-in publisher sees and sets its own, and only the simulation serves any. Plans, billing and SSO (#53) are not built.
+`/publishers/{id}/spend` reports what was budgeted, committed, released and refunded, by category against those limits, and the settled compliance and security fixes a security review can file (#50). `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are the organisation's alone: a signed-in publisher sees and sets its own, and only the simulation serves any.
+
+**Plans** (`domain/plans.py`, `api/v1/plans.py`, #53) follow the tier table in 06. Open costs nothing and charges 12 percent. Team costs $249 a month and charges 10 percent, and adds budget rules, approval thresholds and spend reporting. Enterprise starts at $2,000 a month and charges 8 percent, and adds the audit export, SSO and a support commitment.
+
+- **What a plan unlocks.** Each of those routes answers 402, naming the plan that includes it. Enforcement of a policy already set never stops, even when a plan lapses, because a limit that protects an organisation's money is not a feature to switch off for non-payment.
+- **Buying Team.** Team is bought from the web app without a conversation. The publisher chooses it and is told what to send: USDC on Arc, from its own wallet, to `MISTHOS_PLATFORM_WALLET`. It confirms the transaction, and the server reads the USDC `Transfer` log from the receipt over JSON-RPC (`services/billing/arc.py`) before switching the plan on. We never hold a key that moves a publisher's money, and one transaction pays for one period.
+- **When a period ends.** The sweeper marks a period that ended unpaid as past due, gives it seven days' grace, and then moves the organisation back to Open. A cancelled plan ends at its period end.
+- **Enterprise** is agreed in a contract and recorded by an operator (`python -m misthos.services.contracts`).
+- **The simulation** has its own rail, so the demo can buy Team with a button.
+- **Not built yet:** SSO, which needs organisation membership beyond one wallet per party.
 
 ## Trust boundaries
 

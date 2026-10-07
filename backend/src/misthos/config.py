@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # publisher id to a connection; see services/finance. Empty uses the declared
     # budget alone.
     finance_connections: str = ""
+
+    # Plans (#53). Where subscription payments are sent: the platform's own wallet on
+    # Arc. The simulation uses a made-up one when this is empty; anywhere else plans
+    # cannot be bought until it is set.
+    platform_wallet: str = ""
     circle_api_key: str = ""
 
     # The review agent. With a key, Claude judges each pull request against its

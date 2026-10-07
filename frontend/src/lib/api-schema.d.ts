@@ -704,6 +704,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Plans
+         * @description What each plan costs and includes, with the take rate and the smallest fix
+         *     it will price.
+         */
+        get: operations["list_plans_api_v1_plans_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Subscription
+         * @description The plan in force, its period, what is waiting to be paid, and every payment.
+         */
+        get: operations["subscription_api_v1_publishers__publisher_id__subscription_get"];
+        put?: never;
+        /**
+         * Subscribe
+         * @description Choose a plan. A paid plan answers with what to send and where; choosing Open
+         *     cancels at the end of the paid period.
+         */
+        post: operations["subscribe_api_v1_publishers__publisher_id__subscription_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/subscription/payment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Payment
+         * @description Confirm the transaction that paid. The server reads it from the chain, and the
+         *     plan switches on only if it moved what is due from the publisher's wallet to ours.
+         */
+        post: operations["confirm_payment_api_v1_publishers__publisher_id__subscription_payment_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/demo/publishers/{publisher_id}/subscription/pay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo Pay
+         * @description Send what is due on the simulation's rail and confirm it. The simulation's only.
+         */
+        post: operations["demo_pay_api_v1_demo_publishers__publisher_id__subscription_pay_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/webhooks/github": {
         parameters: {
             query?: never;
@@ -1277,6 +1364,65 @@ export interface components {
             /** Statement */
             statement: string;
         };
+        /** PaymentConfirmation */
+        PaymentConfirmation: {
+            /** Tx Hash */
+            tx_hash: string;
+        };
+        /**
+         * PaymentRequest
+         * @description What to send to start or renew a plan: USDC on Arc, from the publisher's wallet.
+         */
+        PaymentRequest: {
+            /**
+             * Plan
+             * @enum {string}
+             */
+            plan: "open" | "team" | "enterprise";
+            /** Amount Usdc */
+            amount_usdc: string;
+            /** Pay To */
+            pay_to: string;
+            /** Payer */
+            payer: string;
+            /** Chain */
+            chain: string;
+            /** Chain Id */
+            chain_id: number;
+            /** Usdc Address */
+            usdc_address: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+        };
+        /** PlanOut */
+        PlanOut: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "open" | "team" | "enterprise";
+            /** Name */
+            name: string;
+            /** Audience */
+            audience: string;
+            /** Monthly Usdc */
+            monthly_usdc: string;
+            /** Price From */
+            price_from: boolean;
+            /** Self Serve */
+            self_serve: boolean;
+            /** Take Rate Percent */
+            take_rate_percent: number;
+            /** Minimum Fix Usdc */
+            minimum_fix_usdc: string;
+            /** Features */
+            features: string[];
+            /** Support */
+            support: string;
+        };
         /** PolicyRequest */
         PolicyRequest: {
             /** Approval Threshold Usdc */
@@ -1609,6 +1755,72 @@ export interface components {
         SubmitRequest: {
             /** Pr Number */
             pr_number: number;
+        };
+        /** SubscribeRequest */
+        SubscribeRequest: {
+            /**
+             * Plan
+             * @enum {string}
+             */
+            plan: "open" | "team" | "enterprise";
+        };
+        /** SubscriptionOut */
+        SubscriptionOut: {
+            /** Publisher Id */
+            publisher_id: string;
+            /**
+             * Plan
+             * @enum {string}
+             */
+            plan: "open" | "team" | "enterprise";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "none" | "pending" | "active" | "past_due" | "lapsed" | "cancelled" | "contract";
+            /** Period End */
+            period_end?: string | null;
+            /** Grace Ends */
+            grace_ends?: string | null;
+            /**
+             * Cancel At Period End
+             * @default false
+             */
+            cancel_at_period_end: boolean;
+            pending?: components["schemas"]["PaymentRequest"] | null;
+            /** Payments */
+            payments?: components["schemas"]["SubscriptionPayment"][];
+            /** Features */
+            features?: string[];
+        };
+        /** SubscriptionPayment */
+        SubscriptionPayment: {
+            /** Publisher Id */
+            publisher_id: string;
+            /**
+             * Plan
+             * @enum {string}
+             */
+            plan: "open" | "team" | "enterprise";
+            /** Amount Usdc */
+            amount_usdc: string;
+            /** Tx Hash */
+            tx_hash: string;
+            /**
+             * Period Start
+             * Format: date-time
+             */
+            period_start: string;
+            /**
+             * Period End
+             * Format: date-time
+             */
+            period_end: string;
+            /**
+             * Paid At
+             * Format: date-time
+             */
+            paid_at: string;
         };
         /** TimelineEntry */
         TimelineEntry: {
@@ -2819,6 +3031,158 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FinanceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_plans_api_v1_plans_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanOut"][];
+                };
+            };
+        };
+    };
+    subscription_api_v1_publishers__publisher_id__subscription_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    subscribe_api_v1_publishers__publisher_id__subscription_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubscribeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_payment_api_v1_publishers__publisher_id__subscription_payment_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaymentConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    demo_pay_api_v1_demo_publishers__publisher_id__subscription_pay_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionOut"];
                 };
             };
             /** @description Validation Error */
