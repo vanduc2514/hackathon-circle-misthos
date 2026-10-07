@@ -1,6 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
-import { api, money, shortTime, type FinanceOut, type Publisher, type SpendOut } from '../lib/client'
+import { Link, useSearchParams } from 'react-router-dom'
+import {
+  api,
+  money,
+  shortTime,
+  unwrap,
+  type FinanceOut,
+  type Publisher,
+  type SpendOut,
+} from '../lib/client'
 import { Panel, Stat } from '../components/ui'
 
 /**
@@ -20,12 +28,14 @@ export default function Spend() {
   const spend = useQuery({
     queryKey: ['spend', chosen],
     enabled: Boolean(chosen),
+    retry: false,
+    // A plan without spend reporting answers 402 with the plan that has it.
     queryFn: async () =>
-      (
+      unwrap(
         await api.GET('/api/v1/publishers/{publisher_id}/spend', {
           params: { path: { publisher_id: chosen as string } },
-        })
-      ).data as SpendOut | undefined,
+        }),
+      ) as SpendOut,
   })
 
   // What caps every price: the declared budget, or less where the books say so (#43).
@@ -80,6 +90,15 @@ export default function Spend() {
         <Stat label="Released this year" value={`$${money(s?.released)}`} />
         <Stat label="Refunded this year" value={`$${money(s?.refunded)}`} />
       </div>
+
+      {spend.error && (
+        <div className="banner">
+          {spend.error.message}{' '}
+          <Link to="/plans" style={{ textDecoration: 'underline' }}>
+            See the plans
+          </Link>
+        </div>
+      )}
 
       {f && (
         <div className="banner">

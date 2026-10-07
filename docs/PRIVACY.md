@@ -22,6 +22,8 @@ Outside the simulation, a publisher's remaining budget and spending policy are s
 
 The same goes for a publisher's connected books (#43). We read two figures, what remains of one budget and the cash across the asset accounts, when a price is proposed and when the publisher asks. We keep neither. A price's public justification says when it was capped by the budget, and which source capped it, but never the amount. The decision log does not name the amount either.
 
+A publisher's plan and its payments (#53) are its own too. We keep the transaction hash, the amount and the period of each subscription payment, so the publisher can see what it paid for. The payment is read from the chain, where it is public anyway, and we serve it only to the publisher.
+
 ## What we hold, and where
 
 | Data | Where it lives | Why we have it |

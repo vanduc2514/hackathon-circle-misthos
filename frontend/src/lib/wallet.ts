@@ -1,6 +1,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js'
+import { browserProvider } from './eip1193'
 import { toChecksumAddress } from './siwe'
 
 /** Something that can prove it holds an address by signing a message. */
@@ -35,12 +36,7 @@ export function signPersonal(secretKey: Uint8Array, message: string): string {
 
 // ------------------------------------------------------------ browser wallet
 
-type Eip1193 = { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
-
-export function browserProvider(): Eip1193 | null {
-  const injected = (globalThis as { ethereum?: Eip1193 }).ethereum
-  return injected && typeof injected.request === 'function' ? injected : null
-}
+export { browserProvider }
 
 /** The wallet extension in this browser, such as MetaMask. */
 export async function browserWallet(): Promise<Signer> {

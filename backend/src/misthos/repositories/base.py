@@ -10,7 +10,14 @@ from typing import Protocol
 from misthos.domain.compliance import PartyKind, Screening
 from misthos.domain.issue import IssueState
 from misthos.models.records import IssueRecord
-from misthos.schemas import Account, Contributor, Decision, Publisher
+from misthos.schemas import (
+    Account,
+    Contributor,
+    Decision,
+    Publisher,
+    Subscription,
+    SubscriptionPayment,
+)
 
 
 class StaleIssue(Exception):
@@ -31,6 +38,10 @@ class AppendOnlyViolation(Exception):
 
 class AccountConflict(Exception):
     """A GitHub login can belong to one wallet only."""
+
+
+class PaymentAlreadyUsed(Exception):
+    """A transaction pays for one subscription period, once."""
 
 
 class Repository(Protocol):
@@ -70,6 +81,19 @@ class Repository(Protocol):
     def save_account(self, account: Account) -> None:
         """Create or update. A GitHub login already linked to another wallet is refused
         with AccountConflict."""
+
+    def get_subscription(self, publisher_id: str) -> Subscription | None: ...
+
+    def save_subscription(self, subscription: Subscription) -> None: ...
+
+    def list_subscriptions(self) -> list[Subscription]: ...
+
+    def add_subscription_payment(self, payment: SubscriptionPayment) -> None:
+        """Append one payment. A transaction already recorded is refused with
+        PaymentAlreadyUsed."""
+
+    def list_subscription_payments(self, publisher_id: str) -> list[SubscriptionPayment]:
+        """Oldest first."""
 
     def record_delivery(self, delivery_id: str, event: str, at: datetime) -> bool:
         """Note a webhook delivery. False if it was already noted: GitHub redelivers,

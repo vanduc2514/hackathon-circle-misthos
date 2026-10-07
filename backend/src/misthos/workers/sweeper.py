@@ -19,7 +19,8 @@ verdict yet, so a pull request is reviewed without anyone asking. It re-screens 
 counterparties whose last check is a day old, because screening once at onboarding
 is the mistake 08 is written against; deletes screening records past their published
 retention period; and reconciles the money ledger against the chain, raising an
-alert for any divergence.
+alert for any divergence. It also ends plans whose paid period is over: past due for
+a grace period, then back on Open (#53).
 """
 
 from __future__ import annotations
@@ -97,6 +98,8 @@ class SweepReport:
     """Screening records deleted at the end of their retention period."""
     divergences: int = 0
     """Issues whose ledger and on-chain escrow disagree. Each one is an alert."""
+    plans_changed: list[str] = field(default_factory=list)
+    """Publishers whose plan went past due, was cancelled or lapsed this pass."""
 
 
 def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
@@ -162,6 +165,11 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
         screened = store.rescreen(now)
         purged = store.purge_expired(now)
         divergences = store.reconcile(now)
+        try:
+            plans_changed = store.sweep_subscriptions(now)
+        except Exception:
+            log.exception("sweeper: plans failed, retrying next pass")
+            plans_changed = []
         SWEEP_FAILURES.inc(len(failed))
         return SweepReport(
             ran=True,
@@ -172,6 +180,7 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
             screened=len(screened),
             purged=purged,
             divergences=len(divergences),
+            plans_changed=plans_changed,
         )
 
 

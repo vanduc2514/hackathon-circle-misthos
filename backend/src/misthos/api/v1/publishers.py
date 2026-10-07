@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.concurrency import run_in_threadpool
 
 from misthos.api.session import SIGNED_IN, require_owner_or_simulation
+from misthos.domain import plans
 from misthos.domain.policy import PolicyRefusal
 from misthos.schemas import (
     Account,
@@ -30,6 +31,16 @@ from misthos.store import store
 router = APIRouter(prefix="/publishers", tags=["publishers"])
 
 
+async def require_plan(publisher_id: str, feature: plans.Feature) -> None:
+    """402 when the publisher's plan does not include the feature (06, the tiers)."""
+    try:
+        allowed = await run_in_threadpool(store.entitled, publisher_id, feature)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}") from exc
+    if not allowed:
+        raise HTTPException(status_code=402, detail=plans.refusal(feature))
+
+
 @router.put("/{publisher_id}/policy", response_model=Publisher)
 async def set_policy(
     publisher_id: str,
@@ -39,6 +50,7 @@ async def set_policy(
     """Replace the organisation's spending policy: a release threshold with its named
     approvers, and monthly limits per issue label."""
     require_owner_or_simulation(account, publisher_id, "set this spending policy")
+    await require_plan(publisher_id, plans.Feature.POLICY)
     try:
         return await run_in_threadpool(
             lambda: store.set_policy(
@@ -63,6 +75,7 @@ async def spend(
     """What was budgeted, committed, released and refunded in a year, by category,
     and the settled fixes to file for a security review."""
     require_owner_or_simulation(account, publisher_id, "see this spend")
+    await require_plan(publisher_id, plans.Feature.SPEND)
     try:
         return await run_in_threadpool(store.spend, publisher_id, year)
     except KeyError as exc:
@@ -82,6 +95,7 @@ async def audit(
     """The decision record and the money events for every issue the organisation
     funded, unedited, as JSON or one sortable CSV."""
     require_owner_or_simulation(account, publisher_id, "export this audit record")
+    await require_plan(publisher_id, plans.Feature.AUDIT)
     found = await run_in_threadpool(export, store, publisher_id)
     if found is None:
         raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}")

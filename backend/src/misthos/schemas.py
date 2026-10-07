@@ -555,3 +555,78 @@ class AnnualStatement(BaseModel):
     generated_at: datetime
     simulated: bool
     """True when no chain was contacted. A simulated statement is not a tax record."""
+
+
+# ------------------------------------------------------------------ plans (#53)
+
+
+class PlanOut(BaseModel):
+    id: Tier
+    name: str
+    audience: str
+    monthly_usdc: str
+    price_from: bool
+    """True when the price is where a negotiated one starts (Enterprise)."""
+    self_serve: bool
+    """Bought from the web app without a conversation."""
+    take_rate_percent: float
+    minimum_fix_usdc: str
+    features: list[str]
+    support: str
+
+
+class PaymentRequest(BaseModel):
+    """What to send to start or renew a plan: USDC on Arc, from the publisher's wallet."""
+
+    plan: Tier
+    amount_usdc: str
+    pay_to: str
+    payer: str
+    chain: str
+    chain_id: int
+    usdc_address: str
+    expires_at: datetime
+
+
+class Subscription(BaseModel):
+    publisher_id: str
+    plan: Tier
+    status: Literal["pending", "active", "past_due", "lapsed", "cancelled"]
+    """`pending` is chosen and not yet paid for."""
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    cancel_at_period_end: bool = False
+    pending: PaymentRequest | None = None
+    updated_at: datetime
+
+
+class SubscriptionPayment(BaseModel):
+    publisher_id: str
+    plan: Tier
+    amount_usdc: str
+    tx_hash: str
+    period_start: datetime
+    period_end: datetime
+    paid_at: datetime
+
+
+class SubscriptionOut(BaseModel):
+    publisher_id: str
+    plan: Tier
+    """The plan in force now, which is the publisher's tier."""
+    status: Literal["none", "pending", "active", "past_due", "lapsed", "cancelled", "contract"]
+    """`none` is Open with nothing bought; `contract` is a plan agreed with us."""
+    period_end: datetime | None = None
+    grace_ends: datetime | None = None
+    cancel_at_period_end: bool = False
+    pending: PaymentRequest | None = None
+    payments: list[SubscriptionPayment] = Field(default_factory=list)
+    features: list[str] = Field(default_factory=list)
+
+
+class SubscribeRequest(BaseModel):
+    plan: Tier
+
+
+class PaymentConfirmation(BaseModel):
+    tx_hash: str = Field(pattern=r"^0x[0-9a-fA-F]{64}$")

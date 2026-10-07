@@ -437,6 +437,12 @@ class TestTheSimulatedGitHubFromTheBrowser:
         publisher, contributor = TestClient(app), TestClient(app)
         account = onboard(publisher, Wallet(66), "publisher", "Acme", "acme-66")
         onboard(contributor, Wallet(67), "contributor", "hal", "hal-dev")
+        # Approval thresholds are in the Team plan, bought here without a conversation.
+        pid = account["party_id"]
+        assert publisher.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
+        assert publisher.post(f"{API}/demo/publishers/{pid}/subscription/pay").json()["plan"] == (
+            "team"
+        )
         policy = publisher.put(
             f"{API}/publishers/{account['party_id']}/policy",
             json={"approval_threshold_usdc": "1", "approvers": ["cfo@acme.example"]},

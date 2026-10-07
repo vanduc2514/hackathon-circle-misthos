@@ -36,7 +36,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from misthos.config import settings
-from misthos.domain import comparables, compliance, ledger, pricing, timers
+from misthos.domain import comparables, compliance, ledger, plans, pricing, timers
 from misthos.domain import criteria as acceptance
 from misthos.domain import issue as lifecycle
 from misthos.domain.comparables import Comparable, SettledWork
@@ -72,7 +72,13 @@ from misthos.observability.metrics import (
     REVIEW_COST_USDC,
     REVIEW_SECONDS,
 )
-from misthos.repositories import MemoryRepository, Repository, StaleIssue, build_repository
+from misthos.repositories import (
+    MemoryRepository,
+    PaymentAlreadyUsed,
+    Repository,
+    StaleIssue,
+    build_repository,
+)
 from misthos.schemas import (
     Account,
     Claim,
@@ -85,16 +91,21 @@ from misthos.schemas import (
     LoopOut,
     LoopSettlement,
     MetricsOut,
+    PaymentRequest,
     Publisher,
     Review,
     SpendCategory,
     SpendOut,
     Submission,
+    Subscription,
+    SubscriptionOut,
+    SubscriptionPayment,
     TimelineEntry,
     Wallet,
     money,
 )
 from misthos.services import metrics, reputation
+from misthos.services.billing import PaymentRail, SimulatedRail, build_rail
 from misthos.services.chain import ChainGateway, SimulatedChain
 from misthos.services.compliance import (
     IdentityProvider,
@@ -173,6 +184,26 @@ class CriteriaNotApproved(Exception):
     """No funding before the publisher approves the acceptance criteria (#21)."""
 
 
+class PlanNotSelfServe(Exception):
+    """A plan that is agreed with us rather than bought from the web app."""
+
+
+class NoPaymentDue(Exception):
+    """Nothing is waiting to be paid for: choose a plan first, or the request expired."""
+
+
+class PaymentNotFound(Exception):
+    """The transaction does not pay what is due, from the publisher, to the platform."""
+
+
+class BillingUnavailable(Exception):
+    """Plans cannot be paid for here: no platform wallet is configured."""
+
+
+# Where the simulation's subscription payments go when no platform wallet is set.
+SIMULATED_PLATFORM_WALLET = "0x000000000000000000000000000000000000c0de"
+
+
 class UntestableCriteria(Exception):
     """Criteria a reviewer could not judge are not approved (#38)."""
 
@@ -231,10 +262,13 @@ class Store:
         reviewer: Reviewer | None = None,
         second_reviewer: Reviewer | None = None,
         finance: Finance | None = None,
+        rail: PaymentRail | None = None,
     ) -> None:
         self.repo: Repository = repository or MemoryRepository()
         # A publisher's books, read-only, where the operator connected them (#43).
         self.finance: Finance = finance or build_finance()
+        # Where subscription payments are seen: Arc, or the simulation's own rail.
+        self.rail: PaymentRail = rail or build_rail()
         # The simulated escrow keeps its books beside the repository's tables when
         # there is a database, so a restart does not make every issue look divergent.
         self.chain: ChainGateway = chain or SimulatedChain(getattr(self.repo, "engine", None))
@@ -283,6 +317,8 @@ class Store:
             self.repo.reset()
             self.chain.reset()
             self.coordinator.reset()
+            if isinstance(self.rail, SimulatedRail):
+                self.rail.reset()
             reset_github = getattr(self.github, "reset", None)
             if reset_github is not None:
                 reset_github()  # the simulation's fixtures and sent posts
@@ -1405,6 +1441,246 @@ class Store:
         self.repo.save_issues(rec)
         _observe_price(rec, "github" if facts is not None else "form", started)
         return rec
+
+    # ------------------------------------------------------------- plans (#53)
+
+    def entitled(self, publisher_id: str, feature: plans.Feature) -> bool:
+        """Whether the publisher's plan includes the feature."""
+        self.ensure_ready()
+        publisher = self.repo.get_publisher(publisher_id)
+        if publisher is None:
+            raise KeyError(publisher_id)
+        return plans.allows(publisher.tier, feature)
+
+    def _pay_to(self) -> str:
+        if settings.platform_wallet:
+            return settings.platform_wallet
+        if settings.simulated:
+            return SIMULATED_PLATFORM_WALLET
+        raise BillingUnavailable("no platform wallet is configured, so plans cannot be paid for")
+
+    def subscription(self, publisher_id: str, now: datetime | None = None) -> SubscriptionOut:
+        """The plan in force, its period, what is waiting to be paid, and every payment."""
+        self.ensure_ready()
+        now = now or _now()
+        publisher = self.repo.get_publisher(publisher_id)
+        if publisher is None:
+            raise KeyError(publisher_id)
+        sub = self.repo.get_subscription(publisher_id)
+        pending = sub.pending if sub and sub.pending and sub.pending.expires_at > now else None
+        if sub is None:
+            status = "none" if publisher.tier == "open" else "contract"
+        else:
+            status = sub.status
+        grace_ends = None
+        if sub is not None and sub.status == "past_due" and sub.period_end is not None:
+            grace_ends = sub.period_end + plans.GRACE
+        return SubscriptionOut(
+            publisher_id=publisher_id,
+            plan=publisher.tier,
+            status=status,  # type: ignore[arg-type]
+            period_end=sub.period_end if sub else None,
+            grace_ends=grace_ends,
+            cancel_at_period_end=bool(sub and sub.cancel_at_period_end),
+            pending=pending,
+            payments=self.repo.list_subscription_payments(publisher_id),
+            features=sorted(plans.FEATURE_NAMES[f] for f in plans.PLANS[publisher.tier].features),
+        )
+
+    def subscribe(
+        self, publisher_id: str, plan_id: str, now: datetime | None = None
+    ) -> SubscriptionOut:
+        """Choose a plan. A paid plan returns what to send; Open cancels at period end."""
+        self.ensure_ready()
+        now = now or _now()
+        plan = plans.PLANS[plan_id]
+        with self._exclusive(f"subscription:{publisher_id}"):
+            publisher = self.repo.get_publisher(publisher_id)
+            if publisher is None:
+                raise KeyError(publisher_id)
+            sub = self.repo.get_subscription(publisher_id)
+            if plan_id == "open":
+                if sub is not None:
+                    sub.pending = None
+                    if sub.status in {"active", "past_due"}:
+                        # Paid for to the end of the period; Open from then on.
+                        sub.cancel_at_period_end = True
+                    sub.updated_at = now
+                    self.repo.save_subscription(sub)
+                log.info("%s chose Open", publisher_id)
+                return self.subscription(publisher_id, now)
+            if not plan.self_serve:
+                raise PlanNotSelfServe(
+                    f"{plan.name} starts at {plan.monthly} a month and is agreed with us, "
+                    "not bought here"
+                )
+            if publisher.tier == "enterprise" and (sub is None or sub.plan == "enterprise"):
+                raise PlanNotSelfServe(
+                    "this organisation's Enterprise plan is agreed with us, so it is changed "
+                    "with us too"
+                )
+            request = PaymentRequest(
+                plan=plan_id,  # type: ignore[arg-type]
+                amount_usdc=f"{plan.monthly.decimal:.2f}",
+                pay_to=self._pay_to(),
+                payer=publisher.wallet.address,
+                chain=CHAIN,
+                chain_id=settings.chain_id,
+                usdc_address=settings.usdc_address,
+                expires_at=now + plans.PAYMENT_WINDOW,
+            )
+            if sub is None:
+                sub = Subscription(
+                    publisher_id=publisher_id,
+                    plan=plan_id,  # type: ignore[arg-type]
+                    status="pending",
+                    updated_at=now,
+                )
+            sub.pending = request
+            sub.updated_at = now
+            self.repo.save_subscription(sub)
+            return self.subscription(publisher_id, now)
+
+    def confirm_payment(
+        self, publisher_id: str, tx_hash: str, now: datetime | None = None
+    ) -> SubscriptionOut:
+        """The publisher says it paid. The rail says whether it did; then the plan is on."""
+        self.ensure_ready()
+        now = now or _now()
+        with self._exclusive(f"subscription:{publisher_id}"):
+            publisher = self.repo.get_publisher(publisher_id)
+            if publisher is None:
+                raise KeyError(publisher_id)
+            sub = self.repo.get_subscription(publisher_id)
+            if sub is None or sub.pending is None or sub.pending.expires_at <= now:
+                raise NoPaymentDue("nothing is waiting to be paid for; choose a plan first")
+            request = sub.pending
+            seen = self.rail.received(tx_hash, payer=request.payer, payee=request.pay_to)
+            due = Usdc.from_decimal(request.amount_usdc)
+            if seen is None:
+                raise PaymentNotFound(
+                    f"{tx_hash} moved no USDC from {request.payer} to {request.pay_to}"
+                )
+            if seen.amount < due:
+                raise PaymentNotFound(f"{tx_hash} moved {seen.amount}, and {due} is due")
+            renewing = (
+                sub.status == "active"
+                and sub.plan == request.plan
+                and sub.period_end is not None
+                and sub.period_end > now
+            )
+            start = sub.period_end if renewing and sub.period_end else now
+            payment = SubscriptionPayment(
+                publisher_id=publisher_id,
+                plan=request.plan,
+                amount_usdc=str(seen.amount.decimal),
+                tx_hash=tx_hash.lower(),
+                period_start=start,
+                period_end=start + plans.PERIOD,
+                paid_at=now,
+            )
+            try:
+                # Claiming the transaction comes first, so it pays for one period only.
+                self.repo.add_subscription_payment(payment)
+            except PaymentAlreadyUsed:
+                earlier = [
+                    p
+                    for p in self.repo.list_subscription_payments(publisher_id)
+                    if p.tx_hash == payment.tx_hash
+                ]
+                if not earlier or sub.period_end == earlier[0].period_end:
+                    raise
+                # Recorded by an attempt that did not finish activating: finish it.
+                payment = earlier[0]
+            sub.plan = payment.plan
+            sub.period_start = sub.period_start if renewing else payment.period_start
+            sub.status = "active"
+            sub.period_end = payment.period_end
+            sub.pending = None
+            sub.cancel_at_period_end = False
+            sub.updated_at = now
+            self.repo.save_subscription(sub)
+            publisher.tier = payment.plan
+            self.repo.save_publisher(publisher)
+            log.info("%s is on %s until %s", publisher_id, payment.plan, payment.period_end)
+            return self.subscription(publisher_id, now)
+
+    def demo_pay(self, publisher_id: str, now: datetime | None = None) -> SubscriptionOut:
+        """Pay what is due from the publisher's wallet, on the simulation's rail."""
+        if not isinstance(self.rail, SimulatedRail):
+            raise NotSimulated("pay from your wallet on Arc, then confirm the transaction")
+        self.ensure_ready()
+        sub = self.repo.get_subscription(publisher_id)
+        if sub is None or sub.pending is None:
+            raise NoPaymentDue("nothing is waiting to be paid for; choose a plan first")
+        request = sub.pending
+        tx = self.rail.send(request.payer, request.pay_to, Usdc.from_decimal(request.amount_usdc))
+        return self.confirm_payment(publisher_id, tx, now)
+
+    def set_contract_plan(
+        self, publisher_id: str, plan_id: str, until: datetime, now: datetime | None = None
+    ) -> SubscriptionOut:
+        """A plan agreed with us, such as Enterprise, in force until the contract ends."""
+        self.ensure_ready()
+        now = now or _now()
+        with self._exclusive(f"subscription:{publisher_id}"):
+            publisher = self.repo.get_publisher(publisher_id)
+            if publisher is None:
+                raise KeyError(publisher_id)
+            sub = self.repo.get_subscription(publisher_id) or Subscription(
+                publisher_id=publisher_id,
+                plan=plan_id,  # type: ignore[arg-type]
+                status="active",
+                updated_at=now,
+            )
+            sub.plan = plan_id  # type: ignore[assignment]
+            sub.status = "active"
+            sub.period_start, sub.period_end = now, until
+            sub.pending, sub.cancel_at_period_end, sub.updated_at = None, False, now
+            self.repo.save_subscription(sub)
+            publisher.tier = plan_id  # type: ignore[assignment]
+            self.repo.save_publisher(publisher)
+        return self.subscription(publisher_id, now)
+
+    def sweep_subscriptions(self, now: datetime | None = None) -> list[str]:
+        """Periods that ended: past due with a grace period, then back on Open.
+
+        A cancelled plan ends at its period's end with no grace, because nothing is
+        owed. The organisation's spending policy stays in force either way.
+        """
+        self.ensure_ready()
+        now = now or _now()
+        changed: list[str] = []
+        for listed in self.repo.list_subscriptions():
+            if listed.period_end is None or listed.period_end > now:
+                continue
+            try:
+                with self._exclusive(f"subscription:{listed.publisher_id}"):
+                    # Read afresh under the lock: a payment may have just renewed it.
+                    sub = self.repo.get_subscription(listed.publisher_id)
+                    if sub is None or sub.period_end is None or sub.period_end > now:
+                        continue
+                    graced = sub.period_end + plans.GRACE <= now
+                    if sub.status == "active" and sub.cancel_at_period_end:
+                        sub.status = "cancelled"
+                    elif sub.status in {"active", "past_due"} and graced:
+                        sub.status = "lapsed"
+                    elif sub.status == "active":
+                        sub.status = "past_due"
+                    else:
+                        continue
+                    sub.updated_at = now
+                    self.repo.save_subscription(sub)
+                    if sub.status in {"cancelled", "lapsed"}:
+                        publisher = self.repo.get_publisher(sub.publisher_id)
+                        if publisher is not None and publisher.tier != "open":
+                            publisher.tier = "open"
+                            self.repo.save_publisher(publisher)
+            except Busy:
+                continue
+            changed.append(sub.publisher_id)
+            log.info("%s's %s plan is %s", sub.publisher_id, sub.plan, sub.status)
+        return changed
 
     # ------------------------------------------------------------- pricing
 

@@ -37,16 +37,24 @@ from misthos.domain.money import Usdc, format_usdc
 from misthos.domain.pricing import PriceProposal
 from misthos.models import tables as t
 from misthos.models.records import IssueRecord
-from misthos.repositories.base import AccountConflict, AppendOnlyViolation, StaleIssue
+from misthos.repositories.base import (
+    AccountConflict,
+    AppendOnlyViolation,
+    PaymentAlreadyUsed,
+    StaleIssue,
+)
 from misthos.schemas import (
     Account,
     Claim,
     Contributor,
     Decision,
     EscrowCommitment,
+    PaymentRequest,
     Publisher,
     Review,
     Submission,
+    Subscription,
+    SubscriptionPayment,
     Wallet,
     money,
 )
@@ -270,6 +278,85 @@ class SqlRepository:
                 _upsert(conn, t.accounts, {"address": account.address.lower()}, values)
         except IntegrityError as exc:
             raise AccountConflict(f"{account.github_login} is linked to another wallet") from exc
+
+    # ---------------------------------------------------------- plans
+
+    def get_subscription(self, publisher_id: str) -> Subscription | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            row = (
+                conn.execute(
+                    select(t.subscriptions).where(t.subscriptions.c.publisher_id == publisher_id)
+                )
+                .mappings()
+                .first()
+            )
+        return _subscription(row) if row is not None else None
+
+    def save_subscription(self, subscription: Subscription) -> None:
+        self.migrate()
+        values = {
+            "plan": subscription.plan,
+            "status": subscription.status,
+            "period_start": subscription.period_start,
+            "period_end": subscription.period_end,
+            "cancel_at_period_end": subscription.cancel_at_period_end,
+            "pending": subscription.pending.model_dump(mode="json")
+            if subscription.pending
+            else None,
+            "updated_at": subscription.updated_at,
+        }
+        with self.engine.begin() as conn:
+            _upsert(conn, t.subscriptions, {"publisher_id": subscription.publisher_id}, values)
+
+    def list_subscriptions(self) -> list[Subscription]:
+        self.migrate()
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(t.subscriptions)).mappings().all()
+        return [_subscription(r) for r in rows]
+
+    def add_subscription_payment(self, payment: SubscriptionPayment) -> None:
+        self.migrate()
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    insert(t.subscription_payments).values(
+                        publisher_id=payment.publisher_id,
+                        plan=payment.plan,
+                        amount_base_units=Usdc.from_decimal(payment.amount_usdc).base_units,
+                        tx_hash=payment.tx_hash.lower(),
+                        period_start=payment.period_start,
+                        period_end=payment.period_end,
+                        paid_at=payment.paid_at,
+                    )
+                )
+        except IntegrityError as exc:
+            raise PaymentAlreadyUsed(payment.tx_hash) from exc
+
+    def list_subscription_payments(self, publisher_id: str) -> list[SubscriptionPayment]:
+        self.migrate()
+        with self.engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    select(t.subscription_payments)
+                    .where(t.subscription_payments.c.publisher_id == publisher_id)
+                    .order_by(t.subscription_payments.c.id)
+                )
+                .mappings()
+                .all()
+            )
+        return [
+            SubscriptionPayment(
+                publisher_id=r["publisher_id"],
+                plan=r["plan"],
+                amount_usdc=str(Usdc(r["amount_base_units"]).decimal),
+                tx_hash=r["tx_hash"],
+                period_start=_utc(r["period_start"]),
+                period_end=_utc(r["period_end"]),
+                paid_at=_utc(r["paid_at"]),
+            )
+            for r in rows
+        ]
 
     # ---------------------------------------------------------- deliveries
 
@@ -740,6 +827,19 @@ def _comparable(row: dict) -> ComparableRef:
         price=Usdc(int(row["price_base_units"])),
         settled_at=datetime.fromisoformat(row["settled_at"]),
         distance=float(row["distance"]),
+    )
+
+
+def _subscription(row) -> Subscription:  # type: ignore[no-untyped-def]
+    return Subscription(
+        publisher_id=row["publisher_id"],
+        plan=row["plan"],
+        status=row["status"],
+        period_start=_utc_or_none(row["period_start"]),
+        period_end=_utc_or_none(row["period_end"]),
+        cancel_at_period_end=row["cancel_at_period_end"],
+        pending=PaymentRequest(**row["pending"]) if row["pending"] else None,
+        updated_at=_utc(row["updated_at"]),
     )
 
 

@@ -791,6 +791,19 @@ button {
   flex-wrap: wrap;
 }
 
+/* ----------------------------------------------------------------- plans */
+
+/* Sentences, not hashes: wrap between words. */
+.kv.prose dd {
+  word-break: normal;
+}
+
+.plan-from,
+.plan-per {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
 /* ----------------------------------------------------------- comparables */
 
 .comparables {

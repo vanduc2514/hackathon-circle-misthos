@@ -7,6 +7,7 @@ import Dashboard from './routes/Dashboard'
 import Issues from './routes/Issues'
 import IssueDetail from './routes/IssueDetail'
 import Loop from './routes/Loop'
+import Plans from './routes/Plans'
 import Publish from './routes/Publish'
 import Spend from './routes/Spend'
 
@@ -37,6 +38,9 @@ function Layout({ children }: { children: React.ReactNode }) {
           </NavLink>
           <NavLink to="/spend" className={({ isActive }) => (isActive ? 'active' : '')}>
             Spend
+          </NavLink>
+          <NavLink to="/plans" className={({ isActive }) => (isActive ? 'active' : '')}>
+            Plans
           </NavLink>
           {account?.role === 'publisher' && (
             <NavLink to="/publish" className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -91,6 +95,7 @@ export default function App() {
         <Route path="/loop" element={<Loop />} />
         <Route path="/spend" element={<Spend />} />
         <Route path="/publish" element={<Publish />} />
+        <Route path="/plans" element={<Plans />} />
         <Route
           path="/account"
           element={

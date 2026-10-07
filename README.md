@@ -170,6 +170,15 @@ mise run pricing:calibrate                       # the corpus of real, scored is
 cd backend && uv run python -m misthos.services.calibration --settled
 ```
 
+### Plans
+
+**Plans** in the web app lists Open, Team and Enterprise as 06 prices them. A
+publisher buys Team there without a conversation by sending 249 USDC on Arc from its
+wallet; the API reads the transfer from the chain before switching the plan on. Set
+`MISTHOS_PLATFORM_WALLET` to the platform's wallet so payments have somewhere to go.
+In the simulation, a button pays on a simulated rail. Enterprise is agreed with us and
+recorded by an operator with `python -m misthos.services.contracts`.
+
 ### The whole system
 
 To run the web app, the API, the worker and the edge against Postgres and Redis, the
