@@ -97,6 +97,26 @@ jobs:
       - run: mise run lint:web
       - run: mise run test:web
 
+  # #73's definition of done, as a build: a publisher and a contributor take an
+  # issue from publication to payment through the web app, in Chromium, against the
+  # real API in the simulation.
+  e2e:
+    name: web - the loop in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - run: mise run setup:backend
+      - run: mise run setup:web
+      - run: mise run setup:e2e
+      - run: mise run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
   edge:
     name: edge - tsc
     runs-on: ubuntu-latest

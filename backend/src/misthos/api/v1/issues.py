@@ -26,6 +26,7 @@ from misthos.schemas import (
     CriteriaRequest,
     Decision,
     DeclineRequest,
+    DemoPullRequestOut,
     DisputeRequest,
     HealthOut,
     IssueOut,
@@ -47,6 +48,7 @@ from misthos.store import (
     DeclineRefused,
     DisputeRefused,
     IssueRecord,
+    NotSimulated,
     NotTheSubmission,
     UnreadableIssue,
     store,
@@ -86,11 +88,12 @@ IDEMPOTENCY_KEY = Header(
 )
 
 
-def _demo_only() -> None:
+_STEPPER = "the demo stepper is the simulation's; use the explicit actions"
+
+
+def _demo_only(what: str = _STEPPER) -> None:
     if not settings.simulated:
-        raise HTTPException(
-            status_code=403, detail="the demo stepper is the simulation's; use the explicit actions"
-        )
+        raise HTTPException(status_code=403, detail=what)
 
 
 def _who(account: Account | None, fallback: str) -> str:
@@ -159,7 +162,7 @@ async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -
         NotTheSubmission,
     ) as exc:
         raise _conflict(exc) from exc
-    except (ComplianceRefusal, PolicyRefusal) as exc:
+    except (ComplianceRefusal, PolicyRefusal, NotSimulated) as exc:
         raise _refused(exc) from exc
     except (ReviewFailed, GitHubError) as exc:
         # Something we depend on failed; nothing was saved, so the step can be retried.
@@ -343,9 +346,7 @@ async def submit(
 
 
 @router.post("/issues/{issue_id}/review", response_model=IssueOut, dependencies=[limit_actions])
-async def review(
-    issue_id: str, account: Account | None = SIGNED_IN
-) -> IssueOut:
+async def review(issue_id: str, account: Account | None = SIGNED_IN) -> IssueOut:
     """Have the review agent judge the submitted commit now rather than on the
     sweeper's next pass. The publisher or the claimant may ask."""
     rec = await _require(issue_id)
@@ -462,6 +463,56 @@ async def metrics() -> MetricsOut:
 async def decisions(limit: int = Query(default=50, le=500)) -> list[Decision]:
     """The append-only decision log across every issue, newest first."""
     return await run_in_threadpool(store.list_decisions, limit)
+
+
+@router.post(
+    "/demo/issues/{issue_id}/pull-request",
+    response_model=DemoPullRequestOut,
+    dependencies=[limit_actions],
+    responses={
+        403: {"description": "Outside the simulation, or not the claimant"},
+        409: {"description": "Nothing claimed and waiting for a pull request"},
+    },
+)
+async def demo_pull_request(
+    issue_id: str, account: Account | None = SIGNED_IN
+) -> DemoPullRequestOut:
+    """Open the claimant's pull request on the simulated GitHub, so the browser can
+    submit it. The simulation's only; submitting stays the claimant's own action."""
+    _demo_only("pull requests are opened on GitHub outside the simulation")
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.contributor_id or "", "open a pull request here")
+    try:
+        pr = await run_in_threadpool(store.demo_pull_request, issue_id)
+    except NotSimulated as exc:
+        raise _refused(exc) from exc
+    except (IllegalTransition, StaleIssue, Busy) as exc:
+        raise _conflict(exc) from exc
+    return DemoPullRequestOut(pr_number=pr.number, author=pr.author, head_sha=pr.head_sha)
+
+
+@router.post(
+    "/demo/issues/{issue_id}/merge",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={
+        403: {"description": "Outside the simulation, or not the publisher"},
+        409: {"description": "No pull request to merge, or nothing to release"},
+    },
+)
+async def demo_merge(
+    issue_id: str,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
+) -> Any:
+    """Merge the submitted pull request on the simulated GitHub, as the publisher
+    would on the real one; it is handled exactly as that merge's webhook. The
+    simulation's only."""
+    _demo_only("merge the pull request on GitHub outside the simulation")
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "merge this pull request")
+    return await idempotent(request, idempotency_key, lambda: _act(store.demo_merge, issue_id))
 
 
 @router.post("/demo/reset")

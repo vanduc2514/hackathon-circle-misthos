@@ -197,6 +197,11 @@ class IssueOut(BaseModel):
     contributor_id: str | None = None
     paid_usdc: str | None = None
     github_url: str
+    criteria_approved_at: datetime | None = None
+    """When the publisher approved the acceptance criteria; funding waits for it (#21)."""
+    awaiting_approver: bool = False
+    """The payout is held over the organisation's release threshold until one of its
+    named approvers approves. Compliance holds are not shown here."""
 
 
 class IssueSummaryOut(BaseModel):
@@ -341,6 +346,14 @@ class ClaimRequest(BaseModel):
 
 class SubmitRequest(BaseModel):
     pr_number: int = Field(gt=0)
+
+
+class DemoPullRequestOut(BaseModel):
+    """A pull request the simulated GitHub opened for the claimant (simulation only)."""
+
+    pr_number: int
+    author: str
+    head_sha: str
 
 
 class PolicyRequest(BaseModel):

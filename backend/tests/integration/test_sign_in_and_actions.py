@@ -377,3 +377,82 @@ class TestTheApiDoesNotCrashOnChosenInput:
             f"{API}/auth/verify", json={"message": naive, "signature": wallet.sign(naive)}
         )
         assert r.status_code == 401
+class TestTheSimulatedGitHubFromTheBrowser:
+    """What the web app needs to run the loop in the simulation, with nothing faked
+    but GitHub: the claimant's pull request is opened, and the publisher merges it."""
+
+    def _funded(self, publisher: TestClient) -> str:
+        issue = publisher.post(
+            f"{API}/issues", json={"repo": REPO, "title": "Retry on 503", "publisher_id": "x"}
+        ).json()
+        iid = issue["id"]
+        assert issue["criteria_approved_at"] is None
+        approved = publisher.post(
+            f"{API}/issues/{iid}/criteria", json={"criteria": issue["acceptance_criteria"]}
+        ).json()
+        assert approved["criteria_approved_at"] is not None
+        assert publisher.post(f"{API}/issues/{iid}/fund").json()["state"] == "FUNDED"
+        return iid
+
+    def test_the_loop_runs_from_publication_to_payment(self) -> None:
+        publisher, contributor = TestClient(app), TestClient(app)
+        onboard(publisher, Wallet(61), "publisher", "Acme", "acme-61")
+        onboard(contributor, Wallet(62), "contributor", "eve", "eve-dev")
+        iid = self._funded(publisher)
+        contributor.post(f"{API}/issues/{iid}/claim")
+
+        opened = contributor.post(f"{API}/demo/issues/{iid}/pull-request")
+        assert opened.status_code == 200, opened.text
+        assert opened.json()["author"] == "eve-dev"
+        number = opened.json()["pr_number"]
+        submitted = contributor.post(f"{API}/issues/{iid}/submit", json={"pr_number": number})
+        assert submitted.json()["state"] == "IN_REVIEW"
+        assert submitted.json()["submission"]["checks_passed"] is True
+        assert contributor.post(f"{API}/issues/{iid}/review").json()["state"] == "ACCEPTED"
+
+        merged = publisher.post(f"{API}/demo/issues/{iid}/merge")
+        assert merged.status_code == 200, merged.text
+        assert merged.json()["state"] == "PAID"
+        actions = [d["action"] for d in publisher.get(f"{API}/issues/{iid}/timeline").json()]
+        assert "merged" in actions and "released" in actions
+
+    def test_only_the_claimant_opens_and_only_the_publisher_merges(self) -> None:
+        publisher, contributor, other = TestClient(app), TestClient(app), TestClient(app)
+        onboard(publisher, Wallet(63), "publisher", "Acme", "acme-63")
+        onboard(contributor, Wallet(64), "contributor", "fay", "fay-dev")
+        onboard(other, Wallet(65), "contributor", "gus", "gus-dev")
+        iid = self._funded(publisher)
+        assert other.post(f"{API}/demo/issues/{iid}/pull-request").status_code == 403
+        contributor.post(f"{API}/issues/{iid}/claim")
+        assert other.post(f"{API}/demo/issues/{iid}/pull-request").status_code == 403
+        number = contributor.post(f"{API}/demo/issues/{iid}/pull-request").json()["pr_number"]
+        contributor.post(f"{API}/issues/{iid}/submit", json={"pr_number": number})
+        assert contributor.post(f"{API}/demo/issues/{iid}/merge").status_code == 403
+
+    def test_a_release_over_the_threshold_says_it_awaits_an_approver(self) -> None:
+        publisher, contributor = TestClient(app), TestClient(app)
+        account = onboard(publisher, Wallet(66), "publisher", "Acme", "acme-66")
+        onboard(contributor, Wallet(67), "contributor", "hal", "hal-dev")
+        policy = publisher.put(
+            f"{API}/publishers/{account['party_id']}/policy",
+            json={"approval_threshold_usdc": "1", "approvers": ["cfo@acme.example"]},
+        )
+        assert policy.status_code == 200, policy.text
+        iid = self._funded(publisher)
+        contributor.post(f"{API}/issues/{iid}/claim")
+        number = contributor.post(f"{API}/demo/issues/{iid}/pull-request").json()["pr_number"]
+        contributor.post(f"{API}/issues/{iid}/submit", json={"pr_number": number})
+        contributor.post(f"{API}/issues/{iid}/review")
+
+        held = publisher.post(f"{API}/demo/issues/{iid}/merge").json()
+        assert held["state"] == "ACCEPTED" and held["awaiting_approver"] is True
+        released = publisher.post(
+            f"{API}/issues/{iid}/approve-release", json={"approver": "cfo@acme.example"}
+        ).json()
+        assert released["state"] == "PAID" and released["awaiting_approver"] is False
+
+    def test_outside_the_simulation_github_is_real(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "simulated", False)
+        client = TestClient(app)
+        assert client.post(f"{API}/demo/issues/ISS-1003/pull-request").status_code == 403
+        assert client.post(f"{API}/demo/issues/ISS-1004/merge").status_code == 403

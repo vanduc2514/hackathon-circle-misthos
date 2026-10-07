@@ -74,7 +74,8 @@ mise run dev:api
 mise run dev:web
 ```
 
-Tests and linting:
+Tests and linting (the browser test needs Chromium once: `mise run setup:e2e`, then
+`mise run test:e2e`, which starts the API and the web app itself):
 
 ```bash
 mise run test
@@ -147,6 +148,13 @@ Linking is simulated until a GitHub OAuth App is configured
 `MISTHOS_SESSION_SECRET` keeps sessions across a restart. The demo stepper
 (`/advance` and `/complete`) runs only in the simulation, because it fabricates the
 pull request and the merge.
+
+The web app does all of this from **Account** and each issue's page, which shows
+each party only the step that is theirs. In the simulation there is no need for a
+wallet extension: the demo publisher and contributor wallets are throwaway keys kept
+in the browser, and GitHub is simulated, so the contributor opens their pull request
+and the publisher merges it with a button. Use two browsers, or a private window, to
+be both sides at once.
 
 ### The whole system
 

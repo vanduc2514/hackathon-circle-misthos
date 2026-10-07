@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { money, relativeTime, shortHash } from './client'
+import { ApiError, money, relativeTime, shortHash, unwrap } from './client'
 
 describe('money', () => {
   it('formats the decimal view the API returns', () => {
@@ -53,5 +53,25 @@ describe('shortHash', () => {
 
   it('leaves a short value alone', () => {
     expect(shortHash('ISS-1001')).toBe('ISS-1001')
+  })
+})
+
+describe('unwrap', () => {
+  const response = (status: number) => new Response(null, { status, statusText: 'Conflict' })
+
+  it('returns the body of a successful call', () => {
+    expect(unwrap({ data: { id: 'ISS-1' }, response: response(200) })).toEqual({ id: 'ISS-1' })
+  })
+
+  it('throws the reason the API gave', () => {
+    const call = () =>
+      unwrap({ error: { detail: 'fund after approving the criteria' }, response: response(409) })
+    expect(call).toThrow(ApiError)
+    expect(call).toThrow('fund after approving the criteria')
+  })
+
+  it('joins validation errors into one sentence', () => {
+    const error = { detail: [{ msg: 'field required' }, { msg: 'too long' }] }
+    expect(() => unwrap({ error, response: response(422) })).toThrow('field required; too long')
   })
 })

@@ -84,3 +84,15 @@ def test_the_whole_system_boots_from_compose(workflow: dict) -> None:
     up = next(c for c in commands if c.startswith("docker compose up"))
     assert "--wait" in up and "--build" in up
     assert any("/api/v1/health" in c and "--fail" in c for c in commands)
+
+
+def test_the_loop_runs_in_a_browser(workflow: dict) -> None:
+    """#73 is done when a publisher and a contributor complete the loop from the
+    browser; this job is what keeps it done."""
+    commands = [step["run"] for step in workflow["jobs"]["e2e"]["steps"] if "run" in step]
+    assert commands == [
+        "mise run setup:backend",
+        "mise run setup:web",
+        "mise run setup:e2e",
+        "mise run test:e2e",
+    ]
