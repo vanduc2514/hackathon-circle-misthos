@@ -57,3 +57,13 @@ def test_no_step_swallows_a_failure(workflow: dict) -> None:
     for name, job in workflow["jobs"].items():
         for step in job["steps"]:
             assert not step.get("continue-on-error"), f"{name} ignores a failure"
+
+
+def test_the_backend_suite_also_runs_against_postgres(workflow: dict) -> None:
+    """Memory is the default, so without this job nothing would exercise the database."""
+    job = workflow["jobs"]["backend-postgres"]
+    commands = [step["run"] for step in job["steps"] if "run" in step]
+
+    assert commands == ["mise run setup:backend", "mise run test:backend"]
+    assert job["env"]["MISTHOS_DATABASE_URL"].startswith("postgresql")
+    assert "postgres" in job["services"]

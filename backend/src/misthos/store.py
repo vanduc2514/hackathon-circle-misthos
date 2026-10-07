@@ -1,22 +1,33 @@
-"""In-memory store with seeded demo data.
+"""The lifecycle store and the seeded simulation.
 
-This is a simulation, not persistence. It exists so the web application has
-something real to render: a lifecycle that can actually be advanced, prices that
-were actually computed by the pricing engine, and a decision log that grows as
-you drive it. Swap this for Postgres plus repositories when the schema settles.
+Every change to an issue's state goes through this module, which is what the
+architecture means by a single writer: the API, the demo stepper and the sweeper all
+call it, none of them assigns a state, and every move is checked against the domain's
+transition table and leaves a decision behind.
+
+Where the result is kept is the repository's business. With no database configured
+it is memory, so the demo needs no infrastructure and resets on restart; with
+`MISTHOS_DATABASE_URL` set it is Postgres or a SQLite file, and it survives. The seed
+data at the bottom is the simulation either way: prices from the real engine, and
+fake GitHub and chain calls.
 """
 
 from __future__ import annotations
 
-import itertools
 import random
-from dataclasses import dataclass, field
+import threading
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
+from misthos.config import settings
 from misthos.domain import issue as lifecycle
+from misthos.domain import pricing, timers
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc
-from misthos.domain.pricing import ComplexitySignals, PriceProposal, UnfundableIssue, propose
+from misthos.domain.pricing import ComplexitySignals, UnfundableIssue, propose
+from misthos.domain.timers import TimedAction
+from misthos.models.records import IssueRecord
+from misthos.repositories import MemoryRepository, Repository, build_repository
 from misthos.schemas import (
     Claim,
     Contributor,
@@ -33,6 +44,8 @@ from misthos.schemas import (
     money,
 )
 
+__all__ = ["IssueRecord", "Store", "store"]
+
 ESCROW_CONTRACT = "0x7A3f19bE5c2D80416aB9e0C7d3F5a12B6c8E4d90"
 CHAIN = "arc-testnet"
 
@@ -44,70 +57,63 @@ REPO_POOL = [
     "globex/parse-locale",
 ]
 
-_ISSUE_SEQ = itertools.count(1001)
-_DECISION_SEQ = itertools.count(1)
-_TX_SEQ = itertools.count(0x4A1)
+_PRE_FUNDING = frozenset({IssueState.DRAFT, IssueState.PRICED, IssueState.AWAITING_APPROVAL})
 
 
-def _tx_hash() -> str:
-    return f"0x{next(_TX_SEQ):08x}{random.getrandbits(180):045x}"
+def _tx_hash(seq: int) -> str:
+    return f"0x{seq:08x}{random.getrandbits(180):045x}"
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
-@dataclass
-class IssueRecord:
-    id: str
-    repo: str
-    number: int
-    title: str
-    summary: str
-    state: IssueState
-    labels: list[str]
-    compliance_driven: bool
-    acceptance_criteria: list[str]
-    publisher_id: str
-    created_at: datetime
-    deadline: datetime | None = None
-    proposal: PriceProposal | None = None
-    escrow: EscrowCommitment | None = None
-    claim: Claim | None = None
-    submission: Submission | None = None
-    review: Review | None = None
-    contributor_id: str | None = None
-    paid: Usdc | None = None
-    decisions: list[Decision] = field(default_factory=list)
-
-    @property
-    def github_url(self) -> str:
-        return f"https://github.com/{self.repo}/issues/{self.number}"
+def _budget(publisher: Publisher) -> Usdc:
+    return Usdc.from_decimal(publisher.budget_remaining_usdc.replace(",", ""))
 
 
 class Store:
-    def __init__(self) -> None:
-        self.publishers: dict[str, Publisher] = {}
-        self.contributors: dict[str, Contributor] = {}
-        self.issues: dict[str, IssueRecord] = {}
-        self.reset()
+    def __init__(self, repository: Repository | None = None) -> None:
+        self.repo: Repository = repository or MemoryRepository()
+        self._ready = False
+        self._ready_guard = threading.Lock()
 
     # ---------------------------------------------------------------- seeding
 
+    def ensure_ready(self) -> None:
+        """Seed an empty repository once, so a fresh database starts as the demo does.
+
+        A database that already holds issues is left exactly as it is: that is the
+        point of having one.
+        """
+        if self._ready:
+            return
+        with self._ready_guard:
+            if self._ready:
+                return
+            with self.repo.try_lock("seed") as held:
+                if held and self.repo.is_empty():
+                    self._seed()
+            self._ready = True
+
     def reset(self) -> None:
-        global _ISSUE_SEQ, _DECISION_SEQ, _TX_SEQ
-        _ISSUE_SEQ = itertools.count(1001)
-        _DECISION_SEQ = itertools.count(1)
-        _TX_SEQ = itertools.count(0x4A1)
+        with self._ready_guard:
+            self.repo.reset()
+            self._seed()
+            self._ready = True
+
+    def _seed(self) -> None:
         random.seed(7)
-        self.publishers = _seed_publishers()
-        self.contributors = _seed_contributors()
-        self.issues = {}
+        for publisher in _seed_publishers().values():
+            self.repo.save_publisher(publisher)
+        for contributor in _seed_contributors().values():
+            self.repo.save_contributor(contributor)
         for spec in _ISSUE_SPECS:
-            rec = self._build(spec)
-            self.issues[rec.id] = rec
+            self.repo.save_issues(self._build(spec))
 
     def _build(self, spec: dict) -> IssueRecord:
+        publisher = self.repo.get_publisher(spec["publisher_id"])
+        assert publisher is not None, spec["publisher_id"]
         signals = ComplexitySignals(**spec["signals"])
         proposal = propose(
             signals,
@@ -120,16 +126,19 @@ class Store:
             affordability_ceiling=spec.get("affordability_ceiling"),
             # The floor depends on the tier's take rate, so the tier has to reach
             # the engine rather than being assumed.
-            tier=self.publishers[spec["publisher_id"]].tier,
+            tier=publisher.tier,
         )
+        target = IssueState(spec["state"])
         now = _now()
         rec = IssueRecord(
-            id=f"ISS-{next(_ISSUE_SEQ)}",
+            id=self._next_issue_id(),
             repo=spec["repo"],
             number=spec["number"],
             title=spec["title"],
             summary=spec["summary"],
-            state=IssueState(spec["state"]),
+            # Seeded history is replayed through the real transitions from the price
+            # approval onward, so a seeded issue is one the lifecycle could produce.
+            state=target if target in _PRE_FUNDING else IssueState.AWAITING_APPROVAL,
             labels=spec["labels"],
             compliance_driven=spec.get("compliance_driven", False),
             acceptance_criteria=spec["criteria"],
@@ -147,11 +156,7 @@ class Store:
             cost="0.00",
         )
 
-        if spec["state"] in {
-            IssueState.AWAITING_APPROVAL,
-            IssueState.DRAFT,
-            IssueState.PRICED,
-        }:
+        if target in _PRE_FUNDING:
             return rec
 
         # Everything from FUNDED onward has approved money behind it.
@@ -164,19 +169,11 @@ class Store:
             outcome=f"approved {proposal.recommended} and committed the funds",
         )
 
-        if spec["state"] == IssueState.FUNDED:
+        if target is IssueState.FUNDED:
             return rec
 
-        if spec["state"] == IssueState.REFUNDED:
-            rec.escrow.refunded = True  # type: ignore[union-attr]
-            rec.state = IssueState.REFUNDED
-            self._log(
-                rec,
-                actor="system",
-                action="refunded",
-                rule="deadline_passed",
-                outcome="no acceptable work arrived, funds returned",
-            )
+        if target is IssueState.REFUNDED:
+            self._refund(rec, rule="deadline_passed")
             return rec
 
         # Claim onward.
@@ -187,27 +184,25 @@ class Store:
             actor="contributor",
             action="claimed",
             rule="first_claim_wins",
-            outcome=f"{self.contributors[contributor_id].handle} took an exclusive 72h claim",
+            outcome=f"{self._handle(contributor_id)} took an exclusive 72h claim",
         )
 
-        if spec["state"] == IssueState.CLAIMED:
+        if target is IssueState.CLAIMED:
             return rec
 
-        self._submit(rec, spec["pr"], when=rec.created_at + timedelta(hours=40))
+        self._submit(rec, spec["pr"])
 
-        if spec["state"] == IssueState.IN_REVIEW:
+        if target is IssueState.IN_REVIEW:
             return rec
 
-        verdict = spec["verdict"]
-        findings = spec["findings"]
         self._review(
             rec,
-            verdict=verdict,
-            findings=findings,
+            verdict=spec["verdict"],
+            findings=spec["findings"],
             when=rec.created_at + timedelta(hours=44),
         )
 
-        if spec["state"] == IssueState.REWORK:
+        if target is IssueState.REWORK:
             return rec
 
         # No human confirms the verdict, so a passing one lands in ACCEPTED: the
@@ -221,13 +216,59 @@ class Store:
             when=rec.created_at + timedelta(hours=45),
         )
 
-        if spec["state"] == IssueState.ACCEPTED:
+        if target is IssueState.ACCEPTED:
             return rec
 
         self._release(rec, when=rec.created_at + timedelta(hours=45, minutes=2))
         return rec
 
+    # -------------------------------------------------------------- reading
+
+    def get(self, issue_id: str) -> IssueRecord | None:
+        self.ensure_ready()
+        return self.repo.get_issue(issue_id)
+
+    def list_issues(self, states: Collection[IssueState] | None = None) -> list[IssueRecord]:
+        self.ensure_ready()
+        return self.repo.list_issues(states)
+
+    def count_issues(self) -> int:
+        self.ensure_ready()
+        return self.repo.count_issues()
+
+    def get_publisher(self, publisher_id: str) -> Publisher | None:
+        self.ensure_ready()
+        return self.repo.get_publisher(publisher_id)
+
+    def list_publishers(self) -> list[Publisher]:
+        self.ensure_ready()
+        return self.repo.list_publishers()
+
+    def save_publisher(self, publisher: Publisher) -> None:
+        self.ensure_ready()
+        self.repo.save_publisher(publisher)
+
+    def list_contributors(self) -> list[Contributor]:
+        self.ensure_ready()
+        return self.repo.list_contributors()
+
+    def list_decisions(self, limit: int) -> list[Decision]:
+        self.ensure_ready()
+        return self.repo.list_decisions(limit)
+
+    def save(self, *records: IssueRecord) -> None:
+        """Persist records changed outside the lifecycle methods. Tests use this."""
+        self.ensure_ready()
+        self.repo.save_issues(*records)
+
     # ------------------------------------------------------------- primitives
+
+    def _next_issue_id(self) -> str:
+        return f"ISS-{self.repo.next_value('issue', 1001)}"
+
+    def _handle(self, contributor_id: str) -> str:
+        found = {c.id: c.handle for c in self.repo.list_contributors()}
+        return found.get(contributor_id, contributor_id)
 
     def _log(
         self,
@@ -241,7 +282,7 @@ class Store:
         when: datetime | None = None,
     ) -> Decision:
         decision = Decision(
-            id=f"DEC-{next(_DECISION_SEQ):04d}",
+            id=f"DEC-{self.repo.next_value('decision', 1):04d}",
             issue_id=rec.id,
             actor=actor,  # type: ignore[arg-type]
             action=action,
@@ -253,29 +294,36 @@ class Store:
         rec.decisions.append(decision)
         return decision
 
+    @staticmethod
+    def _move(rec: IssueRecord, to: IssueState) -> None:
+        """The only assignment of an issue's state, and it asks the domain first."""
+        rec.state = lifecycle.transition(rec.state, to)
+
     def _fund(self, rec: IssueRecord, when: datetime | None = None) -> None:
         assert rec.proposal is not None
+        self._move(rec, IssueState.FUNDED)
         committed = rec.proposal.recommended
         rec.escrow = EscrowCommitment(
             issue_id=rec.id,
             contract=ESCROW_CONTRACT,
             chain=CHAIN,
-            tx_hash=_tx_hash(),
+            tx_hash=_tx_hash(self.repo.next_value("tx", 0x4A1)),
             amount=money(committed),
-            deadline=(when or _now()) + timedelta(days=14),
+            deadline=(when or _now()) + lifecycle.ESCROW_TERM,
         )
         rec.deadline = rec.escrow.deadline
-        rec.state = IssueState.FUNDED
 
     def _claim(self, rec: IssueRecord, contributor_id: str, when: datetime | None = None) -> None:
+        self._move(rec, IssueState.CLAIMED)
         at = when or _now()
-        rec.claim = Claim(contributor_id=contributor_id, issued_at=at, expires_at=at + timedelta(days=3))
+        rec.claim = Claim(
+            contributor_id=contributor_id, issued_at=at, expires_at=at + lifecycle.CLAIM_WINDOW
+        )
         rec.contributor_id = contributor_id
-        rec.state = IssueState.CLAIMED
 
-    def _submit(self, rec: IssueRecord, pr: dict, when: datetime | None = None) -> None:
+    def _submit(self, rec: IssueRecord, pr: dict) -> None:
+        self._move(rec, IssueState.IN_REVIEW)
         rec.submission = Submission(**pr)
-        rec.state = IssueState.IN_REVIEW
 
     def _review(
         self,
@@ -286,16 +334,19 @@ class Store:
         when: datetime | None = None,
     ) -> None:
         """Record the platform's verdict. It is the decision, not a draft for one."""
+        self._move(
+            rec,
+            {
+                "accept": IssueState.ACCEPTED,
+                "rework": IssueState.REWORK,
+                "reject": IssueState.REJECTED,
+            }[verdict],
+        )
         rec.review = Review(
             verdict=verdict,  # type: ignore[arg-type]
             findings=findings,
             decided_at=when or _now(),
         )
-        rec.state = {
-            "accept": IssueState.ACCEPTED,
-            "rework": IssueState.REWORK,
-            "reject": IssueState.REJECTED,
-        }[verdict]
 
     def _release(
         self,
@@ -305,9 +356,9 @@ class Store:
         when: datetime | None = None,
     ) -> None:
         assert rec.escrow is not None and rec.proposal is not None
+        self._move(rec, IssueState.PAID)
         rec.escrow.released = True
         rec.paid = rec.proposal.recommended
-        rec.state = IssueState.PAID
         self._log(
             rec,
             actor="system",
@@ -318,16 +369,169 @@ class Store:
             when=when,
         )
 
+    def _refund(self, rec: IssueRecord, *, rule: str, when: datetime | None = None) -> None:
+        assert rec.escrow is not None
+        self._move(rec, IssueState.REFUNDED)
+        rec.escrow.refunded = True
+        self._log(
+            rec,
+            actor="system",
+            action="refunded",
+            rule=rule,
+            outcome="no acceptable work arrived, funds returned",
+            when=when,
+        )
+
+    def _expire_claim(self, rec: IssueRecord, *, rule: str, when: datetime) -> None:
+        assert rec.claim is not None
+        holder = self._handle(rec.claim.contributor_id)
+        self._move(rec, IssueState.FUNDED)
+        rec.claim = None
+        rec.contributor_id = None
+        self._log(
+            rec,
+            actor="system",
+            action="claim_expired",
+            rule=rule,
+            outcome=f"{holder} opened no pull request in time, the issue is back in the pool",
+            when=when,
+        )
+
+    def _relist(self, rec: IssueRecord, when: datetime) -> IssueRecord | None:
+        """Offer a refunded, never-claimed issue again at a higher band.
+
+        A silent empty listing teaches the publisher to stop funding, so the issue
+        comes back priced to draw a claim. It comes back awaiting approval: a higher
+        price is a new obligation, and only the publisher can take that on.
+        """
+        if rec.proposal is None or any(d.action == "claimed" for d in rec.decisions):
+            return None
+        publisher = self.repo.get_publisher(rec.publisher_id)
+        assert publisher is not None
+        proposal = pricing.relist(rec.proposal, ceiling=_budget(publisher))
+        if proposal is None:
+            self._log(
+                rec,
+                actor="agent",
+                action="relist_declined",
+                rule="affordability_ceiling",
+                outcome=f"the remaining budget of {_budget(publisher)} cannot carry a "
+                "higher price, so the issue was not re-listed",
+                when=when,
+            )
+            return None
+
+        relisted = IssueRecord(
+            id=self._next_issue_id(),
+            repo=rec.repo,
+            number=rec.number,
+            title=rec.title,
+            summary=rec.summary,
+            state=IssueState.PRICED,
+            labels=list(rec.labels),
+            compliance_driven=rec.compliance_driven,
+            acceptance_criteria=list(rec.acceptance_criteria),
+            publisher_id=rec.publisher_id,
+            created_at=when,
+            proposal=proposal,
+            relisted_from=rec.id,
+        )
+        self._log(
+            relisted,
+            actor="agent",
+            action="price_proposed",
+            rule="relist_uplift",
+            outcome=f"re-priced {rec.id} at {proposal.recommended}, up from "
+            f"{rec.proposal.recommended}, after it drew no claim",
+            when=when,
+        )
+        self._move(relisted, IssueState.AWAITING_APPROVAL)
+        self._log(
+            rec,
+            actor="agent",
+            action="relisted",
+            rule="unclaimed_until_deadline",
+            outcome=f"nobody claimed it, so it is re-listed as {relisted.id} at "
+            f"{proposal.recommended} for the publisher to approve",
+            when=when,
+        )
+        return relisted
+
+    # ----------------------------------------------------------------- timers
+
+    @staticmethod
+    def _clocks(rec: IssueRecord) -> timers.Clocks:
+        passed = rec.review is not None and rec.review.verdict == "accept"
+        return timers.Clocks(
+            state=rec.state,
+            deadline=rec.deadline,
+            claim_expires_at=rec.claim.expires_at if rec.claim else None,
+            verdict_passed_at=rec.review.decided_at if passed and rec.review else None,
+        )
+
+    def _apply_due(
+        self, rec: IssueRecord, now: datetime
+    ) -> tuple[list[TimedAction], list[IssueRecord]]:
+        """Carry out every timer due on `rec` at `now`. Returns what ran and any new
+        records it created. Each action moves the state, so this ends in at most two."""
+        applied: list[TimedAction] = []
+        created: list[IssueRecord] = []
+        while (action := timers.due(self._clocks(rec), now)) is not None:
+            match action:
+                case TimedAction.RELEASE_AFTER_GRACE:
+                    # The verdict passed and the publisher went quiet past the grace
+                    # window. Release rather than strand finished work.
+                    self._release(rec, rule="silent_publisher_grace_period", when=now)
+                case TimedAction.EXPIRE_CLAIM:
+                    rule = (
+                        "deadline_passed"
+                        if timers.deadline_passed(self._clocks(rec), now)
+                        else "claim_window_elapsed"
+                    )
+                    self._expire_claim(rec, rule=rule, when=now)
+                case TimedAction.REFUND:
+                    self._refund(rec, rule="deadline_passed", when=now)
+                    relisted = self._relist(rec, when=now)
+                    if relisted is not None:
+                        created.append(relisted)
+            applied.append(action)
+        return applied, created
+
+    def run_timers(self, rec: IssueRecord, now: datetime | None = None) -> list[TimedAction]:
+        """Apply what is due on one issue and save it, refusing a stale copy.
+
+        The sweeper's entry point. Raises StaleIssue when someone saved the issue
+        after `rec` was loaded, so a person's action is never overwritten by a timer.
+        """
+        self.ensure_ready()
+        applied, created = self._apply_due(rec, now or _now())
+        if applied:
+            self.repo.save_issues(rec, *created)
+        return applied
+
     # ---------------------------------------------------------------- actions
 
-    def get(self, issue_id: str) -> IssueRecord | None:
-        return self.issues.get(issue_id)
-
     def advance(self, issue_id: str) -> IssueRecord:
-        """Move an issue one step forward along the demo path."""
-        rec = self.issues[issue_id]
+        """Move an issue one step forward along the demo path.
+
+        A timer that is already due is the step: the demo cannot claim an issue
+        whose deadline has passed or merge past a silent publisher's grace window,
+        any more than real time would let it.
+        """
+        self.ensure_ready()
+        rec = self.repo.get_issue(issue_id)
+        if rec is None:
+            raise KeyError(issue_id)
         if rec.state in lifecycle.TERMINAL_STATES:
             raise lifecycle.IllegalTransition(rec.state, IssueState.PAID)
+
+        created: list[IssueRecord] = []
+        now = _now()
+        if timers.due(self._clocks(rec), now) is not None:
+            _, created = self._apply_due(rec, now)
+            self.repo.save_issues(rec, *created)
+            return rec
+
         match rec.state:
             case IssueState.AWAITING_APPROVAL:
                 self._fund(rec)
@@ -338,26 +542,16 @@ class Store:
                     rule="human_checkpoint",
                     outcome="approved the price and committed funds",
                 )
-            case IssueState.FUNDED if rec.deadline is not None and rec.deadline < _now():
-                rec.escrow.refunded = True  # type: ignore[union-attr]
-                rec.state = IssueState.REFUNDED
-                self._log(
-                    rec,
-                    actor="system",
-                    action="refunded",
-                    rule="deadline_passed",
-                    outcome="no acceptable work arrived, funds returned",
-                )
             case IssueState.FUNDED:
-                available = [c for c in self.contributors if c not in {rec.contributor_id}]
-                cid = available[0] if available else next(iter(self.contributors))
+                contributors = [c.id for c in self.repo.list_contributors()]
+                cid = contributors[0]
                 self._claim(rec, cid)
                 self._log(
                     rec,
                     actor="contributor",
                     action="claimed",
                     rule="first_claim_wins",
-                    outcome=f"{self.contributors[cid].handle} claimed the issue",
+                    outcome=f"{self._handle(cid)} claimed the issue",
                 )
             case IssueState.CLAIMED:
                 self._submit(
@@ -371,6 +565,7 @@ class Store:
                         "deletions": 14,
                     },
                 )
+                assert rec.submission is not None
                 self._log(
                     rec,
                     actor="contributor",
@@ -395,15 +590,9 @@ class Store:
                     outcome="accepted: criteria met, checks passing, diff in scope",
                     cost="6.00",
                 )
-            case IssueState.ACCEPTED if (
-                rec.review is not None
-                and _now() > rec.review.decided_at + lifecycle.SILENT_PUBLISHER_GRACE
-            ):
-                # The verdict passed and the publisher went quiet past the grace
-                # window. Release rather than strand finished work.
-                self._release(rec, rule="silent_publisher_grace_period")
             case IssueState.ACCEPTED:
-                self._release(rec)
+                # Merging is acceptance, and acceptance is what releases the money,
+                # so the merge goes on the record before the release does.
                 self._log(
                     rec,
                     actor="publisher",
@@ -411,6 +600,7 @@ class Store:
                     rule="merge_is_acceptance",
                     outcome="publisher merged the pull request, which is acceptance",
                 )
+                self._release(rec)
             case IssueState.REWORK:
                 self._submit(
                     rec,
@@ -429,19 +619,25 @@ class Store:
                 # returning an unchanged record behind a 200.
                 nxt = next(iter(lifecycle.TRANSITIONS[rec.state]), rec.state)
                 raise lifecycle.IllegalTransition(rec.state, nxt)
+        self.repo.save_issues(rec, *created)
         return rec
 
     def approve_and_accept(self, issue_id: str) -> IssueRecord:
         """Run the remainder of the happy path in one call, for demos."""
-        rec = self.issues[issue_id]
+        rec = self.get(issue_id)
+        if rec is None:
+            raise KeyError(issue_id)
         for _ in range(12):
             if rec.state in lifecycle.TERMINAL_STATES:
                 break
-            self.advance(issue_id)
+            rec = self.advance(issue_id)
         return rec
 
     def publish(self, payload) -> IssueRecord:
-        publisher = self.publishers[payload.publisher_id]
+        self.ensure_ready()
+        publisher = self.repo.get_publisher(payload.publisher_id)
+        if publisher is None:
+            raise KeyError(payload.publisher_id)
         spec = {
             "repo": payload.repo,
             "number": payload.number or random.randint(100, 999),
@@ -456,9 +652,7 @@ class Store:
                 "Public behaviour is documented in the changelog.",
             ],
             "publisher_id": payload.publisher_id,
-            "affordability_ceiling": Usdc.from_decimal(
-                publisher.budget_remaining_usdc.replace(",", "")
-            ),
+            "affordability_ceiling": _budget(publisher),
             "age_days": 0,
             "comparables": random.randint(0, 7),
             "signals": payload.signals
@@ -475,7 +669,7 @@ class Store:
         if rec.proposal is not None and not rec.proposal.fundable:
             # Refuse rather than publish a price the platform would lose money on.
             raise UnfundableIssue(rec.proposal.justification)
-        rec.state = IssueState.AWAITING_APPROVAL
+        self._move(rec, IssueState.AWAITING_APPROVAL)
         self._log(
             rec,
             actor="system",
@@ -483,13 +677,14 @@ class Store:
             rule="publisher_created_issue",
             outcome="issue published and price proposed",
         )
-        self.issues[rec.id] = rec
+        self.repo.save_issues(rec)
         return rec
 
     # ------------------------------------------------------------ projections
 
     def to_out(self, rec: IssueRecord) -> IssueOut:
-        publisher = self.publishers[rec.publisher_id]
+        publisher = self.get_publisher(rec.publisher_id)
+        assert publisher is not None
         proposal_out = None
         if rec.proposal:
             p = rec.proposal
@@ -529,21 +724,25 @@ class Store:
             github_url=rec.github_url,
         )
 
-    def summary(self, rec: IssueRecord) -> IssueSummaryOut:
-        return IssueSummaryOut(
-            id=rec.id,
-            repo=rec.repo,
-            number=rec.number,
-            title=rec.title,
-            state=rec.state.value,
-            labels=rec.labels,
-            compliance_driven=rec.compliance_driven,
-            publisher_name=self.publishers[rec.publisher_id].name,
-            price_usdc=f"{rec.proposal.recommended.decimal:.2f}" if rec.proposal else None,
-            confidence=rec.proposal.confidence if rec.proposal else None,
-            deadline=rec.deadline,
-            github_url=rec.github_url,
-        )
+    def summaries(self, records: list[IssueRecord]) -> list[IssueSummaryOut]:
+        names = {p.id: p.name for p in self.list_publishers()}
+        return [
+            IssueSummaryOut(
+                id=rec.id,
+                repo=rec.repo,
+                number=rec.number,
+                title=rec.title,
+                state=rec.state.value,
+                labels=rec.labels,
+                compliance_driven=rec.compliance_driven,
+                publisher_name=names[rec.publisher_id],
+                price_usdc=f"{rec.proposal.recommended.decimal:.2f}" if rec.proposal else None,
+                confidence=rec.proposal.confidence if rec.proposal else None,
+                deadline=rec.deadline,
+                github_url=rec.github_url,
+            )
+            for rec in records
+        ]
 
     def timeline(self, rec: IssueRecord) -> list[TimelineEntry]:
         return [
@@ -559,7 +758,7 @@ class Store:
         ]
 
     def metrics(self) -> MetricsOut:
-        records = list(self.issues.values())
+        records = self.list_issues()
         settled = [r for r in records if r.state is IssueState.PAID]
         funded = [r for r in records if r.deadline is not None]
         claimed_in_time = [
@@ -733,7 +932,9 @@ _ISSUE_SPECS: list[dict] = [
             "The fix ships with a regression test and a CVE reference in the changelog.",
         ],
         "publisher_id": "PUB-4",
-        "age_days": 5,
+        # Claimed 52 hours ago, so the 72-hour claim is still live when the demo
+        # starts and the sweeper only returns it to the pool if nobody acts for a day.
+        "age_days": 3,
         "comparables": 2,
         "contributor_id": "CON-1",
         "risk": "1200.00",
@@ -906,4 +1107,4 @@ _ISSUE_SPECS: list[dict] = [
 ]
 
 
-store = Store()
+store = Store(build_repository(settings.database_url))

@@ -22,12 +22,14 @@ from misthos.domain.issue import (
 )
 from misthos.domain.money import NativeUsdc, Usdc, format_usdc
 from misthos.domain.pricing import (
+    RELIST_UPLIFT,
     REVIEW_COST_PER_ISSUE,
     TAKE_RATE_BY_TIER,
     ComplexitySignals,
     confidence_for,
     min_fix_price,
     propose,
+    relist,
 )
 
 
@@ -201,3 +203,29 @@ class TestPricing:
     def test_justification_names_the_driving_signals(self) -> None:
         p = propose(ComplexitySignals(5, 5, 1, 1, 1, 1))
         assert "code surface" in p.justification or "requirement clarity" in p.justification
+
+
+class TestRelist:
+    """An issue nobody claimed comes back priced to draw a claim, within the budget."""
+
+    def test_an_unclaimed_issue_comes_back_a_quarter_higher(self) -> None:
+        first = propose(ComplexitySignals(3, 3, 3, 3, 3, 3))
+        again = relist(first)
+        assert again is not None
+        assert again.recommended == first.recommended * RELIST_UPLIFT
+        assert again.band_low < again.recommended < again.band_high
+        assert "Re-listed after no contributor claimed it" in again.justification
+
+    def test_the_budget_caps_a_relisted_price(self) -> None:
+        first = propose(ComplexitySignals(3, 3, 3, 3, 3, 3))
+        ceiling = first.recommended * Decimal("1.1")
+        again = relist(first, ceiling=ceiling)
+        assert again is not None
+        assert again.recommended == ceiling
+        assert again.band_high == ceiling
+        assert again.band_low <= ceiling
+
+    def test_a_budget_that_cannot_rise_declines_the_relist(self) -> None:
+        """Re-listing at the price that already drew nobody would be no re-list at all."""
+        first = propose(ComplexitySignals(3, 3, 3, 3, 3, 3))
+        assert relist(first, ceiling=first.recommended) is None

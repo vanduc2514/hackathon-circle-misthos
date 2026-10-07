@@ -68,6 +68,14 @@ HUMAN_CHECKPOINTS = frozenset(
 # this long. The only release path that does not carry one. See 08.
 SILENT_PUBLISHER_GRACE = timedelta(days=7)
 
+# How long the first claim holds an issue exclusively. With no pull request by then
+# the issue returns to the pool, which is what stops squatting on good work. See 05.
+CLAIM_WINDOW = timedelta(hours=72)
+
+# How long committed funds wait for acceptable work before they go back to the
+# publisher. The escrow contract holds the same deadline on chain.
+ESCROW_TERM = timedelta(days=14)
+
 
 class IllegalTransition(Exception):
     def __init__(self, current: IssueState, requested: IssueState) -> None:
