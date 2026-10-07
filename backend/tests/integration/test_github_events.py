@@ -307,7 +307,7 @@ class TestWritePath:
         rec = store.advance("ISS-1006")
         assert rec.state is IssueState.FUNDED
         assert get("ISS-1006").state is IssueState.FUNDED
-        assert "GitHub post failed" in caplog.text
+        assert "after-save step failed: criteria on" in caplog.text
 
     def test_a_refused_step_posts_nothing(self, github: SimulatedGitHub) -> None:
         from misthos.domain.issue import IllegalTransition

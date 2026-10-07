@@ -36,7 +36,9 @@ TRANSITIONS: dict[IssueState, frozenset[IssueState]] = {
     IssueState.REWORK: frozenset({IssueState.IN_REVIEW}),
     # ACCEPTED means the platform's verdict passed and the publisher has not merged
     # yet. That is the grace window, not a resting state.
-    IssueState.ACCEPTED: frozenset({IssueState.PAID}),
+    # A publisher may decline a passing verdict, with a reason, once (#54); the work
+    # goes back for rework rather than the money back to them.
+    IssueState.ACCEPTED: frozenset({IssueState.PAID, IssueState.REWORK}),
     IssueState.PAID: frozenset(),
     # A rejection sends the issue back to the pool, or, when the contributor's
     # dispute is upheld on a second review, on to acceptance (#39).

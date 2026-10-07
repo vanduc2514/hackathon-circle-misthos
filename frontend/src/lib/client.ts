@@ -13,6 +13,7 @@ export type MetricsOut = components['schemas']['MetricsOut']
 export type TimelineEntry = components['schemas']['TimelineEntry']
 export type Decision = components['schemas']['Decision']
 export type Publisher = components['schemas']['Publisher']
+export type LoopOut = components['schemas']['LoopOut']
 
 export type Money = { usdc: string | number; base_units: number }
 

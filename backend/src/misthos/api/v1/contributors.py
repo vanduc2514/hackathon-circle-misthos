@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.concurrency import run_in_threadpool
 
 from misthos.config import settings
-from misthos.schemas import AnnualStatement, ContributorProfile
+from misthos.schemas import AnnualStatement, ContributorProfile, ReputationEventOut, money
 from misthos.services.statements import annual_statement, to_csv
 from misthos.store import store
 
@@ -18,6 +18,25 @@ async def list_contributors() -> list[ContributorProfile]:
     """Public profiles. A wallet is never served next to a handle; see docs/PRIVACY.md."""
     contributors = await run_in_threadpool(store.list_contributors)
     return [ContributorProfile.of(c) for c in contributors]
+
+
+@router.get("/{contributor_id}/reputation", response_model=list[ReputationEventOut])
+async def reputation(contributor_id: str) -> list[ReputationEventOut]:
+    """What a contributor's reputation is made of: one event per settled issue, from
+    the money ledger and nothing else. Public, like the settlement comment it mirrors."""
+    if await run_in_threadpool(store.get_contributor, contributor_id) is None:
+        raise HTTPException(status_code=404, detail=f"no contributor {contributor_id}")
+    events = await run_in_threadpool(store.reputation_events, contributor_id)
+    return [
+        ReputationEventOut(
+            issue_id=e.issue_id,
+            repo=e.repo,
+            amount=money(e.amount),
+            points=e.points,
+            settled_at=e.settled_at,
+        )
+        for e in events
+    ]
 
 
 @router.get(

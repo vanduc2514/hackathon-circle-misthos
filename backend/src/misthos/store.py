@@ -33,7 +33,6 @@ import time
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 from misthos.config import settings
 from misthos.domain import compliance, ledger, pricing, timers
@@ -63,6 +62,8 @@ from misthos.schemas import (
     EscrowCommitment,
     IssueOut,
     IssueSummaryOut,
+    LoopOut,
+    LoopSettlement,
     MetricsOut,
     Publisher,
     Review,
@@ -71,6 +72,7 @@ from misthos.schemas import (
     Wallet,
     money,
 )
+from misthos.services import metrics, reputation
 from misthos.services.chain import ChainGateway, SimulatedChain
 from misthos.services.compliance import (
     IdentityProvider,
@@ -129,6 +131,11 @@ class NotTheSubmission(Exception):
 
 class DisputeRefused(Exception):
     """A dispute the verdict cannot take: one dispute per verdict."""
+
+
+class DeclineRefused(Exception):
+    """A publisher declines a passing verdict once; after that the merge or the grace
+    period settles it."""
 
 
 def _now() -> datetime:
@@ -235,6 +242,8 @@ class Store:
             self.repo.save_contributor(contributor)
         for spec in _ISSUE_SPECS:
             self.repo.save_issues(self._build(spec))
+        # Standing comes from settled issues alone, never from the fixture's numbers.
+        self.rebuild_standing()
 
     def _build(self, spec: dict) -> IssueRecord:
         publisher = self.repo.get_publisher(spec["publisher_id"])
@@ -337,6 +346,14 @@ class Store:
         )
 
         if target is IssueState.REWORK:
+            self._log(
+                rec,
+                actor="agent",
+                action="verdict_issued",
+                rule="criteria_unmet",
+                outcome="rework by review_agent_v1: " + " ".join(spec["findings"]),
+                when=rec.created_at + timedelta(hours=44),
+            )
             return rec
 
         # No human confirms the verdict, so a passing one lands in ACCEPTED: the
@@ -590,6 +607,9 @@ class Store:
         self._post(
             f"settlement on {rec.repo}#{rec.number}",
             lambda gh: gh.comment(rec.repo, rec.number, note),
+        )
+        self._later(
+            f"standing of {contributor.id}", lambda: self.refresh_standing(contributor.id)
         )
         self._log(
             rec,
@@ -904,9 +924,13 @@ class Store:
     def _post(self, what: str, send: Callable[[GitHubGateway], None]) -> None:
         """Queue a post for after the save. Outside an action (seeding) it is dropped:
         the seed is history, and history was posted when it happened."""
+        self._later(what, lambda: send(self.github))
+
+    def _later(self, what: str, run: Callable[[], None]) -> None:
+        """Queue work that must follow the save, such as a post or a derived record."""
         pending = getattr(self._outbox, "pending", None)
         if pending is not None:
-            pending.append((what, send))
+            pending.append((what, run))
 
     @contextmanager
     def _posting(self) -> Iterator[None]:
@@ -918,13 +942,13 @@ class Store:
             queued = list(self._outbox.pending)
         finally:
             self._outbox.pending = None
-        for what, send in queued:
+        for what, run in queued:
             try:
-                send(self.github)
+                run()
             except Exception:
-                # The step is saved and stands. The post can be redone; the outbox
+                # The step is saved and stands. The work can be redone; the outbox
                 # that retries it arrives with the settlement orchestrator (#69).
-                log.exception("GitHub post failed: %s", what)
+                log.exception("after-save step failed: %s", what)
 
     # ------------------------------------------------------------ money
 
@@ -1415,6 +1439,125 @@ class Store:
             self.repo.save_issues(fresh)
             return fresh
 
+    def decline(self, issue_id: str, reason: str, now: datetime | None = None) -> IssueRecord:
+        """The publisher declines work the review passed, and says why.
+
+        Distinct from going silent, which releases the payment after the grace
+        period. The work goes back for rework with the publisher's reason as its
+        finding, and counts as a rework round. A publisher declines once per issue:
+        after that the merge or the grace period settles it, so declining cannot be
+        a way to keep finished work without paying for it.
+        """
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.state is not IssueState.ACCEPTED or rec.accepted_by is not None:
+                raise lifecycle.IllegalTransition(rec.state, IssueState.REWORK)
+            if any(d.action == "publisher_declined" for d in rec.decisions):
+                raise DeclineRefused(
+                    f"the publisher already declined {rec.id} once; merging it or the grace "
+                    "period settles it now"
+                )
+            self._move(rec, IssueState.REWORK)
+            reason = reason.strip()[:500]
+            self._log(
+                rec,
+                actor="publisher",
+                action="publisher_declined",
+                rule="publisher_overturn",
+                outcome=f"declined the passing verdict: {reason}",
+                when=now,
+            )
+            if rec.submission is not None:
+                pr, sha = rec.submission.pr_number, rec.submission.head_sha
+                body = f"**The publisher declined this.** {reason}"
+                self._post(
+                    f"decline on {rec.repo}#{pr}",
+                    lambda gh: gh.review(rec.repo, pr, sha, ReviewEvent.REQUEST_CHANGES, body),
+                )
+            self.repo.save_issues(rec)
+            return rec
+
+    # ------------------------------------------------------------- standing
+
+    def refresh_standing(self, contributor_id: str) -> None:
+        """Recompute one contributor's standing from the ledger and save it."""
+        self.rebuild_standing(only=contributor_id)
+
+    def rebuild_standing(
+        self, *, write: bool = True, only: str | None = None
+    ) -> dict[str, tuple[dict[str, object], dict[str, object]]]:
+        """Derive every contributor's reputation, settled issues and earnings from the
+        ledger. Returns what differed from the stored record, before and after."""
+        totals = reputation.standing(self.repo.list_issues())
+        drift: dict[str, tuple[dict[str, object], dict[str, object]]] = {}
+        for contributor in self.repo.list_contributors():
+            if only is not None and contributor.id != only:
+                continue
+            after = reputation.as_fields(totals.get(contributor.id, reputation.Standing()))
+            before = {k: getattr(contributor, k) for k in after}
+            if before == after:
+                continue
+            drift[contributor.id] = (before, after)
+            if write:
+                self.repo.save_contributor(contributor.model_copy(update=after))
+        return drift
+
+    def reputation_events(self, contributor_id: str) -> list[reputation.ReputationEvent]:
+        self.ensure_ready()
+        return [
+            e
+            for e in reputation.events(self.repo.list_issues())
+            if e.contributor_id == contributor_id
+        ]
+
+    # ------------------------------------------------------------- the loop
+
+    def loop(self, repo: str | None = None, now: datetime | None = None) -> LoopOut:
+        """The loop in public: funded, settled and paid, for one repository or all."""
+        self.ensure_ready()
+        now = now or _now()
+        records = [
+            r for r in self.repo.list_issues() if repo is None or r.repo.lower() == repo.lower()
+        ]
+        handles = {c.id: c.handle for c in self.repo.list_contributors()}
+        settled = sorted(
+            (
+                (e, r)
+                for r in records
+                for e in r.money_events
+                if e.kind is MoneyEventKind.RELEASED
+            ),
+            key=lambda pair: pair[0].occurred_at,
+            reverse=True,
+        )
+        return LoopOut(
+            repo=repo,
+            funded_open=sum(
+                1 for r in records if r.escrow is not None and lifecycle.is_open(r.state)
+            ),
+            settled_issues=len(settled),
+            settled_issues_7d=sum(
+                1 for e, _ in settled if e.occurred_at >= now - metrics.WEEK
+            ),
+            matched_volume_usdc=f"{Usdc(sum(e.amount.base_units for e, _ in settled)).decimal:.2f}",
+            recent=[
+                LoopSettlement(
+                    issue_id=r.id,
+                    repo=r.repo,
+                    number=r.number,
+                    title=r.title,
+                    amount=money(e.amount),
+                    contributor=handles.get(e.counterparty_id, e.counterparty_id),
+                    settled_at=e.occurred_at,
+                    github_url=r.github_url,
+                )
+                for e, r in settled[:20]
+            ],
+        )
+
     def _fabricate_files(self, rec: IssueRecord) -> None:
         """Give a pull request the simulation made up a file list the review agent can
         read: a fix, its test and a changelog line. Only the simulated GitHub has
@@ -1735,100 +1878,8 @@ class Store:
             for d in rec.decisions
         ]
 
-    def metrics(self) -> MetricsOut:
-        records = self.list_issues()
-        # Money figures come from the ledger, not from counting states: an issue is
-        # settled when its release is booked, and matched volume is what was released.
-        positions = {r.id: ledger.position(r.money_events) for r in records}
-        released = [
-            p for p in positions.values() if p and p.status is ledger.EscrowStatus.RELEASED
-        ]
-        settled = [
-            r
-            for r in records
-            if (p := positions[r.id]) is not None and p.status is ledger.EscrowStatus.RELEASED
-        ]
-        funded = [r for r in records if r.deadline is not None]
-        claimed_in_time = [
-            r
-            for r in funded
-            if r.claim and (r.claim.issued_at - r.created_at) <= timedelta(hours=72)
-        ]
-        reviews = [r.review for r in records if r.review]
-        publishers_with_issues = {r.publisher_id for r in funded}
-        repeat = [
-            p
-            for p in publishers_with_issues
-            if len([r for r in funded if r.publisher_id == p]) > 1
-        ]
-
-        matched = sum((p.paid_out.base_units for p in released), start=0)
-
-        durations = [
-            (r.money_events[-1].occurred_at - r.claim.issued_at).total_seconds() / 3600
-            for r in settled
-            if r.claim
-        ]
-
-        by_state: dict[str, int] = {}
-        for r in records:
-            by_state[r.state.value] = by_state.get(r.state.value, 0) + 1
-
-        # What review costs per issue across all its rounds, and how long a verdict
-        # takes, measured rather than assumed (#40).
-        review_costs = sorted(
-            sum(
-                (Decimal(d.cost_usdc) for d in r.decisions if d.action == "verdict_issued"
-                 and d.cost_usdc),
-                start=Decimal(0),
-            )
-            for r in records
-            if any(d.action == "verdict_issued" for d in r.decisions)
-        )  # fmt: skip
-        submitted = [r for r in records if r.submission is not None]
-        review_seconds = sorted(
-            r.review.seconds for r in records if r.review and r.review.seconds is not None
-        )
-
-        return MetricsOut(
-            settled_issues=len(settled),
-            funded_issues_published=len(funded),
-            claim_rate_72h=round(len(claimed_in_time) / len(funded), 2) if funded else 0.0,
-            acceptance_rate_first_review=(
-                round(
-                    len([x for x in reviews if x and x.verdict == "accept"]) / len(reviews), 2
-                )
-                if reviews
-                else 0.0
-            ),
-            repeat_publisher_rate=(
-                round(len(repeat) / len(publishers_with_issues), 2) if publishers_with_issues else 0.0
-            ),
-            matched_volume_usdc=f"{Usdc(matched).decimal:.2f}",
-            median_hours_to_payout=round(sorted(durations)[len(durations) // 2], 1) if durations else None,
-            # Share of submitted issues whose contributor disputed a verdict.
-            dispute_rate=(
-                round(
-                    sum(1 for r in submitted if any(d.action == "dispute_opened" for d in r.decisions))
-                    / len(submitted),
-                    2,
-                )
-                if submitted
-                else 0.0
-            ),
-            # Not modelled yet: a publisher who declines a passing verdict has no
-            # transition, because silence past the grace window releases instead.
-            publisher_overturn_rate=0.0,
-            open_issues=sum(1 for r in records if lifecycle.is_open(r.state)),
-            reviews_issued=sum(
-                1 for r in records for d in r.decisions if d.action == "verdict_issued"
-            ),
-            median_review_seconds=_median(review_seconds),
-            median_review_cost_usdc=(
-                f"{_median(review_costs):.2f}" if review_costs else None
-            ),
-            by_state=by_state,
-        )
+    def metrics(self, now: datetime | None = None) -> MetricsOut:
+        return metrics.compute(self.list_issues(), now or _now())
 
 
 # ------------------------------------------------------------------ review
@@ -1845,10 +1896,12 @@ def _reviewer(model: str) -> Reviewer:
 
 
 def _rework_rounds(rec: IssueRecord) -> int:
+    """Rounds of rework so far: the agent's rework verdicts and a publisher's decline."""
     return sum(
         1
         for d in rec.decisions
-        if d.action == "verdict_issued" and d.outcome.startswith(Verdict.REWORK.value)
+        if (d.action == "verdict_issued" and d.outcome.startswith(Verdict.REWORK.value))
+        or d.action == "publisher_declined"
     )
 
 
@@ -1858,15 +1911,6 @@ def _disputed_since(rec: IssueRecord, verdict_at: datetime) -> bool:
 
 def _cost_text(cost: Usdc) -> str:
     return f"{cost.decimal:.6f}"
-
-
-def _median(values: list) -> float | Decimal | None:  # type: ignore[type-arg]
-    if not values:
-        return None
-    middle = len(values) // 2
-    if len(values) % 2:
-        return values[middle]
-    return (values[middle - 1] + values[middle]) / 2
 
 
 # ------------------------------------------------------------------ GitHub text

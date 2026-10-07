@@ -14,10 +14,12 @@ from misthos.domain.pricing import UnfundableIssue
 from misthos.repositories import StaleIssue
 from misthos.schemas import (
     Decision,
+    DeclineRequest,
     DisputeRequest,
     HealthOut,
     IssueOut,
     IssueSummaryOut,
+    LoopOut,
     MetricsOut,
     Publisher,
     PublishRequest,
@@ -27,7 +29,13 @@ from misthos.services.chain import ChainRevert
 from misthos.services.coordination import Busy
 from misthos.services.github import GitHubError
 from misthos.services.review import ReviewFailed
-from misthos.store import DisputeRefused, IssueRecord, UnreadableIssue, store
+from misthos.store import (
+    DeclineRefused,
+    DisputeRefused,
+    IssueRecord,
+    UnreadableIssue,
+    store,
+)
 
 router = APIRouter(tags=["issues"])
 
@@ -114,7 +122,14 @@ async def get_timeline(issue_id: str) -> list[TimelineEntry]:
 async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -> IssueOut:
     try:
         rec = await run_in_threadpool(step, issue_id, *args)
-    except (IllegalTransition, StaleIssue, Busy, ChainRevert, DisputeRefused) as exc:
+    except (
+        IllegalTransition,
+        StaleIssue,
+        Busy,
+        ChainRevert,
+        DisputeRefused,
+        DeclineRefused,
+    ) as exc:
         raise _conflict(exc) from exc
     except ComplianceRefusal as exc:
         raise _refused(exc) from exc
@@ -152,6 +167,39 @@ async def complete(
     return await idempotent(
         request, idempotency_key, lambda: _act(store.approve_and_accept, issue_id)
     )
+
+
+@router.post(
+    "/issues/{issue_id}/decline",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={409: {"description": "Not awaiting the merge, or already declined once"}},
+)
+async def decline(
+    issue_id: str,
+    payload: DeclineRequest,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+) -> Any:
+    """The publisher declines work the review passed, with a reason. Once per issue:
+    the work goes back for rework, and after that the merge or the grace period
+    settles it."""
+    # Only the publisher may decline, and publishers cannot sign in yet (#70).
+    if not settings.simulated:
+        raise HTTPException(status_code=403, detail="declining needs publisher sign-in")
+    await _require(issue_id)
+    return await idempotent(
+        request, idempotency_key, lambda: _act(store.decline, issue_id, payload.reason)
+    )
+
+
+@router.get("/loop", response_model=LoopOut)
+async def loop(
+    repo: str | None = Query(default=None, description="owner/name; every repository if empty"),
+) -> LoopOut:
+    """The loop in public: issues funded, settled and paid, for one repository or all.
+    Built for a repository's watchers to see, so it carries no wallet or transfer."""
+    return await run_in_threadpool(store.loop, repo)
 
 
 @router.post(
