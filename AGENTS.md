@@ -97,8 +97,22 @@ mise run codegen         # regenerate frontend API types from the live schema
 mise run reset           # restore the seeded simulation data
 ```
 
+`setup:<runtime>`, `lint:<runtime>` and `test:<runtime>` exist for one runtime at a
+time; the unqualified tasks are the four of them together.
+
 Prefer the `mise run` task over the underlying command so the tool versions match. Run
 `mise run lint` and the relevant `mise run test:*` before calling a change done.
+
+## Continuous integration
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every pull request, in four
+jobs, one per runtime: `ruff` and `pytest`, then `tsc` and `vitest`, then the edge
+`tsc`, then `forge test`. Each job installs only its own dependencies through
+`mise run setup:<runtime>`, so a failure names the runtime it came from.
+
+`mise run ci` is the same thing locally. `MISTHOS_SIMULATED=true` is pinned in the
+workflow: CI must never reach a chain, Circle or GitHub.
+
 
 ## Coding conventions
 
