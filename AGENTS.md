@@ -185,8 +185,11 @@ trim trailing whitespace (Markdown excluded).
 - NatSpec (`/// @title`, `@notice`, `@dev`) on contracts and non-obvious functions.
   Explain Arc-specific behaviour where it matters — the USDC dual decimal views,
   sub-second finality, the runtime blocklist.
-- **This contract only ever touches the 6-decimal ERC-20 USDC view.** Native 18-decimal
-  gas accounting is never handled in Solidity.
+- **This contract only ever touches a 6-decimal ERC-20 view.** USDC is an issue's
+  default denomination and EURC is the European publisher's option; both use 6
+  decimals. `setIssueToken` refuses any token whose `decimals()` is not 6, so the
+  native 18-decimal view can never enter the contract. Native gas accounting is
+  never handled in Solidity.
 - Tests are Foundry tests (`forge-std/Test.sol`) in `contracts/test/`, with a comment on
   each test explaining the invariant it protects, not what it does. `contracts/lib/` is
   cloned, never vendored.
@@ -197,7 +200,9 @@ trim trailing whitespace (Markdown excluded).
   `0x3600000000000000000000000000000000000000` is 6 decimals. In Python they are
   separate types (`Usdc`, `NativeUsdc`) in
   [domain/money.py](backend/src/misthos/domain/money.py) precisely so they cannot be
-  mixed. Everything except raw gas math uses the 6-decimal view.
+  mixed. Everything except raw gas math uses the 6-decimal view. EURC is a *different
+  token* with the same 6 decimals: an amount carries its currency, and the two are never
+  summed.
 - **The platform never holds customer funds.** Any change that would put money in our
   custody, or enforce an agent limit in application code instead of in the escrow
   contract, breaks a design constraint — raise it rather than implementing it.

@@ -16,7 +16,7 @@ The diagrams below describe the target system. This table is what is actually in
 | Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
 | Core | FastAPI, lifecycle, pricing engine, decision log | Built. 48 tests |
 | Worker | Job runner and deadline sweeper | Not built. The simulation has no timers |
-| Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
+| Contracts | `MisthosEscrow` | Built. 29 Foundry tests |
 | Data | Postgres, Redis | Not built. State is in process and resets on restart |
 | Integrations | GitHub App, Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
 
@@ -204,7 +204,7 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 
 | Contract | Purpose |
 | --- | --- |
-| `MisthosEscrow` | Holds committed USDC per issue. Releases on an acceptance attestation, refunds on deadline |
+| `MisthosEscrow` | Holds the committed ERC-20 (USDC, or EURC for a European publisher) per issue. Releases on an acceptance attestation, refunds on deadline |
 | `Memo` (predeployed) | Attaches the issue and PR reference to every money movement, so reconciliation is on-chain |
 | `Multicall3From` (predeployed) | Batches payouts while preserving the original sender as `msg.sender` |
 
@@ -324,6 +324,19 @@ Rules the code must follow:
 - Keep every amount in the 6-decimal ERC-20 view except raw gas math. Name variables so the view is unambiguous.
 
 Escrow amounts, price bands and payouts are all 6-decimal. Only gas estimation touches 18-decimal.
+
+### One issue, one ERC-20
+
+An issue is denominated in a single ERC-20. USDC is the default, and a European
+publisher's issue is denominated in EURC, which uses the same 6 decimals. The
+escrow records the token per issue (`setIssueToken`, before the commitment), and
+releases and refunds in that token, so the two balances are never summed and a
+refund is never quietly converted into USDC on the way back.
+
+The escrow refuses a token whose `decimals()` is not 6 when the token is named,
+not when the money has to move. That is what keeps the 18-decimal native view out
+of the contract: a proper token answers `decimals()`, a native sentinel reverts,
+and an address with no code returns nothing — all three fail the same check.
 
 ### Arc behaviours that affect this design
 
