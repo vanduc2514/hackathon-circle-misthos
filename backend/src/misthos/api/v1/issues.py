@@ -51,6 +51,7 @@ from misthos.store import (
     NotSimulated,
     NotTheSubmission,
     UnreadableIssue,
+    UntestableCriteria,
     store,
 )
 
@@ -164,6 +165,19 @@ async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -
         raise _conflict(exc) from exc
     except (ComplianceRefusal, PolicyRefusal, NotSimulated) as exc:
         raise _refused(exc) from exc
+    except UntestableCriteria as exc:
+        # Shaped like a validation error, so a client shows each reason by its criterion.
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {
+                    "loc": ["body", "criteria", p.index - 1],
+                    "msg": f"Criterion {p.index} {p.reason}.",
+                    "type": "untestable_criterion",
+                }
+                for p in exc.problems
+            ],
+        ) from exc
     except (ReviewFailed, GitHubError) as exc:
         # Something we depend on failed; nothing was saved, so the step can be retried.
         raise HTTPException(status_code=502, detail=str(exc)) from exc

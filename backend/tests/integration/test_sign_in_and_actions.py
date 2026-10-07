@@ -170,7 +170,11 @@ class TestTheWholeLoopWithoutTheDemoStepper:
 
         # No funding before the criteria are approved (#21).
         assert publisher.post(f"{API}/issues/{iid}/fund").status_code == 409
-        criteria = ["A test reproduces the 503.", "Retries back off.", "Changelog entry."]
+        criteria = [
+            "A test reproduces the 503 from the settlement API.",
+            "Retries back off exponentially, starting at 100 ms.",
+            "The changelog records the change.",
+        ]
         r = publisher.post(f"{API}/issues/{iid}/criteria", json={"criteria": criteria})
         assert r.status_code == 200 and r.json()["acceptance_criteria"] == criteria
         assert publisher.post(f"{API}/issues/{iid}/fund").json()["state"] == "FUNDED"
@@ -456,3 +460,34 @@ class TestTheSimulatedGitHubFromTheBrowser:
         client = TestClient(app)
         assert client.post(f"{API}/demo/issues/ISS-1003/pull-request").status_code == 403
         assert client.post(f"{API}/demo/issues/ISS-1004/merge").status_code == 403
+
+
+class TestCriteriaAReviewerCanJudge:
+    """#38: the publisher cannot approve criteria a reviewer could not judge."""
+
+    def test_vague_criteria_are_refused_with_a_reason_for_each(self) -> None:
+        client = TestClient(app)
+        r = client.post(
+            f"{API}/issues/ISS-1006/criteria",
+            json={"criteria": ["A test reproduces the round-down on 0.005.", "It works properly.",
+                               "Is it fast?"]},
+        )  # fmt: skip
+        assert r.status_code == 422
+        reasons = [d["msg"] for d in r.json()["detail"]]
+        assert reasons[0].startswith("Criterion 2 says \"works\"")
+        assert reasons[1].startswith("Criterion 3 is a question")
+        assert store.get("ISS-1006").criteria_approved_at is None  # type: ignore[union-attr]
+
+    def test_drafted_criteria_can_be_approved_as_they_stand(self) -> None:
+        client = TestClient(app)
+        issue = client.post(
+            f"{API}/issues",
+            json={"repo": "acme/x", "title": "CSV export breaks on commas inside fields",
+                  "labels": ["bug"], "publisher_id": "PUB-1"},
+        ).json()  # fmt: skip
+        approved = client.post(
+            f"{API}/issues/{issue['id']}/criteria",
+            json={"criteria": issue["acceptance_criteria"]},
+        )
+        assert approved.status_code == 200
+        assert any("CSV export breaks" in c for c in issue["acceptance_criteria"])

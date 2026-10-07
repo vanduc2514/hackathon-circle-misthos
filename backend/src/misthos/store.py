@@ -37,6 +37,7 @@ from datetime import UTC, datetime, timedelta
 
 from misthos.config import settings
 from misthos.domain import comparables, compliance, ledger, pricing, timers
+from misthos.domain import criteria as acceptance
 from misthos.domain import issue as lifecycle
 from misthos.domain.comparables import Comparable, SettledWork
 from misthos.domain.compliance import (
@@ -170,6 +171,14 @@ class AccountExists(Exception):
 
 class CriteriaNotApproved(Exception):
     """No funding before the publisher approves the acceptance criteria (#21)."""
+
+
+class UntestableCriteria(Exception):
+    """Criteria a reviewer could not judge are not approved (#38)."""
+
+    def __init__(self, problems: list[acceptance.Problem]) -> None:
+        super().__init__("; ".join(f"criterion {p.index} {p.reason}" for p in problems))
+        self.problems = problems
 
 
 class NotSimulated(Exception):
@@ -1357,11 +1366,9 @@ class Store:
             "state": IssueState.PRICED,
             "labels": payload.labels or ["needs-price"],
             "compliance_driven": payload.compliance_driven,
-            "criteria": [
-                "The reported behaviour is reproduced by a test.",
-                "The fix is covered by a test that fails before and passes after.",
-                "Public behaviour is documented in the changelog.",
-            ],
+            # Drafted from the issue, every one checkable (#38); the publisher edits
+            # and approves them before any money is committed.
+            "criteria": acceptance.draft(payload.title, payload.summary, payload.labels),
             "publisher_id": payload.publisher_id,
             "age_days": 0,
             "signals": payload.signals
@@ -1380,6 +1387,7 @@ class Store:
             spec["title"] = facts.title
             spec["summary"] = _summary(facts.body) or spec["summary"]
             spec["labels"] = list(facts.labels) or spec["labels"]
+            spec["criteria"] = acceptance.draft(facts.title, facts.body, facts.labels)
             spec["signals"] = reading.signals.as_dict()
             spec["signals_read"] = f"read {facts.repo}#{facts.number}: {reading.summary()}"
         rec = self._build(spec)
@@ -2038,9 +2046,14 @@ class Store:
         """The publisher edits the drafted acceptance criteria and approves them (#21).
         Until the money is committed they can be revised and approved again."""
         self.ensure_ready()
-        cleaned = [c.strip()[:500] for c in criteria if c.strip()]
+        cleaned = [" ".join(c.split()) for c in criteria if c.strip()]
         if not cleaned:
             raise CriteriaNotApproved("approve at least one acceptance criterion")
+        # A criterion a reviewer cannot judge makes every verdict on it arguable, so it
+        # is refused here, with the reason, rather than discovered at review (#38).
+        found = acceptance.problems(cleaned)
+        if found:
+            raise UntestableCriteria(found)
         with self._exclusive(issue_id), self._posting():
             rec = self.repo.get_issue(issue_id)
             if rec is None:
@@ -2868,7 +2881,10 @@ _ISSUE_SPECS: list[dict] = [
         "state": "REFUNDED",
         "labels": ["feature"],
         "compliance_driven": False,
-        "criteria": ["Loader is pluggable.", "Existing TOML configs keep working."],
+        "criteria": [
+            "A second config format is added by registering a loader, without editing core.",
+            "Existing TOML configs keep working.",
+        ],
         "publisher_id": "PUB-5",
         "age_days": 40,
         "signals": {

@@ -166,7 +166,7 @@ def _step(value: float, thresholds: tuple[float, ...]) -> float:
     return 1.0 + sum(1 for t in thresholds if value >= t)
 
 
-def _mentioned_files(body: str) -> set[str]:
+def mentioned_files(body: str) -> set[str]:
     found = {m.group(1) for m in _PATH_MENTION.finditer(body)}
     return {f for f in found if PurePosixPath(f).suffix.lower() in SOURCE_SUFFIXES}
 
@@ -176,7 +176,7 @@ def read(facts: IssueFacts) -> Reading:
     reasons: dict[str, str] = {}
     tree = facts.tree
 
-    mentioned = _mentioned_files(facts.body)
+    mentioned = mentioned_files(facts.body)
     if mentioned:
         code_surface = _step(len(mentioned), (2, 3, 5, 8))
         reasons["code_surface"] = f"the issue names {len(mentioned)} source file(s)"
