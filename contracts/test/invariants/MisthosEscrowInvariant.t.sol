@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+import {MisthosEscrow} from "../../src/MisthosEscrow.sol";
+import {MockUsdcToken} from "../support/MockUsdcToken.sol";
+import {EscrowHandler} from "./EscrowHandler.sol";
+
+/**
+ * @title MisthosEscrowInvariant
+ * @notice The properties that must hold after *any* sequence of the money
+ *         paths. The example-based suite next door proves one input each; this
+ *         one fuzzes the order and the amounts, because a bug in this contract
+ *         is unrecoverable and the platform has no other way to move the money.
+ *
+ * @dev One campaign per property, driven by EscrowHandler. Each property is
+ *      named for what it protects rather than for the function it calls.
+ */
+contract MisthosEscrowInvariant is Test {
+    EscrowHandler internal handler;
+    MisthosEscrow internal escrow;
+    MockUsdcToken internal usdc;
+
+    function setUp() public {
+        handler = new EscrowHandler();
+        escrow = handler.escrow();
+        usdc = handler.usdc();
+
+        targetContract(address(handler));
+    }
+
+    /// The escrow holds exactly the commitments that are still held, and
+    /// nothing else: no settled issue leaves a residue behind, and a commitment
+    /// is never paid out of another issue's money.
+    function invariant_the_escrow_holds_exactly_the_unsettled_commitments() public view {
+        uint256 expected;
+        for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
+            bytes32 issueId = handler.issues(i);
+            (uint96 amount, MisthosEscrow.Status status) = _amountAndStatus(issueId);
+            if (status == MisthosEscrow.Status.Held) expected += amount;
+        }
+
+        assertEq(
+            usdc.balanceOf(address(escrow)),
+            expected,
+            "the escrow balance is not the sum of the held commitments"
+        );
+    }
+
+    /// Money is conserved: every base unit is in the escrow, with a publisher or
+    /// with a contributor. Nothing is minted to the contract, skimmed on the way
+    /// through, or stranded where no one can claim it.
+    function invariant_no_usdc_is_created_or_lost() public view {
+        uint256 accounted = usdc.balanceOf(address(escrow));
+
+        for (uint256 i = 0; i < handler.PUBLISHER_COUNT(); i++) {
+            accounted += usdc.balanceOf(handler.publishers(i));
+        }
+        for (uint256 i = 0; i < handler.CONTRIBUTOR_COUNT(); i++) {
+            accounted += usdc.balanceOf(handler.contributors(i));
+        }
+
+        assertEq(
+            accounted, handler.GRANT() * handler.PUBLISHER_COUNT(), "usdc appeared or vanished"
+        );
+    }
+
+    /// A commitment settles at most once. The handler attempts every settlement
+    /// it observes, so a second release or a refund after a release would show up
+    /// as two settlements, two timestamps, or a status that disagrees with what
+    /// the handler watched happen.
+    function invariant_a_commitment_settles_at_most_once() public view {
+        for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
+            bytes32 issueId = handler.issues(i);
+            (uint96 amount, MisthosEscrow.Status status) = _amountAndStatus(issueId);
+
+            assertLe(handler.settlements(issueId), 1, "an issue settled twice");
+            assertTrue(
+                handler.releasedAt(issueId) == 0 || handler.refundedAt(issueId) == 0,
+                "a commitment was both released and refunded"
+            );
+
+            if (handler.releasedAt(issueId) != 0) {
+                assertEq(uint256(status), uint256(MisthosEscrow.Status.Released));
+            }
+            if (handler.refundedAt(issueId) != 0) {
+                assertEq(uint256(status), uint256(MisthosEscrow.Status.Refunded));
+            }
+            if (status == MisthosEscrow.Status.Held) {
+                assertEq(handler.settlements(issueId), 0, "a held commitment was settled");
+                assertEq(uint256(amount), handler.committedAmount(issueId));
+            }
+        }
+    }
+
+    /// The deadlines are release conditions, not advice: a release never lands
+    /// after the deadline, and a refund never happens before it, so a
+    /// contributor's window is never cut short and a publisher always gets the
+    /// money back once the window closes.
+    function invariant_settlement_respects_the_deadline() public view {
+        for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
+            bytes32 issueId = handler.issues(i);
+            uint64 deadline = handler.committedDeadline(issueId);
+
+            uint256 released = handler.releasedAt(issueId);
+            if (released != 0) {
+                assertLe(released, deadline, "released after the deadline");
+            }
+
+            uint256 refunded = handler.refundedAt(issueId);
+            if (refunded != 0) {
+                assertGe(refunded, deadline, "refunded before the deadline");
+            }
+        }
+    }
+
+    /// No commitment is ever above the ceiling that was in force when it was
+    /// made. The ceiling is the one guardrail that survives a compromised agent
+    /// key, so it has to hold for every amount the campaign tries, not just the
+    /// amount the caller meant to send.
+    function invariant_a_commitment_fits_its_ceiling() public view {
+        for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
+            bytes32 issueId = handler.issues(i);
+            uint256 committed = handler.committedAmount(issueId);
+            uint256 ceiling = handler.committedCeiling(issueId);
+
+            if (committed == 0 || ceiling == 0) continue;
+            assertLe(committed, ceiling, "committed above the ceiling in force");
+        }
+    }
+
+    /// The attestor always has exactly one live key: it is never the zero
+    /// address, it is always the last key the owner set, and the owner never
+    /// changes. The handler challenges each retired key on every rotation, so a
+    /// rotation that left a second key able to move money would fail the run
+    /// before this property is even checked.
+    function invariant_the_attestor_keeps_its_authority() public view {
+        assertGt(handler.attestorCount(), 0, "no attestor was ever set");
+
+        address current = escrow.attestor();
+        assertTrue(current != address(0), "the attestor was rotated to zero");
+        assertEq(current, handler.currentAttestor(), "the attestor is not the last key set");
+        assertEq(escrow.owner(), handler.owner(), "the owner changed");
+    }
+
+    /// What went in is what is still held plus what came out: a settlement moves
+    /// exactly the commitment, so no release can pay less than the publisher
+    /// committed (a skim) or more than the escrow holds (a hole).
+    function invariant_the_money_that_left_matches_the_money_that_came_in() public view {
+        uint256 committed;
+        for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
+            committed += handler.committedAmount(handler.issues(i));
+        }
+
+        assertEq(
+            usdc.balanceOf(address(escrow)) + handler.releasedTotal() + handler.refundedTotal(),
+            committed,
+            "the money that left the escrow is not the money that entered it"
+        );
+    }
+
+    // ----------------------------------------------------------- internals
+
+    function _amountAndStatus(bytes32 issueId)
+        private
+        view
+        returns (uint96 amount, MisthosEscrow.Status status)
+    {
+        (, amount,, status) = escrow.commitments(issueId);
+    }
+}
