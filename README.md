@@ -79,7 +79,11 @@ Tests and linting:
 ```bash
 mise run test
 mise run lint
+mise run ci         # exactly what CI runs on a pull request
 ```
+
+Every pull request runs the four suites in CI, one job per runtime — see
+[.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 Restore the seeded demo data at any point:
 

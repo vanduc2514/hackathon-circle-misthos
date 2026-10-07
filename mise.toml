@@ -1,7 +1,11 @@
 [tools]
 node = "22"
 npm = "10.9.3"
-"npm:@circle-fin/cli" = "latest"
+# Circle's official CLI sits far below aube's reputation threshold (693 weekly
+# downloads against 1000), so mise refuses to install it without an explicit
+# approval. The exemption is scoped to this package: transitive dependencies stay
+# gated, and aube's malicious-package check still runs.
+"npm:@circle-fin/cli" = { version = "latest", allow_low_downloads = true }
 python = "3.11"
 uv = "0.11.6"
 foundry = "latest"
@@ -30,13 +34,27 @@ run = "npm run dev"
 
 [tasks.setup]
 description = "Install every runtime's dependencies"
-run = """
-cd backend && uv sync --extra dev
-cd frontend && npm install
-cd edge && npm install
-mkdir -p contracts/lib
-test -d contracts/lib/forge-std || git clone --depth 1 https://github.com/foundry-rs/forge-std.git contracts/lib/forge-std
-"""
+depends = ["setup:backend", "setup:web", "setup:edge", "setup:contracts"]
+
+[tasks."setup:backend"]
+description = "Install the backend's Python dependencies"
+dir = "backend"
+run = "uv sync --extra dev"
+
+[tasks."setup:web"]
+description = "Install the web app's npm dependencies"
+dir = "frontend"
+run = "npm install"
+
+[tasks."setup:edge"]
+description = "Install the edge service's npm dependencies"
+dir = "edge"
+run = "npm install"
+
+[tasks."setup:contracts"]
+description = "Clone the Foundry dependencies"
+dir = "contracts"
+run = "test -d lib/forge-std || git clone --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std"
 
 [tasks.test]
 description = "Run every test suite"
@@ -56,11 +74,26 @@ run = "forge test -vvv"
 
 [tasks.lint]
 description = "Lint and typecheck"
-run = """
-cd backend && uv run ruff check src tests
-cd frontend && npx tsc --noEmit
-cd edge && npx tsc --noEmit
-"""
+depends = ["lint:backend", "lint:web", "lint:edge"]
+
+[tasks."lint:backend"]
+description = "Ruff over the backend"
+dir = "backend"
+run = "uv run ruff check src tests"
+
+[tasks."lint:web"]
+description = "Typecheck the web app"
+dir = "frontend"
+run = "npx tsc --noEmit"
+
+[tasks."lint:edge"]
+description = "Typecheck the edge service"
+dir = "edge"
+run = "npx tsc --noEmit"
+
+[tasks.ci]
+description = "Run everything CI runs on a pull request"
+run = "mise run lint && mise run test"
 
 [tasks.codegen]
 description = "Regenerate the frontend API client from the live OpenAPI schema"
