@@ -91,6 +91,16 @@ Restore the seeded demo data at any point:
 mise run reset
 ```
 
+State lives in memory by default and resets on every restart. To keep it, point the
+API at Postgres, or at a SQLite file for a single machine. The schema migrates itself
+on first use, and claim expiry, deadline refunds and the silent-publisher release run
+on their own:
+
+```bash
+MISTHOS_DATABASE_URL=postgresql://user:pass@localhost/misthos mise run dev:api
+MISTHOS_DATABASE_URL=sqlite:///misthos.db mise run dev:api
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

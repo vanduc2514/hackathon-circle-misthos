@@ -8,6 +8,10 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    # Persistence: Postgres in a deployment, SQLite for a local file. See repositories/.
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]

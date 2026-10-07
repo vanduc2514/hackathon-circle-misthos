@@ -10,7 +10,7 @@ Weights are a starting guess and should be tuned against real settlements.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 
 from misthos.domain.money import Usdc
@@ -57,6 +57,11 @@ def min_fix_price(tier: str = "open") -> Usdc:
 
 BAND_LOW = Decimal("0.7")
 BAND_HIGH = Decimal("1.4")
+
+# How far a re-listed band rises after the first listing drew no claim. A starting
+# guess like the weights: an issue nobody took at its price is evidence the price was
+# low, and a quarter is enough to be seen without doubling what the publisher spends.
+RELIST_UPLIFT = Decimal("1.25")
 
 
 class UnfundableIssue(Exception):
@@ -235,3 +240,31 @@ def _justify(
     if extra:
         parts.extend(extra)
     return " ".join(parts)
+
+
+def relist(proposal: PriceProposal, *, ceiling: Usdc | None = None) -> PriceProposal | None:
+    """A higher band for an issue nobody claimed, or None when the budget cannot rise.
+
+    The ceiling caps a re-listed price exactly as it caps a first one. A re-list the
+    budget would hold at or below the old price is no re-list at all, so it is declined
+    rather than published again at the number that already drew nobody.
+    """
+    low = proposal.band_low * RELIST_UPLIFT
+    high = proposal.band_high * RELIST_UPLIFT
+    recommended = proposal.recommended * RELIST_UPLIFT
+    notes = [f"Re-listed after no contributor claimed it at {proposal.recommended}."]
+
+    if ceiling is not None and recommended > ceiling:
+        if not proposal.recommended < ceiling:
+            return None
+        recommended = high = ceiling
+        low = low if low < ceiling else ceiling
+        notes.append(f"Capped at the publisher's remaining budget of {ceiling}.")
+
+    return replace(
+        proposal,
+        band_low=low,
+        band_high=high,
+        recommended=recommended,
+        justification=" ".join([proposal.justification, *notes]),
+    )

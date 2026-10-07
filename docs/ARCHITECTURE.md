@@ -14,10 +14,10 @@ The diagrams below describe the target system. This table is what is actually in
 | --- | --- | --- |
 | Web | Vite + React SPA, generated API client | Built. Three routes, live against the API |
 | Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
-| Core | FastAPI, lifecycle, pricing engine, decision log | Built. 48 tests |
-| Worker | Job runner and deadline sweeper | Not built. The simulation has no timers |
+| Core | FastAPI, lifecycle, pricing engine, decision log | Built |
+| Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
 | Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
-| Data | Postgres, Redis | Not built. State is in process and resets on restart |
+| Data | Postgres, Redis | Postgres built and optional: memory by default, durable once `MISTHOS_DATABASE_URL` is set. Redis not built |
 | Integrations | GitHub App, Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
 
 Everything marked not built has its interface in place, which is why the missing pieces are listed here as work rather than as risk.
@@ -135,7 +135,7 @@ flowchart TB
 
 Read it as four layers. The browser talks to the API only, over one origin. The edge service sits in front of anything an agent pays for, because Circle's x402 seller middleware is TypeScript-only. The core holds the domain logic and is the only thing that talks to the data stores. The worker owns anything time-based, which is most of the lifecycle: claim expiry, review deadlines, refunds on deadline.
 
-Postgres and Redis are the intended shape rather than the current one. This build keeps state in process so it runs with no infrastructure; see [Runtime topology](#runtime-topology) for what is actually running today.
+Postgres is built and optional: with no database configured the build keeps state in process, so it still runs with no infrastructure. Redis is the intended shape rather than the current one. See [Runtime topology](#runtime-topology) for what is actually running today.
 
 The Circle box is a platform dependency rather than a library. Three things in that box are not replaceable without rewriting the trust story: MPC wallets with the user retaining custody, the spending policies that cap an agent, and the transaction screening that runs before submission.
 
@@ -168,7 +168,8 @@ This process exists for exactly two reasons and both are Node-only dependencies.
 | --- | --- | --- |
 | `backend/src/misthos/api/` | HTTP surface under `/api/v1` | FastAPI. Issues, proposals, lifecycle actions, metrics, decisions, webhook receiver |
 | `backend/src/misthos/domain/` | Lifecycle state machine, money units, pricing engine | Deliberately IO-free, so the two places a bug costs real funds are testable without a database |
-| `backend/src/misthos/store.py` | State, and the seeded simulation | In-process today. Becomes repositories over Postgres |
+| `backend/src/misthos/store.py` | The lifecycle's single writer, and the seeded simulation | Every move is checked against the transition table and saved through a repository |
+| `backend/src/misthos/repositories/` | Persistence behind one protocol | Memory by default and as the test double; Postgres, or a SQLite file, when `MISTHOS_DATABASE_URL` is set. Alembic migrations in `migrations/` |
 | Pricing engine | Produces the price band and its justification | Scores six signals, then applies market context and the publisher's affordability ceiling |
 | Review service | Runs the project's checks, issues the verdict, files findings on the pull request | The verdict is the decision. Only a merge or the grace period moves money |
 | Settlement orchestrator | Commits, releases, refunds, reconciles | The only component that can move money, and it moves it by calling a contract |
@@ -180,9 +181,9 @@ The lifecycle is the single writer of issue state. Letting the pricing engine or
 
 | Component | Responsibility | Notes |
 | --- | --- | --- |
-| `backend/src/misthos/workers/` | Anything time-based | Claim expiry, review deadlines, refund on deadline, reconciliation against the chain |
+| `backend/src/misthos/workers/` | Anything time-based | Claim expiry, refund on deadline with a higher-priced re-list, the silent-publisher release; reconciliation against the chain to come |
 
-A job table in Postgres using `SELECT … FOR UPDATE SKIP LOCKED` is enough to several hundred issues a day and adds no infrastructure. Temporal is the correct answer once the saga complexity bites, and it is an unnecessary cluster before then.
+Today the worker is a sweeper: on an interval it asks the pure `domain/timers.py` which open issues have a timer due and has the store apply them, under an advisory lock so two processes never refund the same commitment twice. A job table in Postgres using `SELECT … FOR UPDATE SKIP LOCKED` is enough to several hundred issues a day and adds no infrastructure. Temporal is the correct answer once the saga complexity bites, and it is an unnecessary cluster before then.
 
 ### Data stores
 
@@ -240,9 +241,8 @@ flowchart LR
     WEB -->|"proxy /api"| API["api<br/>uvicorn :8000"]
     EDG -->|"verified request"| API
 
-    API --> MEM[("in-process state<br/>store.py")]
-    WORKER["worker<br/>not built"] -.->|"will own timers"| MEM
-    API -.->|"planned"| PG[("Postgres")]
+    API --> ST[("state<br/>memory, or Postgres<br/>when configured")]
+    WORKER["worker<br/>sweeper"] -->|"timers"| ST
     API -.->|"planned"| RD[("Redis")]
 ```
 
@@ -251,21 +251,21 @@ flowchart LR
 | `web` | Node 22, Vite | 5173 | `frontend/src/main.tsx` | Built |
 | `api` | Python 3.11, uvicorn | 8000 | `backend/src/misthos/main.py` | Built |
 | `edge` | Node 22, Express | 8080 | `edge/src/index.ts` | Built, rails stubbed |
-| `worker` | Python 3.11 | none | `backend/src/misthos/workers/` | Not built. Needs the timers |
+| `worker` | Python 3.11 | none | `backend/src/misthos/workers/` | Built. Runs inside `api` by default; a separate process needs Postgres |
 
 | Data | Where it lives today | Where it goes |
 | --- | --- | --- |
-| Issues, proposals, claims, submissions, reviews | In process, `store.py`, reset on restart | Postgres via repositories |
-| Decision log | In process, append-only per issue | Postgres, append-only, replicated |
-| Escrow state | Mirrored in process | Read from the chain on a schedule, never trusted from our own copy |
-| Claim lock and idempotency keys | Not implemented | Redis |
+| Issues, proposals, claims, submissions, reviews | Memory by default; Postgres when `MISTHOS_DATABASE_URL` is set | Postgres |
+| Decision log | Append-only per issue, in memory or the `decisions` table | Postgres, append-only, replicated |
+| Escrow state | Mirrored in the store | Read from the chain on a schedule, never trusted from our own copy |
+| Claim lock and idempotency keys | One active claim per issue, by a partial unique index and a version check on every save. No idempotency keys | Redis (#67) |
 | Contract | `contracts/`, 18 Foundry tests | Deployed to Arc testnet |
 
 Two consequences worth being explicit about, because they are the difference between a demo and a system.
 
-Every restart loses the simulation. That is fine for a demo and unacceptable for anything real, which is why the store is written behind a narrow surface that repositories can replace without touching the domain.
+A restart loses the simulation only when no database is configured. With `MISTHOS_DATABASE_URL` set, state lives in Postgres behind the same repository protocol the memory store implements, which is how it got there without touching the domain.
 
-Nothing enforces the claim lock yet, because there is only one process. The moment there are two, two contributors can claim the same issue. Redis with a short TTL is the fix and it needs to land before anyone runs this behind a load balancer.
+Two processes can no longer both claim an issue: every save carries a version and a stale one is refused, and the schema allows one active claim per issue. Idempotency keys for money movements and rate limits are still missing, and they need to land (#67) before anyone runs this behind a load balancer.
 
 ## The money model
 

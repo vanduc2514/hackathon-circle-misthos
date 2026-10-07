@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     github_webhook_secret: str = "dev-secret"
     circle_api_key: str = ""
 
+    # Empty keeps state in memory: the zero-config demo, reset on every restart. A
+    # Postgres URL makes it durable, and sqlite:///path does the same in a local file.
+    database_url: str = ""
+    # The sweeper applies claim expiry, deadline refunds and the silent-publisher
+    # release on a timer. It runs inside the API by default; turn this off where a
+    # dedicated `python -m misthos.workers` process runs it instead.
+    sweeper_in_process: bool = True
+    sweep_interval_seconds: float = 60.0
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
