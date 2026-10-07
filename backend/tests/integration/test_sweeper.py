@@ -112,6 +112,7 @@ class TestSilentPublisher:
 
 class TestSweeping:
     def test_a_sweep_with_nothing_due_changes_nothing(self) -> None:
+        store.advance("ISS-1002")  # the one submission awaiting a verdict gets it
         before = {r.id: (r.state, r.version) for r in store.list_issues()}
         report = sweep_once(store)
         assert report.ran and report.applied == {}

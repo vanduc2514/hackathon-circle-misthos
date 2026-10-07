@@ -126,6 +126,17 @@ Publishing an issue with its number then reads it from GitHub and prices it from
 issue and the repository. A pull request from the claimant that says `Fixes #<n>`
 puts the issue in review, and merging it releases the payment.
 
+### The review agent
+
+Every submitted commit is reviewed against the issue's acceptance criteria without
+anyone asking. Set `MISTHOS_ANTHROPIC_API_KEY` and Claude reads the diff; without
+it, a rule reviewer judges only what the file list proves. To see how well the
+reviewer agrees with the hand-labelled regression corpus, by complexity band:
+
+```bash
+mise run review:harness
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

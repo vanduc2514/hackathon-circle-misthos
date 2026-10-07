@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 import jwt
 
+from misthos.domain.review import ChangedFile
 from misthos.domain.signals import IssueFacts, classify_tree
 from misthos.services.github.base import (
     STATUS_CONTEXT,
@@ -42,6 +43,8 @@ JWT_LIFETIME_SECONDS = 540
 JWT_BACKDATE_SECONDS = 60
 
 _PASSING = frozenset({"success", "neutral", "skipped"})
+# GitHub lists at most 3,000 files of a pull request, 100 to a page.
+MAX_FILE_PAGES = 30
 
 
 @dataclass
@@ -170,6 +173,25 @@ class GitHubApp:
 
     def read_pull_request(self, repo: str, number: int) -> PullRequest:
         return pull_request_from(repo, self._get(repo, f"/repos/{repo}/pulls/{number}"))
+
+    def read_files(self, repo: str, number: int) -> list[ChangedFile]:
+        files: list[ChangedFile] = []
+        for page in range(1, MAX_FILE_PAGES + 1):
+            batch = self._get(
+                repo, f"/repos/{repo}/pulls/{number}/files", per_page="100", page=str(page)
+            )
+            files.extend(
+                ChangedFile(
+                    path=f["filename"],
+                    additions=int(f.get("additions", 0)),
+                    deletions=int(f.get("deletions", 0)),
+                    patch=f.get("patch") or "",
+                )
+                for f in batch
+            )
+            if len(batch) < 100:
+                break
+        return files
 
     def checks_passed(self, repo: str, sha: str) -> bool | None:
         found = self._get(repo, f"/repos/{repo}/commits/{sha}/check-runs", per_page="100")

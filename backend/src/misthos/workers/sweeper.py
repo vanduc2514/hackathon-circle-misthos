@@ -14,10 +14,12 @@ never overwritten by a timer; an issue someone is acting on is skipped and picke
 on the next pass. An issue whose action fails is logged and skipped too, because one
 bad issue must not stop every other refund.
 
-Each pass also screens live counterparties whose last check is a day old, because
-screening once at onboarding is the mistake 08 is written against, and deletes
-screening records past their published retention period, and reconciles the money
-ledger against the chain, raising an alert for any divergence.
+Each pass also has the review agent judge every submitted commit that has no
+verdict yet, so a pull request is reviewed without anyone asking. It re-screens live
+counterparties whose last check is a day old, because screening once at onboarding
+is the mistake 08 is written against; deletes screening records past their published
+retention period; and reconciles the money ledger against the chain, raising an
+alert for any divergence.
 """
 
 from __future__ import annotations
@@ -34,6 +36,10 @@ from misthos.store import Store
 
 log = logging.getLogger("misthos.sweeper")
 
+# A model review takes up to a few minutes, and refunds wait behind a pass, so a pass
+# reviews a few submissions and leaves the rest for the next one.
+MAX_REVIEWS_PER_PASS = 5
+
 
 @dataclass(frozen=True)
 class SweepReport:
@@ -44,7 +50,10 @@ class SweepReport:
     skipped: list[str] = field(default_factory=list)
     """Issues someone was acting on mid-sweep. They are retried on the next pass."""
     failed: list[str] = field(default_factory=list)
-    """Issues whose timed action raised, such as a chain revert. Logged and retried."""
+    """Issues whose timed action or review raised, such as a chain revert. Logged and
+    retried."""
+    reviewed: dict[str, str] = field(default_factory=dict)
+    """Issue id to the verdict the review agent issued on it this pass."""
     screened: int = 0
     """Counterparties screened again on schedule."""
     purged: int = 0
@@ -73,6 +82,19 @@ def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
                 continue
             if actions:
                 applied[rec.id] = [a.value for a in actions]
+        reviewed: dict[str, str] = {}
+        for issue_id in store.reviews_due()[:MAX_REVIEWS_PER_PASS]:
+            try:
+                rec = store.review(issue_id, now)
+            except (Busy, StaleIssue):
+                skipped.append(issue_id)
+                continue
+            except Exception:
+                log.exception("sweeper: review of %s failed, retrying next pass", issue_id)
+                failed.append(issue_id)
+                continue
+            if rec is not None and rec.review is not None:
+                reviewed[issue_id] = rec.review.verdict
         screened = store.rescreen(now)
         purged = store.purge_expired(now)
         divergences = store.reconcile(now)
@@ -81,6 +103,7 @@ def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
             applied=applied,
             skipped=skipped,
             failed=failed,
+            reviewed=reviewed,
             screened=len(screened),
             purged=purged,
             divergences=len(divergences),

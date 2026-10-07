@@ -14,6 +14,7 @@ from misthos.domain.pricing import UnfundableIssue
 from misthos.repositories import StaleIssue
 from misthos.schemas import (
     Decision,
+    DisputeRequest,
     HealthOut,
     IssueOut,
     IssueSummaryOut,
@@ -24,7 +25,9 @@ from misthos.schemas import (
 )
 from misthos.services.chain import ChainRevert
 from misthos.services.coordination import Busy
-from misthos.store import IssueRecord, UnreadableIssue, store
+from misthos.services.github import GitHubError
+from misthos.services.review import ReviewFailed
+from misthos.store import DisputeRefused, IssueRecord, UnreadableIssue, store
 
 router = APIRouter(tags=["issues"])
 
@@ -108,13 +111,16 @@ async def get_timeline(issue_id: str) -> list[TimelineEntry]:
     return store.timeline(await _require(issue_id))
 
 
-async def _act(step: Callable[[str], IssueRecord], issue_id: str) -> IssueOut:
+async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -> IssueOut:
     try:
-        rec = await run_in_threadpool(step, issue_id)
-    except (IllegalTransition, StaleIssue, Busy, ChainRevert) as exc:
+        rec = await run_in_threadpool(step, issue_id, *args)
+    except (IllegalTransition, StaleIssue, Busy, ChainRevert, DisputeRefused) as exc:
         raise _conflict(exc) from exc
     except ComplianceRefusal as exc:
         raise _refused(exc) from exc
+    except (ReviewFailed, GitHubError) as exc:
+        # Something we depend on failed; nothing was saved, so the step can be retried.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return await run_in_threadpool(store.to_out, rec)
 
 
@@ -145,6 +151,30 @@ async def complete(
     await _require(issue_id)
     return await idempotent(
         request, idempotency_key, lambda: _act(store.approve_and_accept, issue_id)
+    )
+
+
+@router.post(
+    "/issues/{issue_id}/dispute",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={409: {"description": "Nothing to dispute, or already disputed"}},
+)
+async def dispute(
+    issue_id: str,
+    payload: DisputeRequest,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+) -> Any:
+    """The contributor challenges a rework or reject verdict: the same commit is
+    reviewed again against the published criteria, and the outcome is recorded."""
+    # Only the contributor may dispute, and contributors cannot sign in yet (#70), so
+    # the endpoint is the simulation's until they can.
+    if not settings.simulated:
+        raise HTTPException(status_code=403, detail="disputes need contributor sign-in")
+    await _require(issue_id)
+    return await idempotent(
+        request, idempotency_key, lambda: _act(store.dispute, issue_id, payload.reason)
     )
 
 

@@ -14,7 +14,7 @@ The diagrams below describe the target system. This table is what is actually in
 | --- | --- | --- |
 | Web | Vite + React SPA, generated API client | Built. Three routes, live against the API |
 | Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
-| Core | FastAPI, lifecycle, pricing engine, decision log, money ledger | Built. Money moves through a chain gateway, simulated until #69 |
+| Core | FastAPI, lifecycle, pricing engine, review agent, decision log, money ledger | Built. Money moves through a chain gateway, simulated until #69. The review agent is Claude once `MISTHOS_ANTHROPIC_API_KEY` is set, and a rule reviewer otherwise |
 | Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
 | Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
 | Data | Postgres, Redis | Built and optional. Postgres once `MISTHOS_DATABASE_URL` is set, memory otherwise. Redis once `MISTHOS_REDIS_URL` is set, for the per-issue lock, idempotency keys and rate limits across processes |
@@ -173,7 +173,7 @@ This process exists for exactly two reasons and both are Node-only dependencies.
 | `backend/src/misthos/store.py` | The lifecycle's single writer, and the seeded simulation | Every move is checked against the transition table and saved through a repository |
 | `backend/src/misthos/repositories/` | Persistence behind one protocol | Memory by default and as the test double; Postgres, or a SQLite file, when `MISTHOS_DATABASE_URL` is set. Alembic migrations in `migrations/` |
 | Pricing engine | Produces the price band and its justification | Scores six signals, then applies market context and the publisher's affordability ceiling |
-| Review service | Runs the project's checks, issues the verdict, files findings on the pull request | The verdict is the decision. Only a merge or the grace period moves money |
+| Review service | `backend/src/misthos/services/review/`: judges each criterion against the diff, and the verdict follows by fixed rules (`domain/review.py`) | The verdict is the decision. Only a merge or the grace period moves money |
 | Settlement orchestrator | Commits, releases, refunds, reconciles | The only component that can move money, and it moves it by calling a contract |
 | Finance adapter | Reads budget and cash context, read-only | Pluggable. Firefly III first, then beancount, Odoo, ERPNext, Invoice Ninja |
 
@@ -424,9 +424,15 @@ sequenceDiagram
     end
 ```
 
+How it is built today. The sweeper, or the demo stepper, hands every submitted commit that has no verdict to the review agent. The agent reads the changed files and judges each acceptance criterion with evidence: Claude when a key is configured, through a forced tool call so the answer is structured, or a rule reviewer that judges only what a file list proves (a test, documentation, a changelog entry) and leaves the rest unjudged. The verdict is not the agent's to pick. `domain/review.py` derives it from the judgements, the project's checks and the rework count, so the same judgements always give the same verdict and the decision log names the rule that produced it. The judgement runs outside the issue's lock and is applied only if the same commit is still under review, so a push during a slow review is never judged on the old code.
+
+The diff is written by the person whose payment depends on the verdict, so it is handed to the model as data, and the model is told that instructions inside it are part of the submission.
+
+Every verdict records its reviewer, the commit, how long it took and what it cost in inference; `/metrics` reports the median time and cost per issue (#40). Agreement is measured by `mise run review:harness` over a regression corpus, and CI fails if any complexity band drops below its floor or a new case starts disagreeing (#37). That corpus is hand-labelled and constructed, and pins the rule reviewer's known blind spots; agreement with human decisions on historical pull requests (#36) needs a corpus of those, which it does not replace.
+
 The review service issues the verdict and never releases money. That separation is C2, and it is also the answer to the hackathon's own framing of delegated authority: the agent can decide, but the limit sits somewhere it cannot reach.
 
-Rework rounds are bounded. An unbounded review loop costs more than the fix is worth, which is the exact problem the product exists to solve.
+Rework rounds are bounded. An unbounded review loop costs more than the fix is worth, which is the exact problem the product exists to solve. After two rework rounds, work that still misses a criterion is rejected, and each rework verdict restates exactly which criteria are unmet. A contributor can dispute a rework or reject verdict once: the same commit is reviewed again by the second reviewer, and the outcome is recorded either way. An overturned rejection goes to `ACCEPTED`, which is the one transition the dispute adds.
 
 Merge is acceptance. Payment is triggered by the merge event rather than by a separate click, so a publisher cannot take the patch and skip the payment.
 

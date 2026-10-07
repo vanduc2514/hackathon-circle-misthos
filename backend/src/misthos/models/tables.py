@@ -179,6 +179,10 @@ reviews = Table(
     Column("verdict", String(16), nullable=False),
     Column("findings", Json, nullable=False),
     Column("decided_at", Timestamp, nullable=False),
+    Column("head_sha", String(64)),
+    Column("reviewer", String(64)),
+    Column("seconds", Float),
+    Column("cost_base_units", BigInteger),
     UniqueConstraint("issue_id", "decided_at"),
 )
 

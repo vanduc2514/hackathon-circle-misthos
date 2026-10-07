@@ -38,7 +38,9 @@ TRANSITIONS: dict[IssueState, frozenset[IssueState]] = {
     # yet. That is the grace window, not a resting state.
     IssueState.ACCEPTED: frozenset({IssueState.PAID}),
     IssueState.PAID: frozenset(),
-    IssueState.REJECTED: frozenset({IssueState.FUNDED}),
+    # A rejection sends the issue back to the pool, or, when the contributor's
+    # dispute is upheld on a second review, on to acceptance (#39).
+    IssueState.REJECTED: frozenset({IssueState.FUNDED, IssueState.ACCEPTED}),
     IssueState.REFUNDED: frozenset(),
 }
 

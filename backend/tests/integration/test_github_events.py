@@ -289,7 +289,7 @@ class TestWritePath:
         store.advance(issue_id)  # the review agent's verdict
         review, status = github.sent[-2:]
         assert (review.kind, review.target, review.state) == ("review", str(pr), "APPROVE")
-        assert "Acceptance criteria 1 and 3" in review.body
+        assert "Criterion 2 met" in review.body  # "documented with a working example"
         assert (status.kind, status.state) == ("status", "success")
 
     def test_a_refund_is_said_on_the_issue(self, github: SimulatedGitHub) -> None:

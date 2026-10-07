@@ -29,9 +29,11 @@ from __future__ import annotations
 import logging
 import random
 import threading
+import time
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from misthos.config import settings
 from misthos.domain import compliance, ledger, pricing, timers
@@ -49,6 +51,7 @@ from misthos.domain.issue import IssueState
 from misthos.domain.ledger import Divergence, MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import ComplexitySignals, UnfundableIssue, propose
+from misthos.domain.review import ChangedFile, Judgement, Submitted, Verdict, decide
 from misthos.domain.signals import read as read_signals
 from misthos.domain.timers import TimedAction
 from misthos.models.records import IssueRecord
@@ -81,9 +84,11 @@ from misthos.services.github import (
     GitHubGateway,
     PullRequest,
     ReviewEvent,
+    SimulatedGitHub,
     StatusState,
     build_github,
 )
+from misthos.services.review import Reviewer, build_reviewer
 
 __all__ = ["IssueRecord", "Store", "store"]
 
@@ -120,6 +125,10 @@ class UnreadableIssue(Exception):
 
 class NotTheSubmission(Exception):
     """A pull request event about a pull request this issue is not waiting on."""
+
+
+class DisputeRefused(Exception):
+    """A dispute the verdict cannot take: one dispute per verdict."""
 
 
 def _now() -> datetime:
@@ -160,6 +169,8 @@ class Store:
         chain: ChainGateway | None = None,
         coordinator: Coordinator | None = None,
         github: GitHubGateway | None = None,
+        reviewer: Reviewer | None = None,
+        second_reviewer: Reviewer | None = None,
     ) -> None:
         self.repo: Repository = repository or MemoryRepository()
         # The simulated escrow keeps its books beside the repository's tables when
@@ -173,6 +184,13 @@ class Store:
         )
         # GitHub posts queued by the action running on this thread, sent after it saves.
         self._outbox = threading.local()
+        self.reviewer: Reviewer = reviewer or _reviewer(settings.review_model)
+        # A disputed verdict is reviewed again, by a stronger model when one is set.
+        self.second_reviewer: Reviewer = second_reviewer or (
+            _reviewer(settings.review_dispute_model)
+            if settings.review_dispute_model
+            else self.reviewer
+        )
         self.screening: ScreeningProvider = screening or SimulatedScreening(
             settings.screening_denylist.split(",")
         )
@@ -306,6 +324,7 @@ class Store:
             return rec
 
         self._submit(rec, spec["pr"])
+        self._fabricate_files(rec)
 
         if target is IssueState.IN_REVIEW:
             return rec
@@ -507,6 +526,9 @@ class Store:
         verdict: str,
         findings: list[str],
         when: datetime | None = None,
+        reviewer: str | None = None,
+        seconds: float | None = None,
+        cost: Usdc | None = None,
     ) -> None:
         """Record the platform's verdict. It is the decision, not a draft for one."""
         self._move(
@@ -521,6 +543,10 @@ class Store:
             verdict=verdict,  # type: ignore[arg-type]
             findings=findings,
             decided_at=when or _now(),
+            head_sha=rec.submission.head_sha if rec.submission else None,
+            reviewer=reviewer,
+            seconds=seconds,
+            cost_usdc=_cost_text(cost) if cost is not None else None,
         )
         if rec.submission is not None:
             pr, sha = rec.submission.pr_number, rec.submission.head_sha
@@ -1042,6 +1068,15 @@ class Store:
         any more than real time would let it.
         """
         self.ensure_ready()
+        current = self.repo.get_issue(issue_id)
+        if (
+            current is not None
+            and current.state is IssueState.IN_REVIEW
+            and timers.due(self._clocks(current), _now()) is None
+        ):
+            # The step is the review agent's verdict, which may take minutes and so
+            # runs outside the issue's lock.
+            return self.review(issue_id) or self.get(issue_id) or current
         with self._exclusive(issue_id), self._posting():
             return self._advance(issue_id)
 
@@ -1094,29 +1129,13 @@ class Store:
                     },
                 )
                 assert rec.submission is not None
+                self._fabricate_files(rec)
                 self._log(
                     rec,
                     actor="contributor",
                     action="submitted",
                     rule="pull_request_opened",
                     outcome=f"opened PR #{rec.submission.pr_number} with checks passing",
-                )
-            case IssueState.IN_REVIEW:
-                self._review(
-                    rec,
-                    verdict="accept",
-                    findings=[
-                        "Acceptance criteria 1 and 3 are covered by new tests.",
-                        "No changes outside the files the criteria named.",
-                    ],
-                )
-                self._log(
-                    rec,
-                    actor="agent",
-                    action="verdict_issued",
-                    rule="review_agent_v1",
-                    outcome="accepted: criteria met, checks passing, diff in scope",
-                    cost="6.00",
                 )
             case IssueState.ACCEPTED if rec.accepted_by is None:
                 # Merging is acceptance, and acceptance is what releases the money,
@@ -1137,7 +1156,9 @@ class Store:
                 self._submit(
                     rec,
                     {
-                        "pr_number": rec.number + 400,
+                        "pr_number": (
+                            rec.submission.pr_number if rec.submission else rec.number + 400
+                        ),
                         "head_sha": f"{random.getrandbits(160):040x}",
                         "checks_passed": True,
                         "files_changed": 4,
@@ -1145,6 +1166,7 @@ class Store:
                         "deletions": 21,
                     },
                 )
+                self._fabricate_files(rec)
             case _:
                 # DRAFT, PRICED and REJECTED are legal states with no demo leg out of
                 # them. Refuse with the state the lifecycle declares next rather than
@@ -1227,6 +1249,189 @@ class Store:
         )
         self.repo.save_issues(rec)
         return rec
+
+    # ------------------------------------------------------------- review
+
+    @staticmethod
+    def _awaiting_review(rec: IssueRecord) -> bool:
+        """In review, and the commit under review has no verdict yet."""
+        return (
+            rec.state is IssueState.IN_REVIEW
+            and rec.submission is not None
+            and (rec.review is None or rec.review.head_sha != rec.submission.head_sha)
+        )
+
+    def reviews_due(self) -> list[str]:
+        self.ensure_ready()
+        return [r.id for r in self.list_issues({IssueState.IN_REVIEW}) if self._awaiting_review(r)]
+
+    def _submitted(self, rec: IssueRecord) -> Submitted:
+        assert rec.submission is not None
+        files = self.github.read_files(rec.repo, rec.submission.pr_number)
+        return Submitted(
+            repo=rec.repo,
+            pr_number=rec.submission.pr_number,
+            head_sha=rec.submission.head_sha,
+            title=rec.title,
+            criteria=tuple(rec.acceptance_criteria),
+            files=tuple(files),
+            checks_passed=rec.submission.checks_passed,
+        )
+
+    @staticmethod
+    def _judge(reviewer: Reviewer, submitted: Submitted) -> tuple[Judgement, float]:
+        started = time.monotonic()
+        judgement = reviewer.judge(submitted)
+        return judgement, round(time.monotonic() - started, 2)
+
+    def review(self, issue_id: str, now: datetime | None = None) -> IssueRecord | None:
+        """Have the review agent judge the submitted commit, and record the verdict.
+
+        Reading the diff and judging it can take minutes with a model, so it happens
+        outside the issue's lock; the verdict is applied under the lock only if the
+        same commit is still the one under review. Returns None when there was
+        nothing to review, or the submission moved on while it was being judged.
+        """
+        self.ensure_ready()
+        rec = self.repo.get_issue(issue_id)
+        if rec is None:
+            raise KeyError(issue_id)
+        if not self._awaiting_review(rec):
+            return None
+        submitted = self._submitted(rec)
+        judgement, seconds = self._judge(self.reviewer, submitted)
+
+        with self._exclusive(issue_id), self._posting():
+            fresh = self.repo.get_issue(issue_id)
+            if (
+                fresh is None
+                or not self._awaiting_review(fresh)
+                or fresh.submission is None
+                or fresh.submission.head_sha != submitted.head_sha
+            ):
+                return None
+            decided = decide(
+                judgement,
+                checks_passed=fresh.submission.checks_passed,
+                files_changed=len(submitted.files),
+                rework_rounds=_rework_rounds(fresh),
+            )
+            when = now or _now()
+            self._review(
+                fresh,
+                verdict=decided.verdict.value,
+                findings=decided.findings,
+                when=when,
+                reviewer=judgement.reviewer,
+                seconds=seconds,
+                cost=judgement.cost,
+            )
+            self._log(
+                fresh,
+                actor="agent",
+                action="verdict_issued",
+                rule=decided.rule,
+                outcome=f"{decided.verdict.value} by {judgement.reviewer} on "
+                f"{submitted.head_sha[:7]} in {seconds:g}s: {judgement.summary}",
+                cost=_cost_text(judgement.cost),
+                when=when,
+            )
+            self.repo.save_issues(fresh)
+            return fresh
+
+    def dispute(self, issue_id: str, reason: str, now: datetime | None = None) -> IssueRecord:
+        """The contributor challenges a rework or reject verdict.
+
+        The same commit is reviewed again against the published criteria, by the
+        second reviewer, and the outcome is recorded either way. Overturned, the
+        work is accepted and the merge or the grace period pays it as usual; upheld,
+        the verdict stands. Each verdict can be disputed once.
+        """
+        self.ensure_ready()
+        rec = self.repo.get_issue(issue_id)
+        if rec is None:
+            raise KeyError(issue_id)
+        if rec.state not in {IssueState.REWORK, IssueState.REJECTED} or rec.review is None:
+            raise lifecycle.IllegalTransition(rec.state, IssueState.ACCEPTED)
+        disputed_at = rec.review.decided_at
+        if _disputed_since(rec, disputed_at):
+            raise DisputeRefused(f"the {rec.review.verdict} verdict on {rec.id} was already disputed")
+        submitted = self._submitted(rec)
+        judgement, seconds = self._judge(self.second_reviewer, submitted)
+
+        with self._exclusive(issue_id), self._posting():
+            fresh = self.repo.get_issue(issue_id)
+            if (
+                fresh is None
+                or fresh.review is None
+                or fresh.review.decided_at != disputed_at
+                or _disputed_since(fresh, disputed_at)
+            ):
+                raise DisputeRefused(f"the verdict on {issue_id} changed while it was disputed")
+            when = now or _now()
+            self._log(
+                fresh,
+                actor="contributor",
+                action="dispute_opened",
+                rule="contributor_dispute",
+                outcome=f"disputed the {fresh.review.verdict} verdict: {reason.strip()[:300]}",
+                when=when,
+            )
+            assert fresh.submission is not None
+            decided = decide(
+                judgement,
+                checks_passed=fresh.submission.checks_passed,
+                files_changed=len(submitted.files),
+                # The second review judges the same commit, so it gets no extra round.
+                rework_rounds=0,
+            )
+            if decided.verdict is Verdict.ACCEPT:
+                if fresh.state is IssueState.REWORK:
+                    self._move(fresh, IssueState.IN_REVIEW)
+                self._review(
+                    fresh,
+                    verdict=Verdict.ACCEPT.value,
+                    findings=decided.findings,
+                    when=when,
+                    reviewer=judgement.reviewer,
+                    seconds=seconds,
+                    cost=judgement.cost,
+                )
+                action, outcome = "dispute_overturned", "the second review accepted the work"
+            else:
+                action, outcome = (
+                    "dispute_upheld",
+                    f"the second review agreed the work is not acceptable ({decided.rule})",
+                )
+            self._log(
+                fresh,
+                actor="agent",
+                action=action,
+                rule="second_review",
+                outcome=f"{outcome}; {judgement.reviewer}: {judgement.summary}",
+                cost=_cost_text(judgement.cost),
+                when=when,
+            )
+            self.repo.save_issues(fresh)
+            return fresh
+
+    def _fabricate_files(self, rec: IssueRecord) -> None:
+        """Give a pull request the simulation made up a file list the review agent can
+        read: a fix, its test and a changelog line. Only the simulated GitHub has
+        pull requests that do not exist."""
+        if rec.submission is None or not isinstance(self.github, SimulatedGitHub):
+            return
+        slug = rec.repo.split("/")[-1].replace("-", "_")
+        self.github.put_files(
+            rec.repo,
+            rec.submission.pr_number,
+            [
+                ChangedFile(f"src/{slug}/fix.py", additions=40, deletions=6),
+                ChangedFile(f"tests/test_{slug}.py", additions=22),
+                ChangedFile(f"docs/{slug}.md", additions=12),
+                ChangedFile("CHANGELOG.md", additions=2),
+            ],
+        )
 
     # ------------------------------------------------------------ GitHub events
 
@@ -1569,6 +1774,22 @@ class Store:
         for r in records:
             by_state[r.state.value] = by_state.get(r.state.value, 0) + 1
 
+        # What review costs per issue across all its rounds, and how long a verdict
+        # takes, measured rather than assumed (#40).
+        review_costs = sorted(
+            sum(
+                (Decimal(d.cost_usdc) for d in r.decisions if d.action == "verdict_issued"
+                 and d.cost_usdc),
+                start=Decimal(0),
+            )
+            for r in records
+            if any(d.action == "verdict_issued" for d in r.decisions)
+        )  # fmt: skip
+        submitted = [r for r in records if r.submission is not None]
+        review_seconds = sorted(
+            r.review.seconds for r in records if r.review and r.review.seconds is not None
+        )
+
         return MetricsOut(
             settled_issues=len(settled),
             funded_issues_published=len(funded),
@@ -1585,13 +1806,67 @@ class Store:
             ),
             matched_volume_usdc=f"{Usdc(matched).decimal:.2f}",
             median_hours_to_payout=round(sorted(durations)[len(durations) // 2], 1) if durations else None,
-            dispute_rate=0.0,
+            # Share of submitted issues whose contributor disputed a verdict.
+            dispute_rate=(
+                round(
+                    sum(1 for r in submitted if any(d.action == "dispute_opened" for d in r.decisions))
+                    / len(submitted),
+                    2,
+                )
+                if submitted
+                else 0.0
+            ),
             # Not modelled yet: a publisher who declines a passing verdict has no
             # transition, because silence past the grace window releases instead.
             publisher_overturn_rate=0.0,
             open_issues=sum(1 for r in records if lifecycle.is_open(r.state)),
+            reviews_issued=sum(
+                1 for r in records for d in r.decisions if d.action == "verdict_issued"
+            ),
+            median_review_seconds=_median(review_seconds),
+            median_review_cost_usdc=(
+                f"{_median(review_costs):.2f}" if review_costs else None
+            ),
             by_state=by_state,
         )
+
+
+# ------------------------------------------------------------------ review
+
+
+def _reviewer(model: str) -> Reviewer:
+    return build_reviewer(
+        settings.anthropic_api_key,
+        model,
+        input_usd_per_mtok=settings.review_input_usd_per_mtok,
+        output_usd_per_mtok=settings.review_output_usd_per_mtok,
+        api_url=settings.anthropic_api_url,
+    )
+
+
+def _rework_rounds(rec: IssueRecord) -> int:
+    return sum(
+        1
+        for d in rec.decisions
+        if d.action == "verdict_issued" and d.outcome.startswith(Verdict.REWORK.value)
+    )
+
+
+def _disputed_since(rec: IssueRecord, verdict_at: datetime) -> bool:
+    return any(d.action == "dispute_opened" and d.created_at >= verdict_at for d in rec.decisions)
+
+
+def _cost_text(cost: Usdc) -> str:
+    return f"{cost.decimal:.6f}"
+
+
+def _median(values: list) -> float | Decimal | None:  # type: ignore[type-arg]
+    if not values:
+        return None
+    middle = len(values) // 2
+    if len(values) % 2:
+        return values[middle]
+    return (values[middle - 1] + values[middle]) / 2
 
 
 # ------------------------------------------------------------------ GitHub text

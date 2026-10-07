@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     github_api_url: str = "https://api.github.com"
     circle_api_key: str = ""
 
+    # The review agent. With a key, Claude judges each pull request against its
+    # acceptance criteria; without one, the rule reviewer judges what the file list
+    # proves. Prices are dollars per million tokens, for the cost of each verdict;
+    # check them, and the model id, against Anthropic's models page.
+    anthropic_api_key: str = ""
+    anthropic_api_url: str = "https://api.anthropic.com"
+    review_model: str = "claude-sonnet-5-5"
+    review_input_usd_per_mtok: float = 2.0
+    review_output_usd_per_mtok: float = 10.0
+    # A disputed verdict is reviewed again by this model; empty uses review_model.
+    review_dispute_model: str = ""
+
     # Empty keeps state in memory: the zero-config demo, reset on every restart. A
     # Postgres URL makes it durable, and sqlite:///path does the same in a local file.
     database_url: str = ""
