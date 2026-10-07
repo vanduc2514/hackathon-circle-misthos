@@ -17,6 +17,8 @@ dependencies = [
     # The GitHub App: signed JWTs for installation tokens, and the REST calls.
     "httpx>=0.27",
     "pyjwt[crypto]>=2.8",
+    # Latency, cost, money-event and reconciliation metrics for Prometheus.
+    "prometheus-client>=0.21",
 ]
 
 [project.optional-dependencies]

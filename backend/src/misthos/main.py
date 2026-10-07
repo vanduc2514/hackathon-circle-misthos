@@ -4,11 +4,14 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from misthos.api.router import api_router
 from misthos.config import settings
+from misthos.observability import logs
+from misthos.observability.middleware import RequestContext
 from misthos.store import store
 from misthos.workers.sweeper import run_forever
 
@@ -30,6 +33,7 @@ Everything lives under `/api/v1`.
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Run the sweeper beside the API unless a dedicated worker process owns it."""
+    logs.configure(json_lines=settings.log_json, level=settings.log_level)
     sweeper = (
         asyncio.create_task(run_forever(store, settings.sweep_interval_seconds))
         if settings.sweeper_in_process
@@ -59,8 +63,17 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID", "Idempotent-Replayed", "Retry-After"],
     )
+    # Outermost, so the correlation id covers everything, CORS included.
+    app.add_middleware(RequestContext)
     app.include_router(api_router)
+
+    @app.get("/internal/metrics", include_in_schema=False)
+    async def prometheus() -> Response:
+        """For the metrics scraper. Not proxied by the web app; keep it off the
+        public internet."""
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:

@@ -126,6 +126,18 @@ Publishing an issue with its number then reads it from GitHub and prices it from
 issue and the repository. A pull request from the claimant that says `Fixes #<n>`
 puts the issue in review, and merging it releases the payment.
 
+### The whole system
+
+To run the web app, the API, the worker and the edge against Postgres and Redis, the
+way it ships:
+
+```bash
+docker compose up --build
+```
+
+[docs/DEPLOY.md](docs/DEPLOY.md) covers what each service is, the logs and metrics,
+and deploying the escrow to Arc testnet.
+
 ### The review agent
 
 Every submitted commit is reviewed against the issue's acceptance criteria without

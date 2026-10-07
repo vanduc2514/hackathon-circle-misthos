@@ -71,6 +71,22 @@ jobs:
       - run: mise run setup:backend
       - run: mise run test:backend
 
+  # The whole system as it ships, from compose.yaml: four processes, Postgres and
+  # Redis. It passes when every service reports healthy and the web app serves the
+  # API through its proxy (#76).
+  compose:
+    name: compose - the whole system boots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker compose up --build --detach --wait --wait-timeout 600
+      - run: curl --fail --silent --show-error http://127.0.0.1:5173/api/v1/health
+      - run: curl --fail --silent --show-error http://127.0.0.1:8080/health
+      - if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down --volumes
+
   web:
     name: web - tsc and vitest
     runs-on: ubuntu-latest

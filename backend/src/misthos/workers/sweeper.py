@@ -26,10 +26,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from misthos.domain.timers import TIMED_STATES
+from misthos.observability import context
+from misthos.observability.metrics import SWEEP_FAILURES, SWEEP_SECONDS
 from misthos.repositories import StaleIssue
 from misthos.services.coordination import Busy
 from misthos.store import Store
@@ -97,7 +100,14 @@ class SweepReport:
 
 
 def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
-    now = now or datetime.now(UTC)
+    started = time.perf_counter()
+    try:
+        return _sweep(store, now or datetime.now(UTC))
+    finally:
+        SWEEP_SECONDS.observe(time.perf_counter() - started)
+
+
+def _sweep(store: Store, now: datetime) -> SweepReport:
     with store.repo.try_lock("sweeper") as held:
         if not held:
             return SweepReport(ran=False)
@@ -152,6 +162,7 @@ def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
         screened = store.rescreen(now)
         purged = store.purge_expired(now)
         divergences = store.reconcile(now)
+        SWEEP_FAILURES.inc(len(failed))
         return SweepReport(
             ran=True,
             applied=applied,
@@ -168,11 +179,25 @@ async def run_forever(store: Store, interval_seconds: float) -> None:
     """Sweep now and then every interval, until cancelled. A failed pass is logged and
     the next one still runs: one bad issue must not stop every other refund."""
     while True:
-        try:
-            report = await asyncio.to_thread(sweep_once, store)
-        except Exception:
-            log.exception("sweep failed, retrying in %ss", interval_seconds)
-        else:
-            for issue_id, actions in report.applied.items():
-                log.info("sweeper: %s %s", issue_id, ", ".join(actions))
+        # One correlation id per pass, so a pass's lines group like a request's.
+        with context.bound(f"sweep-{context.new_id()[:12]}", "sweeper"):
+            try:
+                report = await asyncio.to_thread(sweep_once, store)
+            except Exception:
+                log.exception("sweep failed, retrying in %ss", interval_seconds)
+            else:
+                for issue_id, actions in report.applied.items():
+                    log.info(
+                        "sweeper: %s %s",
+                        issue_id,
+                        ", ".join(actions),
+                        extra={"issue_id": issue_id, "actions": actions},
+                    )
+                for issue_id, verdict in report.reviewed.items():
+                    log.info(
+                        "sweeper: reviewed %s: %s",
+                        issue_id,
+                        verdict,
+                        extra={"issue_id": issue_id, "verdict": verdict},
+                    )
         await asyncio.sleep(interval_seconds)
