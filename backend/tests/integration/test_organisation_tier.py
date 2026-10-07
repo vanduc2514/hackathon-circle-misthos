@@ -234,7 +234,11 @@ class TestTheLimitIsAtomic:
         ).id
         first = ISSUE
         for issue_id in (first, second):
-            store.approve_criteria(issue_id, ["criterion one", "criterion two"], APPROVER)
+            # Approve the drafted criteria as they stand; they are the platform's own
+            # and already pass its checkability rules.
+            rec = store.get(issue_id)
+            assert rec is not None
+            store.approve_criteria(issue_id, list(rec.acceptance_criteria), APPROVER)
             assert store.get(issue_id).state is IssueState.AWAITING_APPROVAL
 
         # Widen the window between reading the month and committing it. Without a lock

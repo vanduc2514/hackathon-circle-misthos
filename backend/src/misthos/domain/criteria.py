@@ -82,6 +82,39 @@ def problems(criteria: Sequence[str]) -> list[Problem]:
     return found
 
 
+def _quoted_subject(title: str) -> str:
+    """The issue title, made safe to drop inside a quoted phrase.
+
+    The title comes from a GitHub issue, so it is not necessarily the publisher's and
+    not necessarily well-behaved. A `"` in it closes the quote the templates open,
+    which turns the rest of the title into text the criterion appears to say -- and
+    these criteria are shown to the reviewer as the standard to judge against. The
+    templates only ever quote the subject with `"`, so that and the backtick (which
+    would open a code span) are what has to go; apostrophes are ordinary English and
+    removing them would turn "It's broken" into "Its broken" in what the reviewer
+    reads. Line breaks are flattened and the result bounded, so a long title cannot
+    push a criterion past its own length limit.
+    """
+    flattened = " ".join(title.split())
+    stripped = flattened.replace('"', "").replace("`", "")
+    if len(stripped) > 80:
+        stripped = stripped[:77].rstrip() + "..."
+    return stripped
+
+
+def _ands_outside_quotes(text: str) -> int:
+    """Count `and` in the criterion's own words, not inside a quoted subject.
+
+    The templates quote the issue title verbatim, and a title is not something the
+    criterion can be simplified out of: `A test reproduces "Fix the crash and the hang
+    and the leak": it fails without the fix and passes with it.` is one criterion, and
+    counting the quoted `and`s made the platform's own draft something its own
+    validator refused.
+    """
+    outside = re.sub(r'"[^"]*"', '""', text)
+    return len(re.findall(r"\band\b", outside, re.IGNORECASE))
+
+
 def _problem(text: str) -> str | None:
     if not text:
         return "is empty"
@@ -89,7 +122,7 @@ def _problem(text: str) -> str | None:
         return "is a question; say what must be true instead"
     if len(text) > MAX_LENGTH:
         return f"is longer than {MAX_LENGTH} characters; split it"
-    if len(re.findall(r"\band\b", text, re.IGNORECASE)) > MAX_ANDS:
+    if _ands_outside_quotes(text) > MAX_ANDS:
         return "asks for several things at once; make each its own criterion"
     vague = _VAGUE.search(text)
     if vague and not _ANCHOR.search(text):
@@ -103,25 +136,39 @@ def _problem(text: str) -> str | None:
 
 
 def _kind(title: str, labels: Iterable[str]) -> str:
+    """Which template the criteria come from.
+
+    An explicit label wins outright: a maintainer who labelled an issue `security` has
+    said what it is, and letting the title heuristic decide instead silently dropped
+    the security treatment (`The changelog entry names the problem and the versions it
+    affects.`) for anything whose title happened to mention a dependency.
+    """
     tags = {label.lower() for label in labels}
+    if tags & {"security", "cve", "vulnerability"}:
+        return "security"
+    if tags & {"dependencies", "dependency"}:
+        return "dependency"
+    if tags & {"docs", "documentation"}:
+        return "docs"
+    if tags & {"performance", "perf"}:
+        return "performance"
+    if tags & {"feature", "enhancement", "feature-request"}:
+        return "feature"
+    # No label says what it is, so the title has to.
     lowered = title.lower()
-    if tags & {"dependencies", "dependency"} or re.match(
+    if re.match(
         r"(upgrade|bump|update|pin)\b.*\b(dependency|dependencies|version|package|library|parser)\b",
         lowered,
     ):
         return "dependency"
-    if tags & {"security", "cve", "vulnerability"} or re.search(
+    if re.search(
         r"\b(security|vulnerab\w*|cve|overflow|out-of-bounds|injection|xss|memory safety)\b",
         lowered,
     ):
         return "security"
-    if tags & {"docs", "documentation"}:
-        return "docs"
-    if tags & {"performance", "perf"} or re.search(r"\b(slow|performance|latency)\b", lowered):
+    if re.search(r"\b(slow|performance|latency)\b", lowered):
         return "performance"
-    if tags & {"feature", "enhancement", "feature-request"} or re.match(
-        r"(add|support|allow|implement|introduce|expose)\b", lowered
-    ):
+    if re.match(r"(add|support|allow|implement|introduce|expose)\b", lowered):
         return "feature"
     return "bug"
 
@@ -136,9 +183,7 @@ def draft(
     The project's own checks are not a criterion: the verdict already requires them.
     """
     labels = list(labels)
-    subject = " ".join(title.split())
-    if len(subject) > 80:
-        subject = subject[:77].rstrip() + "..."
+    subject = _quoted_subject(title)
     kind = _kind(subject, labels)
     files = sorted(mentioned_files(body or ""))[:SHOWN_FILES]
     where = ", ".join(f"`{f}`" for f in files)
