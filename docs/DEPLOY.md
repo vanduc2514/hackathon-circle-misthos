@@ -87,3 +87,63 @@ client (#69); until that lands, `MISTHOS_SIMULATED` stays true and the simulated
 escrow keeps the books. Report anything settled on testnet as testnet.
 
 Mainnet moves real USDC irreversibly. There is deliberately no mainnet task.
+
+## 4. A real repository, end to end
+
+This runs an issue in a real repository from a label to a payout on GitHub events
+(#6). Use a sandbox repository and two GitHub accounts: one publishes, one
+contributes. Money stays simulated until the chain client lands (#69), so leave
+`MISTHOS_SIMULATED=true`; GitHub is real as soon as the App is configured.
+
+1. **Give GitHub a way to reach the API.** On a laptop, a smee.io channel forwards
+   webhooks to it. Open https://smee.io/new, then run:
+
+   ```bash
+   npx smee-client --url https://smee.io/<channel> \
+     --target http://127.0.0.1:8000/api/v1/webhooks/github
+   ```
+
+   A deployment uses its own `https://<host>/api/v1/webhooks/github`.
+
+2. **Register the App** from `backend/github-app-manifest.json`, with
+   `hook_attributes.url` set to the smee or deployment URL. It asks for issues,
+   pull requests and statuses write, contents and checks read, and the `issues`,
+   `issue_comment`, `pull_request` and `check_run` events.
+   - Set a webhook secret.
+   - Generate a private key, and keep it on your machine. Never put it in a shared
+     environment.
+
+3. **Configure the API** and start it:
+
+   ```bash
+   MISTHOS_GITHUB_APP_ID=<id> \
+   MISTHOS_GITHUB_APP_PRIVATE_KEY="$(cat misthos.private-key.pem)" \
+   MISTHOS_GITHUB_WEBHOOK_SECRET=<secret> \
+   MISTHOS_GITHUB_APP_SLUG=<slug> \
+   mise run dev
+   ```
+
+   For real account linking, also set `MISTHOS_GITHUB_OAUTH_CLIENT_ID` and
+   `MISTHOS_GITHUB_OAUTH_CLIENT_SECRET` from an OAuth App with the callback
+   `http://localhost:5173/api/v1/auth/github/callback`. In the simulation, linking
+   by login works too.
+
+4. **The publisher:**
+   - Signs in at http://localhost:5173/account, chooses publisher, and links the
+     GitHub account they will install the App with.
+   - Installs the App on the sandbox repository. **Your repositories** on the
+     account page lists it.
+
+5. **On GitHub:**
+   1. Open an issue and add the `misthos` label. The App replies with the price,
+      the band, the reasoning and the drafted criteria.
+   2. The publisher comments `/misthos approve`, or `/misthos criteria` and a list
+      first. The App posts the funded price and criteria.
+   3. The contributor signs in once, links their GitHub account, and comments
+      `/misthos claim`.
+   4. The contributor opens a pull request that says `Fixes #<n>`. The project's
+      checks run, and the sweeper's next pass (`MISTHOS_SWEEP_INTERVAL_SECONDS`)
+      posts the review.
+   5. The publisher merges. The App posts the settlement, and the issue is `PAID`.
+
+Every step lands in the issue's decision log in the web app.

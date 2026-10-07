@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # Arc. The simulation uses a made-up one when this is empty; anywhere else plans
     # cannot be bought until it is set.
     platform_wallet: str = ""
+
+    # GitHub, driven from the repository (#6): an issue given this label, in a repository
+    # a publisher installed the App on, is priced without opening the web app.
+    github_label: str = "misthos"
+    # The App's slug on github.com, for the web app's "install on a repository" link.
+    github_app_slug: str = ""
     circle_api_key: str = ""
 
     # The review agent. With a key, Claude judges each pull request against its

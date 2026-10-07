@@ -27,6 +27,7 @@ from misthos.schemas import (
     Contributor,
     Decision,
     Publisher,
+    RepoConnection,
     Subscription,
     SubscriptionPayment,
 )
@@ -48,6 +49,7 @@ class MemoryRepository:
             self._deliveries: dict[str, tuple[str, datetime]] = {}
             self._accounts: dict[str, Account] = {}
             self._subscriptions: dict[str, Subscription] = {}
+            self._connections: dict[str, RepoConnection] = {}
             self._subscription_payments: list[SubscriptionPayment] = []
 
     def is_empty(self) -> bool:
@@ -119,6 +121,33 @@ class MemoryRepository:
         with self._guard:
             found = self._accounts.get(address.lower())
             return found.model_copy(deep=True) if found else None
+
+    # ------------------------------------------------------- GitHub connections
+
+    def get_account_by_github_login(self, login: str) -> Account | None:
+        with self._guard:
+            for account in self._accounts.values():
+                if (account.github_login or "").lower() == login.lower():
+                    return account.model_copy(deep=True)
+            return None
+
+    def get_connection(self, repo: str) -> RepoConnection | None:
+        with self._guard:
+            found = self._connections.get(repo.lower())
+            return found.model_copy(deep=True) if found else None
+
+    def save_connection(self, connection: RepoConnection) -> None:
+        with self._guard:
+            self._connections[connection.repo.lower()] = connection.model_copy(deep=True)
+
+    def delete_connections(self, repos: list[str]) -> None:
+        with self._guard:
+            for repo in repos:
+                self._connections.pop(repo.lower(), None)
+
+    def list_connections(self) -> list[RepoConnection]:
+        with self._guard:
+            return [c.model_copy(deep=True) for c in self._connections.values()]
 
     # ------------------------------------------------------------ plans
 

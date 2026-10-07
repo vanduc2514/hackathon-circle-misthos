@@ -15,6 +15,7 @@ from misthos.schemas import (
     Contributor,
     Decision,
     Publisher,
+    RepoConnection,
     Subscription,
     SubscriptionPayment,
 )
@@ -81,6 +82,16 @@ class Repository(Protocol):
     def save_account(self, account: Account) -> None:
         """Create or update. A GitHub login already linked to another wallet is refused
         with AccountConflict."""
+
+    def get_account_by_github_login(self, login: str) -> Account | None: ...
+
+    def get_connection(self, repo: str) -> RepoConnection | None: ...
+
+    def save_connection(self, connection: RepoConnection) -> None: ...
+
+    def delete_connections(self, repos: list[str]) -> None: ...
+
+    def list_connections(self) -> list[RepoConnection]: ...
 
     def get_subscription(self, publisher_id: str) -> Subscription | None: ...
 

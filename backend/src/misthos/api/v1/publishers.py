@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.concurrency import run_in_threadpool
 
 from misthos.api.session import SIGNED_IN, require_owner_or_simulation
+from misthos.config import settings
 from misthos.domain import plans
 from misthos.domain.policy import PolicyRefusal
 from misthos.schemas import (
@@ -23,6 +24,7 @@ from misthos.schemas import (
     FinanceOut,
     PolicyRequest,
     Publisher,
+    RepositoriesOut,
     SpendOut,
 )
 from misthos.services.audit import export, to_csv
@@ -138,4 +140,19 @@ async def finance(publisher_id: str, account: Account | None = SIGNED_IN) -> Fin
         as_of=read.as_of if read else None,
         caps_prices_at_usdc=caps,
         note=problem or (read.note if read else ""),
+    )
+
+
+@router.get("/{publisher_id}/repositories", response_model=RepositoriesOut)
+async def repositories(publisher_id: str, account: Account | None = SIGNED_IN) -> RepositoriesOut:
+    """The repositories this publisher installed the GitHub App on (#6). An issue there
+    given the label is priced without opening the web app."""
+    require_owner_or_simulation(account, publisher_id, "see these repositories")
+    if await run_in_threadpool(store.get_publisher, publisher_id) is None:
+        raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}")
+    slug = settings.github_app_slug
+    return RepositoriesOut(
+        repositories=await run_in_threadpool(store.connections_of, publisher_id),
+        label=settings.github_label,
+        install_url=f"https://github.com/apps/{slug}/installations/new" if slug else None,
     )

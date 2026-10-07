@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, shortHash, unwrap, type Account } from '../lib/client'
 import { signIn, signOut, useHealth, useMe } from '../lib/session'
@@ -128,6 +128,9 @@ export default function AccountPage() {
               </div>
             </Panel>
 
+            {account?.role === 'publisher' && account.github_login && (
+              <Repositories publisherId={account.party_id} />
+            )}
             {!account && <ChooseSide onDone={changed} />}
             {account && !account.github_login && (
               <LinkGitHub account={account} simulated={simulated} onDone={changed} />
@@ -136,6 +139,55 @@ export default function AccountPage() {
         )}
       </div>
     </>
+  )
+}
+
+/**
+ * Repositories the publisher installed the GitHub App on (#6). There, an issue is
+ * priced by a label and funded by a comment, without coming back here.
+ */
+function Repositories({ publisherId }: { publisherId: string }) {
+  const { data } = useQuery({
+    queryKey: ['repositories', publisherId],
+    queryFn: async () =>
+      unwrap(
+        await api.GET('/api/v1/publishers/{publisher_id}/repositories', {
+          params: { path: { publisher_id: publisherId } },
+        }),
+      ),
+  })
+  if (!data) return null
+  return (
+    <Panel title="Your repositories">
+      {data.repositories.length ? (
+        <ul className="findings" style={{ marginBottom: 12 }}>
+          {data.repositories.map((r) => (
+            <li key={r.repo}>
+              <a href={`https://github.com/${r.repo}`} target="_blank" rel="noreferrer">
+                {r.repo}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="dim" style={{ marginBottom: 12 }}>
+          No repositories yet. Install the Misthos GitHub App on one, signed in to GitHub as
+          the account you linked.
+        </p>
+      )}
+      <p className="stat-hint">
+        On a connected repository, add the <code>{data.label}</code> label to an issue to have
+        it priced, then comment <code>/misthos approve</code> on it to commit the funds.
+        Contributors claim it with <code>/misthos claim</code>.
+      </p>
+      {data.install_url && (
+        <div className="btn-row" style={{ marginTop: 12 }}>
+          <a className="btn" href={data.install_url} target="_blank" rel="noreferrer">
+            Install the GitHub App
+          </a>
+        </div>
+      )}
+    </Panel>
   )
 }
 

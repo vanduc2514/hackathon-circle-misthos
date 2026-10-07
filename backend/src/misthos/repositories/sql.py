@@ -51,6 +51,7 @@ from misthos.schemas import (
     EscrowCommitment,
     PaymentRequest,
     Publisher,
+    RepoConnection,
     Review,
     Submission,
     Subscription,
@@ -278,6 +279,60 @@ class SqlRepository:
                 _upsert(conn, t.accounts, {"address": account.address.lower()}, values)
         except IntegrityError as exc:
             raise AccountConflict(f"{account.github_login} is linked to another wallet") from exc
+
+    # ---------------------------------------------------------- GitHub connections
+
+    def get_account_by_github_login(self, login: str) -> Account | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            row = (
+                conn.execute(
+                    select(t.accounts.c.address).where(
+                        func.lower(t.accounts.c.github_login) == login.lower()
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return self.get_account(row["address"]) if row else None
+
+    def get_connection(self, repo: str) -> RepoConnection | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            row = (
+                conn.execute(
+                    select(t.repo_connections).where(t.repo_connections.c.repo == repo.lower())
+                )
+                .mappings()
+                .first()
+            )
+        return _connection(row) if row else None
+
+    def save_connection(self, connection: RepoConnection) -> None:
+        self.migrate()
+        values = {
+            "installation_id": connection.installation_id,
+            "installed_by": connection.installed_by,
+            "publisher_id": connection.publisher_id,
+            "connected_at": connection.connected_at,
+        }
+        with self.engine.begin() as conn:
+            _upsert(conn, t.repo_connections, {"repo": connection.repo.lower()}, values)
+
+    def delete_connections(self, repos: list[str]) -> None:
+        self.migrate()
+        with self.engine.begin() as conn:
+            conn.execute(
+                delete(t.repo_connections).where(
+                    t.repo_connections.c.repo.in_([r.lower() for r in repos])
+                )
+            )
+
+    def list_connections(self) -> list[RepoConnection]:
+        self.migrate()
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(t.repo_connections)).mappings().all()
+        return [_connection(r) for r in rows]
 
     # ---------------------------------------------------------- plans
 
@@ -827,6 +882,16 @@ def _comparable(row: dict) -> ComparableRef:
         price=Usdc(int(row["price_base_units"])),
         settled_at=datetime.fromisoformat(row["settled_at"]),
         distance=float(row["distance"]),
+    )
+
+
+def _connection(row) -> RepoConnection:  # type: ignore[no-untyped-def]
+    return RepoConnection(
+        repo=row["repo"],
+        installation_id=int(row["installation_id"]),
+        installed_by=row["installed_by"],
+        publisher_id=row["publisher_id"],
+        connected_at=_utc(row["connected_at"]),
     )
 
 
