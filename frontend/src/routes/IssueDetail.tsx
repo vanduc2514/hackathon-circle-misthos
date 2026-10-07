@@ -266,7 +266,16 @@ export default function IssueDetail() {
           )}
 
           <Panel title="Next step">
-            <IssueActions issue={issue} me={me.data} simulated={health.data?.simulated ?? false} />
+            // Keyed by issue id: React Router changes the `issue` prop without unmounting this
+          // component when only the id in the route changes, and every panel below seeds
+          // state from that prop. Without the key the criteria box, the pull request
+          // number and the decline reason all survive into the next issue.
+          <IssueActions
+            key={issue.id}
+            issue={issue}
+            me={me.data}
+            simulated={health.data?.simulated ?? false}
+          />
           </Panel>
 
           <Panel title="Parties">
