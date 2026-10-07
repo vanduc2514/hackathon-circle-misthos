@@ -458,7 +458,19 @@ def _save_review(conn: Connection, rec: IssueRecord) -> None:
     key = {"issue_id": rec.id, "decided_at": r.decided_at}
     if _exists(conn, t.reviews, key):
         return
-    conn.execute(insert(t.reviews).values(**key, verdict=r.verdict, findings=list(r.findings)))
+    conn.execute(
+        insert(t.reviews).values(
+            **key,
+            verdict=r.verdict,
+            findings=list(r.findings),
+            head_sha=r.head_sha,
+            reviewer=r.reviewer,
+            seconds=r.seconds,
+            cost_base_units=(
+                Usdc.from_decimal(r.cost_usdc).base_units if r.cost_usdc is not None else None
+            ),
+        )
+    )
 
 
 def _save_decisions(conn: Connection, rec: IssueRecord) -> None:
@@ -682,10 +694,15 @@ def _submission(row: Row) -> Submission:
 
 
 def _review(row: Row) -> Review:
+    cost = row["cost_base_units"]
     return Review(
         verdict=row["verdict"],
         findings=list(row["findings"]),
         decided_at=_utc(row["decided_at"]),
+        head_sha=row["head_sha"],
+        reviewer=row["reviewer"],
+        seconds=row["seconds"],
+        cost_usdc=f"{Usdc(cost).decimal:.6f}" if cost is not None else None,
     )
 
 

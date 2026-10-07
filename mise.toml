@@ -37,6 +37,11 @@ description = "Migrate MISTHOS_DATABASE_URL to the latest schema"
 dir = "backend"
 run = "uv run alembic upgrade head"
 
+[tasks."review:harness"]
+description = "Replay the review agent over the regression corpus and report agreement"
+dir = "backend"
+run = "uv run python -m misthos.services.review.harness"
+
 [tasks."dev:edge"]
 description = "x402 gate and Circle CLI bridge on :8080"
 dir = "edge"

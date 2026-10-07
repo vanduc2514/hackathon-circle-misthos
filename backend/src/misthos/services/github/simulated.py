@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
+from misthos.domain.review import ChangedFile
 from misthos.domain.signals import IssueFacts
 from misthos.services.github.base import GitHubError, PullRequest, ReviewEvent, StatusState
 
@@ -36,6 +37,7 @@ class SimulatedGitHub:
         self.issues: dict[tuple[str, int], IssueFacts] = {}
         self.pulls: dict[tuple[str, int], PullRequest] = {}
         self.checks: dict[tuple[str, str], bool | None] = {}
+        self.files: dict[tuple[str, int], list[ChangedFile]] = {}
         self.history: dict[tuple[str, str], int] = {}
         self.sent: list[Sent] = []
         self.fail_writes = False
@@ -44,6 +46,7 @@ class SimulatedGitHub:
     def reset(self) -> None:
         with self._guard:
             self.issues, self.pulls, self.checks, self.history = {}, {}, {}, {}
+            self.files = {}
             self.sent = []
             self.fail_writes = False
 
@@ -57,6 +60,9 @@ class SimulatedGitHub:
         if found is None:
             raise GitHubError(f"no pull request {repo}#{number}")
         return found
+
+    def read_files(self, repo: str, number: int) -> list[ChangedFile]:
+        return list(self.files.get((repo.lower(), number), []))
 
     def checks_passed(self, repo: str, sha: str) -> bool | None:
         return self.checks.get((repo.lower(), sha))
@@ -88,6 +94,9 @@ class SimulatedGitHub:
 
     def put_pull_request(self, pr: PullRequest) -> None:
         self.pulls[(pr.repo.lower(), pr.number)] = pr
+
+    def put_files(self, repo: str, number: int, files: list[ChangedFile]) -> None:
+        self.files[(repo.lower(), number)] = list(files)
 
     def put_checks(self, repo: str, sha: str, passed: bool | None) -> None:
         self.checks[(repo.lower(), sha)] = passed

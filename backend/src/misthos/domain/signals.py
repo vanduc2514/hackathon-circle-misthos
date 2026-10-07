@@ -64,14 +64,46 @@ class TreeCounts:
     dependency_manifests: int = 0
 
 
+def _vendored(path: PurePosixPath) -> bool:
+    return any(p.lower() in VENDORED for p in path.parts[:-1])
+
+
+def is_test_path(raw: str) -> bool:
+    """A source file that tests the project rather than being part of it."""
+    path = PurePosixPath(raw)
+    if path.suffix.lower() not in SOURCE_SUFFIXES or _vendored(path):
+        return False
+    parts = [p.lower() for p in path.parts[:-1]]
+    return any(p in _TEST_DIRS for p in parts) or bool(_TEST_NAME.match(path.name))
+
+
+def is_changelog_path(raw: str) -> bool:
+    name = PurePosixPath(raw).name.lower()
+    return name.startswith(("changelog", "changes", "history", "news")) or raw.lower().startswith(
+        ("changelog.d/", "changes/", "newsfragments/")
+    )
+
+
+def is_docs_path(raw: str) -> bool:
+    """Documentation or a readme. A changelog entry is not documentation."""
+    if is_changelog_path(raw):
+        return False
+    path = PurePosixPath(raw)
+    lowered = [p.lower() for p in path.parts]
+    return (
+        path.name.lower().startswith("readme")
+        or any(p in {"docs", "doc", "documentation"} for p in lowered[:-1])
+        or path.suffix.lower() in {".md", ".rst", ".adoc"}
+    )
+
+
 def classify_tree(paths: Iterable[str]) -> TreeCounts:
     """Count what a repository's file list says about it."""
     source = tests = manifests = 0
     ci = False
     for raw in paths:
         path = PurePosixPath(raw)
-        parts = [p.lower() for p in path.parts[:-1]]
-        if any(p in VENDORED for p in parts):
+        if _vendored(path):
             continue
         if any(rule.match(raw) for rule in _CI_FILES):
             ci = True
@@ -79,7 +111,7 @@ def classify_tree(paths: Iterable[str]) -> TreeCounts:
             manifests += 1
         if path.suffix.lower() not in SOURCE_SUFFIXES:
             continue
-        if any(p in _TEST_DIRS for p in parts) or _TEST_NAME.match(path.name):
+        if is_test_path(raw):
             tests += 1
         else:
             source += 1

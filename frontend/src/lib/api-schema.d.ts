@@ -113,6 +113,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issues/{issue_id}/dispute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispute
+         * @description The contributor challenges a rework or reject verdict: the same commit is
+         *     reviewed again against the published criteria, and the outcome is recorded.
+         */
+        post: operations["dispute_api_v1_issues__issue_id__dispute_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/publishers": {
         parameters: {
             query?: never;
@@ -346,6 +367,11 @@ export interface components {
              */
             created_at: string;
         };
+        /** DisputeRequest */
+        DisputeRequest: {
+            /** Reason */
+            reason: string;
+        };
         /** EscrowCommitment */
         EscrowCommitment: {
             /** Issue Id */
@@ -490,6 +516,15 @@ export interface components {
             by_state: {
                 [key: string]: number;
             };
+            /**
+             * Reviews Issued
+             * @default 0
+             */
+            reviews_issued: number;
+            /** Median Review Seconds */
+            median_review_seconds?: number | null;
+            /** Median Review Cost Usdc */
+            median_review_cost_usdc?: string | null;
         };
         /** PriceProposalOut */
         PriceProposalOut: {
@@ -598,6 +633,14 @@ export interface components {
              * Format: date-time
              */
             decided_at: string;
+            /** Head Sha */
+            head_sha?: string | null;
+            /** Reviewer */
+            reviewer?: string | null;
+            /** Seconds */
+            seconds?: number | null;
+            /** Cost Usdc */
+            cost_usdc?: string | null;
         };
         /** StatementLine */
         StatementLine: {
@@ -918,6 +961,51 @@ export interface operations {
                 };
             };
             /** @description Illegal step, busy issue or refused by the escrow */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispute_api_v1_issues__issue_id__dispute_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisputeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Nothing to dispute, or already disputed */
             409: {
                 headers: {
                     [name: string]: unknown;

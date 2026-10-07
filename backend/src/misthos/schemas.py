@@ -143,6 +143,14 @@ class Review(BaseModel):
     verdict: Literal["accept", "rework", "reject"]
     findings: list[str]
     decided_at: datetime
+    head_sha: str | None = None
+    """The commit the verdict is about. A push after it needs a new review."""
+    reviewer: str | None = None
+    """The rule reviewer, or the model that read the diff."""
+    seconds: float | None = None
+    """How long the review took."""
+    cost_usdc: str | None = None
+    """What the review cost in inference."""
 
 
 class IssueOut(BaseModel):
@@ -196,6 +204,12 @@ class MetricsOut(BaseModel):
     publisher_overturn_rate: float
     open_issues: int
     by_state: dict[str, int]
+    reviews_issued: int = 0
+    """Verdicts the review agent has issued, every round counted."""
+    median_review_seconds: float | None = None
+    """How long a verdict takes, on the latest review of each issue."""
+    median_review_cost_usdc: str | None = None
+    """Inference spent on review per issue, across all its rounds."""
 
 
 class TimelineEntry(BaseModel):
@@ -216,6 +230,11 @@ class PublishRequest(BaseModel):
     publisher_id: str
     compliance_driven: bool = False
     signals: dict[str, float] = Field(default_factory=dict)
+
+
+class DisputeRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+    """Which criteria the contributor believes are met, and where the work shows it."""
 
 
 class HealthOut(BaseModel):

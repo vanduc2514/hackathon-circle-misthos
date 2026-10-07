@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from misthos.domain.review import ChangedFile
 from misthos.domain.signals import IssueFacts
 
 # The context our commit status appears under on a pull request.
@@ -53,6 +54,9 @@ class GitHubGateway(Protocol):
         gateway has nothing to read (the simulation without a fixture)."""
 
     def read_pull_request(self, repo: str, number: int) -> PullRequest: ...
+
+    def read_files(self, repo: str, number: int) -> list[ChangedFile]:
+        """The files a pull request changes, with their patches."""
 
     def checks_passed(self, repo: str, sha: str) -> bool | None:
         """Whether every check on the commit passed. None while any is still running."""
