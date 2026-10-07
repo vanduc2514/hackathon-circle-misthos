@@ -2,6 +2,12 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, money, unwrap, type IssueOut, type MeOut, type Publisher } from '../lib/client'
+import {
+  MAX_CRITERION,
+  criteriaLines,
+  sameAsStored,
+  tooLong,
+} from '../lib/criteria'
 
 /** Every explicit action an issue page can take, as the API names them. */
 export type Act =
@@ -248,12 +254,12 @@ function SignInTo({
 
 function ApproveAndFund({ issue, busy, run }: Step) {
   const [draft, setDraft] = useState(issue.acceptance_criteria.join('\n'))
-  const criteria = draft
-    .split('\n')
-    .map((c) => c.trim())
-    .filter(Boolean)
+  const criteria = criteriaLines(draft)
   const approved = Boolean(issue.criteria_approved_at)
-  const unchanged = criteria.join('\n') === issue.acceptance_criteria.join('\n')
+  // The server keeps the first MAX_CRITERION characters of each criterion, so the
+  // comparison has to use the same shape; see lib/criteria.
+  const overlong = tooLong(criteria)
+  const unchanged = sameAsStored(criteria, issue.acceptance_criteria)
 
   return (
     <div className="form">
@@ -269,10 +275,22 @@ function ApproveAndFund({ issue, busy, run }: Step) {
           onChange={(e) => setDraft(e.target.value)}
         />
       </label>
+      {overlong && (
+        <p className="dim action-hint" style={{ marginTop: 6 }}>
+          A criterion is longer than {MAX_CRITERION} characters. Only the first{' '}
+          {MAX_CRITERION} are kept, so split it into two.
+        </p>
+      )}
       <div className="btn-row">
         <button
           className={`btn ${approved && unchanged ? '' : 'primary'}`}
-          disabled={busy || criteria.length === 0 || criteria.length > 12 || (approved && unchanged)}
+          disabled={
+            busy ||
+            criteria.length === 0 ||
+            criteria.length > 12 ||
+            overlong ||
+            (approved && unchanged)
+          }
           onClick={() => run({ kind: 'criteria', criteria })}
         >
           {approved && unchanged ? 'Criteria approved' : 'Approve these criteria'}
