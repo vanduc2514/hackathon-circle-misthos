@@ -125,6 +125,8 @@ class MemoryRepository:
                     raise StaleIssue(rec.id)
                 if stored and len(rec.decisions) < len(stored.decisions):
                     raise AppendOnlyViolation(f"issue {rec.id} would lose decisions")
+                if stored and len(rec.money_events) < len(stored.money_events):
+                    raise AppendOnlyViolation(f"issue {rec.id} would lose money events")
             for rec in records:
                 rec.version += 1
                 self._issues[rec.id] = copy.deepcopy(rec)

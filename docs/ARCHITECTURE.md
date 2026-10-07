@@ -14,10 +14,10 @@ The diagrams below describe the target system. This table is what is actually in
 | --- | --- | --- |
 | Web | Vite + React SPA, generated API client | Built. Three routes, live against the API |
 | Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
-| Core | FastAPI, lifecycle, pricing engine, decision log | Built |
+| Core | FastAPI, lifecycle, pricing engine, decision log, money ledger | Built. Money moves through a chain gateway, simulated until #69 |
 | Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
 | Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
-| Data | Postgres, Redis | Postgres built and optional: memory by default, durable once `MISTHOS_DATABASE_URL` is set. Redis not built |
+| Data | Postgres, Redis | Built and optional. Postgres once `MISTHOS_DATABASE_URL` is set, memory otherwise. Redis once `MISTHOS_REDIS_URL` is set, for the per-issue lock, idempotency keys and rate limits across processes |
 | Compliance | Screening, identity at first payout, statements | Built against simulated providers. See [PRIVACY.md](./PRIVACY.md) |
 | Integrations | GitHub App, Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
 
@@ -182,7 +182,7 @@ The lifecycle is the single writer of issue state. Letting the pricing engine or
 
 | Component | Responsibility | Notes |
 | --- | --- | --- |
-| `backend/src/misthos/workers/` | Anything time-based | Claim expiry, refund on deadline with a higher-priced re-list, the silent-publisher release; reconciliation against the chain to come |
+| `backend/src/misthos/workers/` | Anything time-based | Claim expiry, refund on deadline with a higher-priced re-list, the silent-publisher release, and reconciliation of the money ledger against the chain on every pass |
 
 Today the worker is a sweeper: on an interval it asks the pure `domain/timers.py` which open issues have a timer due and has the store apply them, under an advisory lock so two processes never refund the same commitment twice. A job table in Postgres using `SELECT … FOR UPDATE SKIP LOCKED` is enough to several hundred issues a day and adds no infrastructure. Temporal is the correct answer once the saga complexity bites, and it is an unnecessary cluster before then.
 
@@ -190,8 +190,8 @@ Today the worker is a sweeper: on an interval it asks the pure `domain/timers.py
 
 | Store | Holds | Notes |
 | --- | --- | --- |
-| Postgres | Issues, price proposals, claims, submissions, reviews, decisions, and a local mirror of escrow state | The mirror is never the authority. Reconciliation runs against the chain and a divergence is an alert |
-| Redis | Claim locks, idempotency keys, rate limits | A claim is a mutual exclusion problem, so the lock has to be somewhere atomic |
+| Postgres | Issues, price proposals, claims, submissions, reviews, decisions, the money ledger, and a local mirror of escrow state | The mirror is never the authority. Reconciliation runs against the chain and a divergence is an alert |
+| Redis | Per-issue action locks, idempotency keys, rate limits | A claim is a mutual exclusion problem, so the lock has to be somewhere atomic |
 | Decision log | What the agent saw, decided and spent | Append-only and replayable. The artifact that makes delegated authority defensible |
 
 Three rules about persistence, all of them load-bearing.
@@ -244,7 +244,8 @@ flowchart LR
 
     API --> ST[("state<br/>memory, or Postgres<br/>when configured")]
     WORKER["worker<br/>sweeper"] -->|"timers"| ST
-    API -.->|"planned"| RD[("Redis")]
+    API -.->|"when configured"| RD[("Redis<br/>locks, idempotency,<br/>rate limits")]
+    WORKER -.->|"when configured"| RD
 ```
 
 | Process | Runtime | Port | Entry point | State |
@@ -258,15 +259,15 @@ flowchart LR
 | --- | --- | --- |
 | Issues, proposals, claims, submissions, reviews | Memory by default; Postgres when `MISTHOS_DATABASE_URL` is set | Postgres |
 | Decision log | Append-only per issue, in memory or the `decisions` table | Postgres, append-only, replicated |
-| Escrow state | Mirrored in the store | Read from the chain on a schedule, never trusted from our own copy |
-| Claim lock and idempotency keys | One active claim per issue, by a partial unique index and a version check on every save. No idempotency keys | Redis (#67) |
+| Escrow state | Every commitment, release and refund is an append-only money event carrying the transfer the chain returned. The sweeper reconciles the events against the escrow's books on every pass, and a divergence is logged as an alert and written to the issue's decision log | The same reconciliation against Arc once the chain client lands (#69) |
+| Claim lock and idempotency keys | Every action on an issue holds that issue's lock: Redis when `MISTHOS_REDIS_URL` is set, otherwise a Postgres advisory lock (or a process lock without a database). Underneath it, one active claim per issue by a partial unique index, and a version check on every save. Idempotency keys and rate limits live in Redis, or in process memory without it | Redis in any deployment with more than one API process |
 | Contract | `contracts/`, 18 Foundry tests | Deployed to Arc testnet |
 
 Two consequences worth being explicit about, because they are the difference between a demo and a system.
 
 A restart loses the simulation only when no database is configured. With `MISTHOS_DATABASE_URL` set, state lives in Postgres behind the same repository protocol the memory store implements, which is how it got there without touching the domain.
 
-Two processes can no longer both claim an issue: every save carries a version and a stale one is refused, and the schema allows one active claim per issue. Idempotency keys for money movements and rate limits are still missing, and they need to land (#67) before anyone runs this behind a load balancer.
+Two processes can no longer both claim an issue: the second is refused while the first holds the issue's lock, every save carries a version so a stale one is refused, and the schema allows one active claim per issue. A request that moves money or publishes an issue can carry an `Idempotency-Key`, and publishing and actions are rate-limited per client. Without Redis those keys and counters are per process, so set `MISTHOS_REDIS_URL` before running more than one API process behind a load balancer.
 
 ## The money model
 
@@ -460,16 +461,17 @@ Reputation derives only from settled issues. Anything else rewards activity rath
 | Review | `reviews` | The platform's verdict with its findings. There is no draft to confirm, so the publisher's merge is the only reversal |
 | Decision | `decisions` | Append-only, ordered by `created_at`. No update or delete grants |
 | ReputationEvent | `reputation_events` | Derived. Rebuildable from settled issues, so it is safe to recompute |
-| Payout | `payouts` | One row per release, with the transaction hash as the unique key |
+| MoneyEvent | `money_events` | Append-only. One row per commitment, release or refund, with the transaction hash as the unique key. Every money figure is derived from it |
 
 | Redis key | Purpose | TTL |
 | --- | --- | --- |
-| `claim:{issue_id}` | Mutual exclusion so two contributors cannot claim the same issue | Claim window |
-| `idem:{request_id}` | Idempotency for anything that moves money | 24 hours |
-| `rl:{actor}:{window}` | Rate limiting on publish and claim | Window |
-| `sweep:lock` | Single sweeper, so two workers do not double-refund | 30 seconds |
+| `issue:{issue_id}` | Mutual exclusion for every action on an issue, the claim included, so two contributors cannot claim it and a person and the sweeper cannot race between a chain call and the save | 30 seconds |
+| `idem:{key}` | The first answer to a request sent with that `Idempotency-Key`, replayed to every retry | 24 hours, or 2 minutes while the first request runs |
+| `rl:{actor}:{bucket}:{window}` | Per-client limits per minute, one bucket for publishing and one for every other action | One minute |
 
-The `payouts` row is written after the chain confirms, and the transaction hash is unique. A retry that tries to write the same hash fails on the constraint rather than paying twice, which is the failure the market research warns about: an agent that retries after a timeout can pay an invoice twice and the books will still balance.
+Every key is prefixed `misthos:`. The sweeper's single-runner lock is a Postgres advisory lock rather than a Redis key, because a separate worker process needs Postgres anyway.
+
+A `released` money event is written with the transfer the chain returned, and the transaction hash is unique. A retry that tries to write the same hash fails on the constraint rather than paying twice, which is the failure the market research warns about: an agent that retries after a timeout can pay an invoice twice and the books will still balance. The idempotency key stops the retry before it reaches the chain, and the contract's `NotHeld` check stops a second release if one somehow did.
 
 ## Trust boundaries
 

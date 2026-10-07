@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from misthos.domain.issue import IssueState
+from misthos.domain.ledger import MoneyEvent
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import PriceProposal
 from misthos.schemas import Claim, Decision, EscrowCommitment, Review, Submission
@@ -51,6 +52,8 @@ class IssueRecord:
     relisted_from: str | None = None
     """The issue this one re-lists at a higher band after nobody claimed it."""
     decisions: list[Decision] = field(default_factory=list)
+    money_events: list[MoneyEvent] = field(default_factory=list)
+    """Every movement of this issue's money, in order. Appended, never edited."""
     version: int = 0
     """Optimistic-concurrency token. Zero means never saved. Every save bumps it, and
     a save made from a copy someone else has saved since is refused, so a person and

@@ -25,7 +25,7 @@ The retention periods below are the defaults we hold ourselves to. They are not 
 | Identity documents | The verification provider only | Required before a first payout, and only then |
 | Identity outcome and provider reference | Our database | To know whether a payout may leave the escrow |
 | Sanctions screening results | Our database, append-only | Evidence that every payout was screened |
-| Payout records | Our database and the chain | Statements, reconciliation, the audit trail |
+| Payout records | Our database, as append-only money events, and the chain | Statements, reconciliation, the audit trail |
 | Decision log | Our database, append-only | The record that makes delegated authority defensible |
 
 Identity is verified at a contributor's first payout, never at signup. Claiming and submitting work need no identity step, so the cost lands only on people who actually get paid.

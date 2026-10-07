@@ -70,6 +70,17 @@ class TestRestart:
         assert [d.id for d in again.decisions] == [d.id for d in paid.decisions]
         assert second.metrics().settled_issues == first.metrics().settled_issues
 
+    def test_the_ledger_and_the_escrow_books_survive_a_restart(self, database_url: str) -> None:
+        """Otherwise every settled issue would look divergent after a deploy."""
+        first = fresh(database_url)
+        paid = first.approve_and_accept("ISS-1006")
+
+        second = Store(SqlRepository(database_url))
+        again = second.get("ISS-1006")
+        assert again is not None
+        assert again.money_events == paid.money_events
+        assert second.reconcile() == []
+
     def test_a_database_that_holds_issues_is_not_reseeded(self, database_url: str) -> None:
         first = fresh(database_url)
         first.advance("ISS-1006")

@@ -758,7 +758,10 @@ export interface operations {
     publish_api_v1_issues_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -853,7 +856,10 @@ export interface operations {
     advance_api_v1_issues__issue_id__advance_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
             path: {
                 issue_id: string;
             };
@@ -869,6 +875,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueOut"];
                 };
+            };
+            /** @description Illegal step, busy issue or refused by the escrow */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -884,7 +897,10 @@ export interface operations {
     complete_api_v1_issues__issue_id__complete_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
             path: {
                 issue_id: string;
             };
@@ -900,6 +916,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueOut"];
                 };
+            };
+            /** @description Illegal step, busy issue or refused by the escrow */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

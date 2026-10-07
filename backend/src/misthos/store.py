@@ -10,17 +10,24 @@ it is memory, so the demo needs no infrastructure and resets on restart; with
 `MISTHOS_DATABASE_URL` set it is Postgres or a SQLite file, and it survives. The seed
 data at the bottom is the simulation either way: prices from the real engine, and
 fake GitHub and chain calls.
+
+Money moves only through the chain gateway, and every movement is appended to the
+issue's ledger with the transaction the chain returned. Each action on an issue holds
+that issue's lock, so a person, a second API process and the sweeper take turns
+rather than racing between the chain call and the save.
 """
 
 from __future__ import annotations
 
+import logging
 import random
 import threading
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from misthos.config import settings
-from misthos.domain import compliance, pricing, timers
+from misthos.domain import compliance, ledger, pricing, timers
 from misthos.domain import issue as lifecycle
 from misthos.domain.compliance import (
     ComplianceRefusal,
@@ -32,6 +39,7 @@ from misthos.domain.compliance import (
     ScreeningReason,
 )
 from misthos.domain.issue import IssueState
+from misthos.domain.ledger import Divergence, MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import ComplexitySignals, UnfundableIssue, propose
 from misthos.domain.timers import TimedAction
@@ -52,12 +60,14 @@ from misthos.schemas import (
     Wallet,
     money,
 )
+from misthos.services.chain import ChainGateway, SimulatedChain
 from misthos.services.compliance import (
     IdentityProvider,
     ScreeningProvider,
     SimulatedIdentity,
     SimulatedScreening,
 )
+from misthos.services.coordination import ISSUE_LOCK_TTL, Busy, Coordinator, build_coordinator
 
 __all__ = ["IssueRecord", "Store", "store"]
 
@@ -75,8 +85,7 @@ REPO_POOL = [
 _PRE_FUNDING = frozenset({IssueState.DRAFT, IssueState.PRICED, IssueState.AWAITING_APPROVAL})
 
 
-def _tx_hash(seq: int) -> str:
-    return f"0x{seq:08x}{random.getrandbits(180):045x}"
+log = logging.getLogger("misthos.store")
 
 
 def _now() -> datetime:
@@ -114,8 +123,16 @@ class Store:
         *,
         screening: ScreeningProvider | None = None,
         identity: IdentityProvider | None = None,
+        chain: ChainGateway | None = None,
+        coordinator: Coordinator | None = None,
     ) -> None:
         self.repo: Repository = repository or MemoryRepository()
+        # The simulated escrow keeps its books beside the repository's tables when
+        # there is a database, so a restart does not make every issue look divergent.
+        self.chain: ChainGateway = chain or SimulatedChain(getattr(self.repo, "engine", None))
+        self.coordinator: Coordinator = coordinator or build_coordinator(
+            settings.redis_url, self.repo
+        )
         self.screening: ScreeningProvider = screening or SimulatedScreening(
             settings.screening_denylist.split(",")
         )
@@ -144,6 +161,8 @@ class Store:
     def reset(self) -> None:
         with self._ready_guard:
             self.repo.reset()
+            self.chain.reset()
+            self.coordinator.reset()
             self._seed()
             self._ready = True
 
@@ -353,17 +372,53 @@ class Store:
         """The only assignment of an issue's state, and it asks the domain first."""
         rec.state = lifecycle.transition(rec.state, to)
 
+    @staticmethod
+    def _book(
+        rec: IssueRecord,
+        kind: MoneyEventKind,
+        amount: Usdc,
+        counterparty_id: str,
+        tx_hash: str,
+        at: datetime,
+    ) -> None:
+        rec.money_events.append(
+            MoneyEvent(
+                issue_id=rec.id,
+                kind=kind,
+                amount=amount,
+                counterparty_id=counterparty_id,
+                tx_hash=tx_hash,
+                occurred_at=at,
+            )
+        )
+        # Refuse here, before the save, any history money cannot have taken.
+        ledger.position(rec.money_events)
+
+    @staticmethod
+    def _committed(rec: IssueRecord) -> Usdc:
+        held = ledger.position(rec.money_events)
+        assert held is not None, f"{rec.id} has no commitment to settle"
+        return held.committed
+
     def _fund(self, rec: IssueRecord, when: datetime | None = None) -> None:
         assert rec.proposal is not None
+        publisher = self.repo.get_publisher(rec.publisher_id)
+        assert publisher is not None
+        # The state moves first so an illegal step never reaches the chain. If the
+        # chain refuses, nothing is saved and the copy in hand is thrown away.
         self._move(rec, IssueState.FUNDED)
+        at = when or _now()
         committed = rec.proposal.recommended
+        deadline = at + lifecycle.ESCROW_TERM
+        tx = self.chain.commit(rec.id, publisher.wallet.address, committed, deadline, at)
+        self._book(rec, MoneyEventKind.COMMITTED, committed, publisher.id, tx, at)
         rec.escrow = EscrowCommitment(
             issue_id=rec.id,
             contract=ESCROW_CONTRACT,
             chain=CHAIN,
-            tx_hash=_tx_hash(self.repo.next_value("tx", 0x4A1)),
+            tx_hash=tx,
             amount=money(committed),
-            deadline=(when or _now()) + lifecycle.ESCROW_TERM,
+            deadline=deadline,
         )
         rec.deadline = rec.escrow.deadline
 
@@ -409,12 +464,18 @@ class Store:
         rule: str = "escrow_acceptance_attestation",
         when: datetime | None = None,
     ) -> None:
-        assert rec.escrow is not None and rec.proposal is not None
+        assert rec.escrow is not None and rec.contributor_id is not None
+        contributor = self.repo.get_contributor(rec.contributor_id)
+        assert contributor is not None
         self._move(rec, IssueState.PAID)
+        at = when or _now()
+        amount = self._committed(rec)
+        tx = self.chain.release(rec.id, contributor.wallet.address, amount, at)
+        self._book(rec, MoneyEventKind.RELEASED, amount, contributor.id, tx, at)
         rec.escrow.released = True
-        rec.paid = rec.proposal.recommended
-        rec.paid_at = when or _now()
-        rec.payout_tx_hash = _tx_hash(self.repo.next_value("tx", 0x4A1))
+        rec.paid = amount
+        rec.paid_at = at
+        rec.payout_tx_hash = tx
         rec.payout_hold = None
         self._log(
             rec,
@@ -429,6 +490,10 @@ class Store:
     def _refund(self, rec: IssueRecord, *, rule: str, when: datetime | None = None) -> None:
         assert rec.escrow is not None
         self._move(rec, IssueState.REFUNDED)
+        at = when or _now()
+        amount = self._committed(rec)
+        tx = self.chain.refund(rec.id, at)
+        self._book(rec, MoneyEventKind.REFUNDED, amount, rec.publisher_id, tx, at)
         rec.escrow.refunded = True
         self._log(
             rec,
@@ -687,19 +752,23 @@ class Store:
             )
             if newly_listed:
                 for rec in issues:
-                    self._log(
-                        rec,
-                        actor="system",
-                        action="counterparty_flagged",
-                        rule="continuous_screening",
-                        outcome=f"the {kind.value} {party_id} is now on {screening.list_name}; "
-                        "no money moves on this issue until compliance clears it",
-                        when=now,
-                    )
                     try:
-                        self.repo.save_issues(rec)
-                    except StaleIssue:
-                        # Someone acted on it meanwhile. The payout gate still screens.
+                        with self._exclusive(rec.id):
+                            fresh = self.repo.get_issue(rec.id)
+                            assert fresh is not None
+                            self._log(
+                                fresh,
+                                actor="system",
+                                action="counterparty_flagged",
+                                rule="continuous_screening",
+                                outcome=f"the {kind.value} {party_id} is now on "
+                                f"{screening.list_name}; no money moves on this issue "
+                                "until compliance clears it",
+                                when=now,
+                            )
+                            self.repo.save_issues(fresh)
+                    except (Busy, StaleIssue):
+                        # Someone is acting on it. The payout gate still screens.
                         continue
         return screened
 
@@ -707,6 +776,74 @@ class Store:
         """Delete screening records past the published retention period."""
         self.ensure_ready()
         return self.repo.purge_screenings((now or _now()) - compliance.SCREENING_RETENTION)
+
+    # ------------------------------------------------------------ money
+
+    @contextmanager
+    def _exclusive(self, issue_id: str) -> Iterator[None]:
+        """Hold the issue for one action, or refuse at once with Busy.
+
+        It never waits: the caller is a person who can press again or a sweeper that
+        comes back next pass, and either is better than a queue of stale intentions.
+        """
+        with self.coordinator.lock(f"issue:{issue_id}", ISSUE_LOCK_TTL) as held:
+            if not held:
+                raise Busy(issue_id)
+            yield
+
+    def reconcile(self, now: datetime | None = None) -> list[Divergence]:
+        """Compare every issue's ledger with what the chain holds, and raise the alarm.
+
+        A divergence found in the first pass is checked again under the issue's lock,
+        because an action caught between its chain call and its save looks divergent
+        for an instant and is not. What survives is logged as an alert and written to
+        the issue's decision log once.
+        """
+        self.ensure_ready()
+        now = now or _now()
+        records = {r.id: r for r in self.repo.list_issues()}
+        suspects = ledger.reconcile(
+            {i: r.money_events for i, r in records.items()}, self.chain.commitments()
+        )
+        confirmed: list[Divergence] = []
+        for suspect in suspects:
+            if suspect.issue_id not in records:
+                # Money on chain for an issue we have no record of at all.
+                log.error("ALERT ledger divergence: %s", suspect)
+                confirmed.append(suspect)
+                continue
+            try:
+                with self._exclusive(suspect.issue_id):
+                    found = self._record_divergence(suspect.issue_id, now)
+            except (Busy, StaleIssue):
+                continue  # Someone is acting on it; the next pass looks again.
+            confirmed.extend(found)
+        return confirmed
+
+    def _record_divergence(self, issue_id: str, now: datetime) -> list[Divergence]:
+        rec = self.repo.get_issue(issue_id)
+        assert rec is not None
+        theirs = self.chain.commitments().get(issue_id)
+        found = ledger.reconcile(
+            {issue_id: rec.money_events}, {issue_id: theirs} if theirs else {}
+        )
+        for divergence in found:
+            log.error("ALERT ledger divergence: %s", divergence)
+            outcome = f"ledger says {divergence.ledger}, chain says {divergence.chain}"
+            if any(
+                d.action == "ledger_divergence" and d.outcome == outcome for d in rec.decisions
+            ):
+                continue
+            self._log(
+                rec,
+                actor="system",
+                action="ledger_divergence",
+                rule="chain_reconciliation",
+                outcome=outcome,
+                when=now,
+            )
+            self.repo.save_issues(rec)
+        return found
 
     # ----------------------------------------------------------------- timers
 
@@ -755,17 +892,22 @@ class Store:
             applied.append(action)
         return applied, created
 
-    def run_timers(self, rec: IssueRecord, now: datetime | None = None) -> list[TimedAction]:
-        """Apply what is due on one issue and save it, refusing a stale copy.
+    def run_timers(self, issue_id: str, now: datetime | None = None) -> list[TimedAction]:
+        """Apply what is due on one issue and save it.
 
-        The sweeper's entry point. Raises StaleIssue when someone saved the issue
-        after `rec` was loaded, so a person's action is never overwritten by a timer.
+        The sweeper's entry point. It holds the issue's lock and reads the issue
+        afresh inside it, so a timer acts on what a person last saved rather than on
+        the copy the sweeper listed. Raises Busy when someone else holds the issue.
         """
         self.ensure_ready()
-        applied, created = self._apply_due(rec, now or _now())
-        if applied:
-            self.repo.save_issues(rec, *created)
-        return applied
+        with self._exclusive(issue_id):
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                return []
+            applied, created = self._apply_due(rec, now or _now())
+            if applied:
+                self.repo.save_issues(rec, *created)
+            return applied
 
     # ---------------------------------------------------------------- actions
 
@@ -777,6 +919,10 @@ class Store:
         any more than real time would let it.
         """
         self.ensure_ready()
+        with self._exclusive(issue_id):
+            return self._advance(issue_id)
+
+    def _advance(self, issue_id: str) -> IssueRecord:
         rec = self.repo.get_issue(issue_id)
         if rec is None:
             raise KeyError(issue_id)
@@ -1022,7 +1168,17 @@ class Store:
 
     def metrics(self) -> MetricsOut:
         records = self.list_issues()
-        settled = [r for r in records if r.state is IssueState.PAID]
+        # Money figures come from the ledger, not from counting states: an issue is
+        # settled when its release is booked, and matched volume is what was released.
+        positions = {r.id: ledger.position(r.money_events) for r in records}
+        released = [
+            p for p in positions.values() if p and p.status is ledger.EscrowStatus.RELEASED
+        ]
+        settled = [
+            r
+            for r in records
+            if (p := positions[r.id]) is not None and p.status is ledger.EscrowStatus.RELEASED
+        ]
         funded = [r for r in records if r.deadline is not None]
         claimed_in_time = [
             r
@@ -1037,12 +1193,12 @@ class Store:
             if len([r for r in funded if r.publisher_id == p]) > 1
         ]
 
-        matched = sum((r.paid.base_units for r in settled if r.paid), start=0)
+        matched = sum((p.paid_out.base_units for p in released), start=0)
 
         durations = [
-            (r.decisions[-1].created_at - r.claim.issued_at).total_seconds() / 3600
+            (r.money_events[-1].occurred_at - r.claim.issued_at).total_seconds() / 3600
             for r in settled
-            if r.claim and r.decisions
+            if r.claim
         ]
 
         by_state: dict[str, int] = {}

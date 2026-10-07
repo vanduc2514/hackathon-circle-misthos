@@ -8,13 +8,16 @@ issues have a timer due, and has the store carry each one out, so the lifecycle 
 its single writer.
 
 It holds a named lock while it works, an advisory lock under Postgres, so a second
-API process or a dedicated worker never applies the same refund twice. An issue a
-person changed between the sweeper reading it and saving it is skipped and picked up
-on the next pass, never overwritten.
+API process or a dedicated worker never applies the same refund twice. Each issue is
+handled under that issue's own lock and read afresh inside it, so a person's action is
+never overwritten by a timer; an issue someone is acting on is skipped and picked up
+on the next pass. An issue whose action fails is logged and skipped too, because one
+bad issue must not stop every other refund.
 
 Each pass also screens live counterparties whose last check is a day old, because
 screening once at onboarding is the mistake 08 is written against, and deletes
-screening records past their published retention period.
+screening records past their published retention period, and reconciles the money
+ledger against the chain, raising an alert for any divergence.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from datetime import UTC, datetime
 
 from misthos.domain.timers import TIMED_STATES
 from misthos.repositories import StaleIssue
+from misthos.services.coordination import Busy
 from misthos.store import Store
 
 log = logging.getLogger("misthos.sweeper")
@@ -38,11 +42,15 @@ class SweepReport:
     applied: dict[str, list[str]] = field(default_factory=dict)
     """Issue id to the timed actions carried out on it."""
     skipped: list[str] = field(default_factory=list)
-    """Issues that changed mid-sweep. They are retried on the next pass."""
+    """Issues someone was acting on mid-sweep. They are retried on the next pass."""
+    failed: list[str] = field(default_factory=list)
+    """Issues whose timed action raised, such as a chain revert. Logged and retried."""
     screened: int = 0
     """Counterparties screened again on schedule."""
     purged: int = 0
     """Screening records deleted at the end of their retention period."""
+    divergences: int = 0
+    """Issues whose ledger and on-chain escrow disagree. Each one is an alert."""
 
 
 def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
@@ -52,18 +60,30 @@ def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
             return SweepReport(ran=False)
         applied: dict[str, list[str]] = {}
         skipped: list[str] = []
+        failed: list[str] = []
         for rec in store.list_issues(TIMED_STATES):
             try:
-                actions = store.run_timers(rec, now)
-            except StaleIssue:
+                actions = store.run_timers(rec.id, now)
+            except (Busy, StaleIssue):
                 skipped.append(rec.id)
+                continue
+            except Exception:
+                log.exception("sweeper: timers on %s failed, retrying next pass", rec.id)
+                failed.append(rec.id)
                 continue
             if actions:
                 applied[rec.id] = [a.value for a in actions]
         screened = store.rescreen(now)
         purged = store.purge_expired(now)
+        divergences = store.reconcile(now)
         return SweepReport(
-            ran=True, applied=applied, skipped=skipped, screened=len(screened), purged=purged
+            ran=True,
+            applied=applied,
+            skipped=skipped,
+            failed=failed,
+            screened=len(screened),
+            purged=purged,
+            divergences=len(divergences),
         )
 
 
