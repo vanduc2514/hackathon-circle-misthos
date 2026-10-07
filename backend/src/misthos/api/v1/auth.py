@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 
+from misthos.api.guards import limit_signin
 from misthos.api.session import SIGNED_IN, signed_in_address
 from misthos.auth import sessions, siwe
 from misthos.config import settings
@@ -48,7 +49,7 @@ def oauth() -> GitHubOAuth | None:
     return GitHubOAuth(settings.github_oauth_client_id, settings.github_oauth_client_secret)
 
 
-@router.post("/nonce", response_model=NonceOut)
+@router.post("/nonce", response_model=NonceOut, dependencies=[limit_signin])
 async def nonce() -> NonceOut:
     """A one-time nonce, and what the sign-in message must say around it."""
     value = secrets.token_hex(12)
@@ -62,7 +63,7 @@ async def nonce() -> NonceOut:
     )
 
 
-@router.post("/verify", response_model=SessionOut)
+@router.post("/verify", response_model=SessionOut, dependencies=[limit_signin])
 async def verify(payload: SignInRequest, response: Response) -> SessionOut:
     """Check the signed message, spend its nonce, and start a session."""
     try:
@@ -146,11 +147,31 @@ async def start_github_link(account: Account | None = SIGNED_IN) -> GitHubLinkSt
 
 
 @router.get("/github/callback", include_in_schema=False)
-async def github_callback(code: str, state: str) -> RedirectResponse:
-    slot = f"gh-link:{state}"
-    address = await run_in_threadpool(store.coordinator.get, slot)
+async def github_callback(
+    request: Request, code: str, state: str
+) -> RedirectResponse:
+    """Finish a link the *same* signed-in wallet started.
+
+    The state is server-side, so it proves the flow began here; it does not prove who
+    is finishing it. Without the session check any caller could start a link with
+    their own wallet, send the authorize URL to someone else, and have that person's
+    GitHub login bound to the attacker's account -- and `github_login` is what gates
+    publishing, claiming and submitting, so the attacker would then be paid for work
+    the victim opened. The account is therefore taken from the session and must match
+    the address the state was issued to.
+    """
+    address = await signed_in_address(request)
     if address is None:
+        raise HTTPException(status_code=401, detail="sign in to finish linking GitHub")
+    slot = f"gh-link:{state}"
+    started_by = await run_in_threadpool(store.coordinator.get, slot)
+    if started_by is None:
         raise HTTPException(status_code=400, detail="the link request is unknown or expired")
+    if started_by != address:
+        # Spend the state either way: it is single-use, and a mismatch is not a
+        # request to leave it lying around for a second attempt.
+        await run_in_threadpool(store.coordinator.delete, slot)
+        raise HTTPException(status_code=403, detail="this link was started by another wallet")
     await run_in_threadpool(store.coordinator.delete, slot)
     client = oauth()
     if client is None:

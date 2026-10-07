@@ -46,7 +46,16 @@ class SiweMessage:
 
 
 def _when(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    """Parse a SIWE timestamp, refusing one without a zone.
+
+    `fromisoformat` accepts `2026-10-07T22:17:37` and returns a naive datetime, which
+    then raises a TypeError when compared against the aware clock. That is a 500 on
+    input the caller chooses, so a missing offset is a refused sign-in instead.
+    """
+    when = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if when.tzinfo is None:
+        raise SignInRefused(f"{value!r} has no timezone offset")
+    return when
 
 
 def parse(message: str) -> SiweMessage:
