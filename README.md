@@ -127,6 +127,17 @@ Publishing an issue with its number then reads it from GitHub and prices it from
 issue and the repository. A pull request from the claimant that says `Fixes #<n>`
 puts the issue in review, and merging it releases the payment.
 
+Once the publisher who installed the App has signed in and linked that GitHub login,
+the repository runs the loop from GitHub alone:
+
+1. Label an issue `misthos` to have it priced.
+2. Comment `/misthos approve` to fund it.
+3. A contributor comments `/misthos claim`, then opens the pull request.
+4. The sweeper reviews it, and the merge pays.
+
+[docs/DEPLOY.md](docs/DEPLOY.md#4-a-real-repository-end-to-end) walks through it
+against a real repository.
+
 ### Signing in
 
 Outside the simulation nothing is written anonymously. A wallet signs in with a

@@ -704,6 +704,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/publishers/{publisher_id}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Repositories
+         * @description The repositories this publisher installed the GitHub App on (#6). An issue there
+         *     given the label is priced without opening the web app.
+         */
+        get: operations["repositories_api_v1_publishers__publisher_id__repositories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plans": {
         parameters: {
             query?: never;
@@ -1563,6 +1584,37 @@ export interface components {
             category_limits?: {
                 [key: string]: string;
             };
+        };
+        /**
+         * RepoConnection
+         * @description A repository the GitHub App is installed on, and the publisher it belongs to.
+         */
+        RepoConnection: {
+            /** Repo */
+            repo: string;
+            /** Installation Id */
+            installation_id: number;
+            /** Installed By */
+            installed_by: string;
+            /** Publisher Id */
+            publisher_id?: string | null;
+            /**
+             * Connected At
+             * Format: date-time
+             */
+            connected_at: string;
+        };
+        /**
+         * RepositoriesOut
+         * @description A publisher's connected repositories, and how to connect more.
+         */
+        RepositoriesOut: {
+            /** Repositories */
+            repositories: components["schemas"]["RepoConnection"][];
+            /** Label */
+            label: string;
+            /** Install Url */
+            install_url?: string | null;
         };
         /**
          * ReputationEventOut
@@ -3031,6 +3083,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FinanceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    repositories_api_v1_publishers__publisher_id__repositories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoriesOut"];
                 };
             };
             /** @description Validation Error */

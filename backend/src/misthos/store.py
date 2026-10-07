@@ -93,6 +93,7 @@ from misthos.schemas import (
     MetricsOut,
     PaymentRequest,
     Publisher,
+    RepoConnection,
     Review,
     SpendCategory,
     SpendOut,
@@ -2466,6 +2467,70 @@ class Store:
             )
             self.repo.save_issues(rec)
             return rec
+
+    # ------------------------------------------------------- GitHub connections
+
+    def connect_repositories(
+        self, installation_id: int, installed_by: str, repos: list[str], now: datetime | None = None
+    ) -> list[RepoConnection]:
+        """The App was installed on these repositories. They belong to the publisher whose
+        linked GitHub login installed it, now or once that login is linked (#6)."""
+        self.ensure_ready()
+        now = now or _now()
+        publisher_id = self._publisher_with_login(installed_by)
+        connected = []
+        for repo in repos:
+            connection = RepoConnection(
+                repo=repo.lower(),
+                installation_id=installation_id,
+                installed_by=installed_by,
+                publisher_id=publisher_id,
+                connected_at=now,
+            )
+            self.repo.save_connection(connection)
+            connected.append(connection)
+        return connected
+
+    def disconnect_repositories(
+        self, repos: list[str] | None = None, *, installation_id: int | None = None
+    ) -> list[str]:
+        """The App was removed from these repositories, or uninstalled altogether."""
+        self.ensure_ready()
+        targets = repos or [
+            c.repo for c in self.repo.list_connections() if c.installation_id == installation_id
+        ]
+        self.repo.delete_connections(targets)
+        return [t.lower() for t in targets]
+
+    def _publisher_with_login(self, login: str) -> str | None:
+        account = self.repo.get_account_by_github_login(login)
+        return account.party_id if account is not None and account.role == "publisher" else None
+
+    def connection(self, repo: str) -> RepoConnection | None:
+        """Where the App is installed, with its publisher resolved if it can be now."""
+        self.ensure_ready()
+        found = self.repo.get_connection(repo)
+        if found is not None and found.publisher_id is None:
+            publisher_id = self._publisher_with_login(found.installed_by)
+            if publisher_id is not None:
+                found.publisher_id = publisher_id
+                self.repo.save_connection(found)
+        return found
+
+    def connections_of(self, publisher_id: str) -> list[RepoConnection]:
+        self.ensure_ready()
+        return sorted(
+            (
+                c
+                for c in (self.connection(r.repo) for r in self.repo.list_connections())
+                if c is not None and c.publisher_id == publisher_id
+            ),
+            key=lambda c: c.repo,
+        )
+
+    def account_with_login(self, login: str) -> Account | None:
+        self.ensure_ready()
+        return self.repo.get_account_by_github_login(login)
 
     # ------------------------------------------------------------ GitHub events
 

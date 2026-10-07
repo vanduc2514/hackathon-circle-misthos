@@ -310,3 +310,16 @@ subscription_payments = Table(
     Column("period_end", Timestamp, nullable=False),
     Column("paid_at", Timestamp, nullable=False),
 )
+
+
+# Repositories the GitHub App is installed on (#6). The publisher is whoever installed
+# it, once that GitHub login is linked to a publisher's wallet.
+repo_connections = Table(
+    "repo_connections",
+    metadata,
+    Column("repo", String(140), primary_key=True),
+    Column("installation_id", BigInteger, nullable=False),
+    Column("installed_by", String(64), nullable=False),
+    Column("publisher_id", Id, ForeignKey("publishers.id")),
+    Column("connected_at", Timestamp, nullable=False),
+)

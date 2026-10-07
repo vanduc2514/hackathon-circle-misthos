@@ -630,3 +630,28 @@ class SubscribeRequest(BaseModel):
 
 class PaymentConfirmation(BaseModel):
     tx_hash: str = Field(pattern=r"^0x[0-9a-fA-F]{64}$")
+
+
+# ------------------------------------------------------- GitHub connections (#6)
+
+
+class RepoConnection(BaseModel):
+    """A repository the GitHub App is installed on, and the publisher it belongs to."""
+
+    repo: str
+    """owner/name, lowercase."""
+    installation_id: int
+    installed_by: str
+    """The GitHub login that installed the App: the publisher, once that login is linked."""
+    publisher_id: str | None = None
+    connected_at: datetime
+
+
+class RepositoriesOut(BaseModel):
+    """A publisher's connected repositories, and how to connect more."""
+
+    repositories: list[RepoConnection]
+    label: str
+    """The label that has an issue priced."""
+    install_url: str | None = None
+    """Where to install the App on another repository, when its slug is configured."""

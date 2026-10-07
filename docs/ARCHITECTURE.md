@@ -192,11 +192,18 @@ The lifecycle is the single writer of issue state. Letting the pricing engine or
 
 | GitHub event | Lifecycle action |
 | --- | --- |
+| `installation`, `installation_repositories` | The repositories connected to the publisher whose linked GitHub login installed the App, or disconnected |
+| `issues` opened or labelled `misthos`, in a connected repository | Priced: the price, the drafted criteria and the commands are posted on the issue |
+| `issue_comment`: `/misthos approve` from the publisher's login | Criteria and price approved, and the funds committed |
+| `issue_comment`: `/misthos criteria` and a list, from the publisher | Those criteria approved instead of the drafted ones, refused with reasons if a reviewer could not judge them |
+| `issue_comment`: `/misthos claim` from a linked contributor | `FUNDED` to `CLAIMED` |
 | `issues` edited or relabelled | A new price proposal, while the issue is unfunded |
 | `pull_request` opened by the claimant, closing the issue | `CLAIMED` to `IN_REVIEW` |
 | `pull_request` synchronize during rework | `REWORK` to `IN_REVIEW` |
 | `check_run` completed | Whether the project's own checks passed on the submitted commit |
 | `pull_request` closed and merged | Acceptance, and the payout. A merge before the verdict is acceptance too |
+
+So an issue goes from a label to a payout on GitHub events alone, once each person has signed in and linked their GitHub login (#6). The webhook is signed, so a command's author is who GitHub says it is. Commands from bots, and comments on pull requests, are ignored. The review is run by the sweeper, not by anyone asking for it.
 
 What the platform posts back is queued during an action and sent once the action is saved: the price and acceptance criteria on the issue when it is funded, a pending status when the work is submitted, the verdict as a pull request review with a status, and the settlement or refund on the issue. A failed post is logged and never undoes the step. The settlement comment names the amount and the contributor's handle, which are public already; the transfer and the wallet are not posted.
 
