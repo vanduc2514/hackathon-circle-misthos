@@ -1487,6 +1487,61 @@ class Store:
             features=sorted(plans.FEATURE_NAMES[f] for f in plans.PLANS[publisher.tier].features),
         )
 
+    def _unfinished_payment(
+        self,
+        publisher_id: str,
+        attempted: SubscriptionPayment,
+        sub: Subscription,
+        request: PaymentRequest,
+    ) -> SubscriptionPayment | None:
+        """The recorded row that is *this* attempt's, when activation never ran.
+
+        The payment is written before the subscription is, so a crash in between leaves
+        a paid period that was never activated. Finishing that row is recovery. A hash
+        from an *earlier* period is a replay, and the difference is whether the
+        subscription has already moved past the row: if it has, the row was activated
+        once and the hash is spent.
+
+        Four things have to agree for it to be this attempt's own, and any of them
+        failing refuses rather than guesses: the hash, the plan and the amount, that the
+        subscription never reached the row's period start, and that the row was written
+        inside the window the caller is currently answering. Without the last one a
+        subscription that later lost its period end could be talked into re-activating a
+        long-spent hash.
+        """
+        for recorded in self.repo.list_subscription_payments(publisher_id):
+            if recorded.tx_hash != attempted.tx_hash:
+                continue
+            if recorded.plan != attempted.plan:
+                return None
+            # Numeric, not the formatted string: the row is written from the rail's
+            # amount and the attempt from the request, and the two spell 249.00 and
+            # 249.000000. Comparing the text would refuse a genuine recovery.
+            if Usdc.from_decimal(recorded.amount_usdc) != Usdc.from_decimal(
+                attempted.amount_usdc
+            ):
+                return None
+            if sub.period_end is not None and sub.period_end > recorded.period_start:
+                return None  # the subscription is already past it: spent
+            window_opened = request.expires_at - plans.PAYMENT_WINDOW
+            if recorded.paid_at < window_opened:
+                return None  # written for an earlier request, not this one
+            return recorded
+        return None
+
+    @staticmethod
+    def _refuse_self_serve_enterprise(publisher: Publisher, sub: Subscription | None) -> None:
+        """A contract plan is changed with us, not from the plan picker.
+
+        Applies to Open as well: ending an Enterprise plan is a change like any other,
+        and the plan picker is not where it happens.
+        """
+        if publisher.tier == "enterprise" and (sub is None or sub.plan == "enterprise"):
+            raise PlanNotSelfServe(
+                "this organisation's Enterprise plan is agreed with us, so it is changed "
+                "with us too"
+            )
+
     def subscribe(
         self, publisher_id: str, plan_id: str, now: datetime | None = None
     ) -> SubscriptionOut:
@@ -1500,6 +1555,10 @@ class Store:
                 raise KeyError(publisher_id)
             sub = self.repo.get_subscription(publisher_id)
             if plan_id == "open":
+                # Open is self-serve too, and it used to return before this guard: a
+                # contract customer could end their own Enterprise plan by choosing
+                # Open, which is the downgrade the guard exists to refuse.
+                self._refuse_self_serve_enterprise(publisher, sub)
                 if sub is not None:
                     sub.pending = None
                     if sub.status in {"active", "past_due"}:
@@ -1514,11 +1573,7 @@ class Store:
                     f"{plan.name} starts at {plan.monthly} a month and is agreed with us, "
                     "not bought here"
                 )
-            if publisher.tier == "enterprise" and (sub is None or sub.plan == "enterprise"):
-                raise PlanNotSelfServe(
-                    "this organisation's Enterprise plan is agreed with us, so it is changed "
-                    "with us too"
-                )
+            self._refuse_self_serve_enterprise(publisher, sub)
             request = PaymentRequest(
                 plan=plan_id,  # type: ignore[arg-type]
                 amount_usdc=f"{plan.monthly.decimal:.2f}",
@@ -1583,15 +1638,19 @@ class Store:
                 # Claiming the transaction comes first, so it pays for one period only.
                 self.repo.add_subscription_payment(payment)
             except PaymentAlreadyUsed:
-                earlier = [
-                    p
-                    for p in self.repo.list_subscription_payments(publisher_id)
-                    if p.tx_hash == payment.tx_hash
-                ]
-                if not earlier or sub.period_end == earlier[0].period_end:
-                    raise
-                # Recorded by an attempt that did not finish activating: finish it.
-                payment = earlier[0]
+                recovery = self._unfinished_payment(publisher_id, payment, sub, request)
+                if recovery is None:
+                    # A hash that already paid for a period. Refusing is what the
+                    # constraint is for: the old code finished these either way, so a
+                    # stale hash copied out of wallet history overwrote an activated
+                    # period with an older one and reported success while doing it.
+                    raise PaymentAlreadyUsed(
+                        f"{tx_hash} has already paid for a period; "
+                        "one transaction pays for one period"
+                    ) from None
+                # The row is this attempt's own: it was recorded and the process died
+                # before the subscription was saved. Finish what it started.
+                payment = recovery
             sub.plan = payment.plan
             sub.period_start = sub.period_start if renewing else payment.period_start
             sub.status = "active"
