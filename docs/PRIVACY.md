@@ -9,7 +9,7 @@ The retention periods below are the defaults we hold ourselves to. They are not 
 **The link between a contributor's wallet and their GitHub identity.** A public ledger, a public handle and a payout together identify a person to anyone who looks. So:
 
 - No public page or API response carries a contributor's wallet. The contributor list serves a profile with no wallet and no identity-provider reference.
-- The release transfer that pays a contributor names their wallet on chain, so its reference stays off the issue page, the timeline and the decision log. It appears only on the contributor's own annual statement.
+- The release transfer that pays a contributor names their wallet on chain, so its reference stays off the issue page, the timeline, the decision log and the publisher's audit export. It appears only on the contributor's own annual statement.
 - The decision log names contributors by handle, never by wallet.
 
 `test_no_public_response_links_a_wallet_to_a_handle` reads every public response and fails the build if a contributor wallet or a payout reference appears in one.

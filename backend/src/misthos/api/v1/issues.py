@@ -10,9 +10,11 @@ from misthos.api.guards import idempotent, limit_actions, limit_publish
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.issue import IllegalTransition, IssueState
+from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import UnfundableIssue
 from misthos.repositories import StaleIssue
 from misthos.schemas import (
+    ApproveReleaseRequest,
     Decision,
     DeclineRequest,
     DisputeRequest,
@@ -71,7 +73,7 @@ IDEMPOTENCY_KEY = Header(
 )
 
 
-def _refused(exc: ComplianceRefusal) -> HTTPException:
+def _refused(exc: Exception) -> HTTPException:
     # Well formed and legal in the lifecycle, but money may not move for this party.
     return HTTPException(status_code=403, detail=str(exc))
 
@@ -131,7 +133,7 @@ async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -
         DeclineRefused,
     ) as exc:
         raise _conflict(exc) from exc
-    except ComplianceRefusal as exc:
+    except (ComplianceRefusal, PolicyRefusal) as exc:
         raise _refused(exc) from exc
     except (ReviewFailed, GitHubError) as exc:
         # Something we depend on failed; nothing was saved, so the step can be retried.
@@ -190,6 +192,30 @@ async def decline(
     await _require(issue_id)
     return await idempotent(
         request, idempotency_key, lambda: _act(store.decline, issue_id, payload.reason)
+    )
+
+
+@router.post(
+    "/issues/{issue_id}/approve-release",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={
+        403: {"description": "Not one of the organisation's named approvers"},
+        409: {"description": "No release is waiting for approval"},
+    },
+)
+async def approve_release(
+    issue_id: str,
+    payload: ApproveReleaseRequest,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+) -> Any:
+    """A named approver approves a release held over the organisation's threshold."""
+    if not settings.simulated:
+        raise HTTPException(status_code=403, detail="approving needs publisher sign-in")
+    await _require(issue_id)
+    return await idempotent(
+        request, idempotency_key, lambda: _act(store.approve_release, issue_id, payload.approver)
     )
 
 
