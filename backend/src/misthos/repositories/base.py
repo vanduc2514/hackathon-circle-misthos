@@ -61,6 +61,13 @@ class Repository(Protocol):
     def purge_screenings(self, before: datetime) -> int:
         """Delete checks older than the retention period. Returns how many went."""
 
+    def record_delivery(self, delivery_id: str, event: str, at: datetime) -> bool:
+        """Note a webhook delivery. False if it was already noted: GitHub redelivers,
+        and a redelivered merge must not be a second acceptance."""
+
+    def forget_delivery(self, delivery_id: str) -> None:
+        """Drop a delivery that failed, so its redelivery is handled."""
+
     def get_issue(self, issue_id: str) -> IssueRecord | None:
         """A private copy: changing it changes nothing until it is saved."""
 

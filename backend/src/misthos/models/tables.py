@@ -243,6 +243,15 @@ simulated_escrow = Table(
     Column("last_tx_hash", String(80), nullable=False),
 )
 
+# Every GitHub webhook delivery handled, so a redelivery is recognised and ignored.
+webhook_deliveries = Table(
+    "webhook_deliveries",
+    metadata,
+    Column("delivery_id", String(64), primary_key=True),
+    Column("event", String(32), nullable=False),
+    Column("received_at", Timestamp, nullable=False),
+)
+
 # Sequences for the human-readable ids (ISS-1001, DEC-0001), shared by every process.
 counters = Table(
     "counters",

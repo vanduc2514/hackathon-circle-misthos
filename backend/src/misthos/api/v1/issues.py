@@ -24,7 +24,7 @@ from misthos.schemas import (
 )
 from misthos.services.chain import ChainRevert
 from misthos.services.coordination import Busy
-from misthos.store import IssueRecord, store
+from misthos.store import IssueRecord, UnreadableIssue, store
 
 router = APIRouter(tags=["issues"])
 
@@ -167,6 +167,9 @@ async def publish(
             # Well formed, but the work cannot carry its own review cost. Say why
             # rather than publish a price the platform loses money on.
             raise HTTPException(status_code=422, detail=exc.justification) from exc
+        except UnreadableIssue as exc:
+            # The App is not installed there, or the issue does not exist.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return await run_in_threadpool(store.to_out, rec)
 
     return await idempotent(request, idempotency_key, run, status_code=201)

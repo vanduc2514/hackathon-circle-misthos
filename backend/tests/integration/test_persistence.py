@@ -140,6 +140,13 @@ class TestSaving:
             any_store.save(fresh_one, stale)
         assert any_store.get("ISS-1001").title != "renamed"  # type: ignore[union-attr]
 
+    def test_a_webhook_delivery_is_recorded_once(self, any_store: Store) -> None:
+        at = datetime(2026, 10, 7, tzinfo=UTC)
+        assert any_store.repo.record_delivery("d-1", "pull_request", at)
+        assert not any_store.repo.record_delivery("d-1", "pull_request", at)
+        any_store.repo.forget_delivery("d-1")
+        assert any_store.repo.record_delivery("d-1", "pull_request", at)
+
     def test_the_decision_log_is_append_only(self, any_store: Store) -> None:
         rec = any_store.get("ISS-1002")
         assert rec is not None

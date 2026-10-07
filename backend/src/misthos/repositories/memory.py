@@ -33,6 +33,7 @@ class MemoryRepository:
             self._issues: dict[str, IssueRecord] = {}
             self._counters: dict[str, int] = {}
             self._screenings: list[Screening] = []
+            self._deliveries: dict[str, tuple[str, datetime]] = {}
 
     def is_empty(self) -> bool:
         with self._guard:
@@ -96,6 +97,19 @@ class MemoryRepository:
             purged = len(self._screenings) - len(kept)
             self._screenings = kept
             return purged
+
+    # ---------------------------------------------------------- deliveries
+
+    def record_delivery(self, delivery_id: str, event: str, at: datetime) -> bool:
+        with self._guard:
+            if delivery_id in self._deliveries:
+                return False
+            self._deliveries[delivery_id] = (event, at)
+            return True
+
+    def forget_delivery(self, delivery_id: str) -> None:
+        with self._guard:
+            self._deliveries.pop(delivery_id, None)
 
     # ------------------------------------------------------------- issues
 

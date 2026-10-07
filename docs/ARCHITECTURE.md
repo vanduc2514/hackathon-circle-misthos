@@ -19,7 +19,8 @@ The diagrams below describe the target system. This table is what is actually in
 | Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
 | Data | Postgres, Redis | Built and optional. Postgres once `MISTHOS_DATABASE_URL` is set, memory otherwise. Redis once `MISTHOS_REDIS_URL` is set, for the per-issue lock, idempotency keys and rate limits across processes |
 | Compliance | Screening, identity at first payout, statements | Built against simulated providers. See [PRIVACY.md](./PRIVACY.md) |
-| Integrations | GitHub App, Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
+| GitHub | App authentication, read path, write path, webhooks | Built behind one gateway. Simulated until `MISTHOS_GITHUB_APP_ID` and `MISTHOS_GITHUB_APP_PRIVATE_KEY` are set; `backend/github-app-manifest.json` registers the App |
+| Integrations | Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
 
 Everything marked not built has its interface in place, which is why the missing pieces are listed here as work rather than as risk.
 
@@ -177,6 +178,25 @@ This process exists for exactly two reasons and both are Node-only dependencies.
 | Finance adapter | Reads budget and cash context, read-only | Pluggable. Firefly III first, then beancount, Odoo, ERPNext, Invoice Ninja |
 
 The lifecycle is the single writer of issue state. Letting the pricing engine or the webhook handler write state directly is the fastest way to get an issue that is both funded and refunded.
+
+### GitHub
+
+| Component | Responsibility | Notes |
+| --- | --- | --- |
+| `backend/src/misthos/services/github/app.py` | The App: JWT, installation tokens, every REST call | Acts as the installation, never as a person. A token is reused until five minutes before it expires |
+| `backend/src/misthos/domain/signals.py` | The six complexity signals from the issue and the repository's file list | Pure. Every score carries its reason into the decision log |
+| `backend/src/misthos/services/github/events.py` | Webhook events to lifecycle actions | Maps, never writes: the store decides whether the action is legal |
+| `backend/src/misthos/api/v1/webhooks.py` | The receiver | Signature required in production, each delivery handled once |
+
+| GitHub event | Lifecycle action |
+| --- | --- |
+| `issues` edited or relabelled | A new price proposal, while the issue is unfunded |
+| `pull_request` opened by the claimant, closing the issue | `CLAIMED` to `IN_REVIEW` |
+| `pull_request` synchronize during rework | `REWORK` to `IN_REVIEW` |
+| `check_run` completed | Whether the project's own checks passed on the submitted commit |
+| `pull_request` closed and merged | Acceptance, and the payout. A merge before the verdict is acceptance too |
+
+What the platform posts back is queued during an action and sent once the action is saved: the price and acceptance criteria on the issue when it is funded, a pending status when the work is submitted, the verdict as a pull request review with a status, and the settlement or refund on the issue. A failed post is logged and never undoes the step. The settlement comment names the amount and the contributor's handle, which are public already; the transfer and the wallet are not posted.
 
 ### Worker
 

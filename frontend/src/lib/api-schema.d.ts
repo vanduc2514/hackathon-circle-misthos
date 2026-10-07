@@ -1111,6 +1111,7 @@ export interface operations {
             header?: {
                 "x-hub-signature-256"?: string | null;
                 "x-github-event"?: string | null;
+                "x-github-delivery"?: string | null;
             };
             path?: never;
             cookie?: never;
