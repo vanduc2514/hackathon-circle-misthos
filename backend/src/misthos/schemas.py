@@ -132,6 +132,9 @@ class IssueOut(BaseModel):
     review: Review | None = None
     contributor_id: str | None = None
     paid_usdc: str | None = None
+    """What the contributor received: the commitment less the platform's take rate."""
+    platform_fee_usdc: str | None = None
+    """The platform's commission on this settlement, at the publisher's tier rate."""
     github_url: str
 
 
@@ -157,6 +160,8 @@ class MetricsOut(BaseModel):
     acceptance_rate_first_review: float
     repeat_publisher_rate: float
     matched_volume_usdc: str
+    platform_fees_usdc: str
+    """The take-rate revenue actually collected across settled issues."""
     median_hours_to_payout: float | None
     dispute_rate: float
     publisher_overturn_rate: float

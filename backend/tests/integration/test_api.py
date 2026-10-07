@@ -6,6 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from misthos.domain.issue import IssueState
+from misthos.domain.money import Usdc
+from misthos.domain.pricing import take_rate_bps
 from misthos.main import app
 from misthos.store import store
 
@@ -83,6 +85,26 @@ class TestLifecycleThroughTheApi:
         assert body["state"] == "PAID"
         assert "reviewer_id" not in body
         assert "review_fee_paid_usdc" not in body
+
+    def test_a_settlement_records_the_platform_fee_at_the_tier_rate(
+        self, client: TestClient
+    ) -> None:
+        """The take rate is carved out of the commitment, not added to it."""
+        client.post(f"{API}/issues/ISS-1002/complete")
+        body = client.get(f"{API}/issues/ISS-1002").json()
+        assert body["state"] == "PAID"
+
+        tier = next(
+            p["tier"]
+            for p in client.get(f"{API}/publishers").json()
+            if p["id"] == body["publisher_id"]
+        )
+        gross = body["escrow"]["amount"]["base_units"]
+        fee = Usdc.from_decimal(body["platform_fee_usdc"])
+        payout = Usdc.from_decimal(body["paid_usdc"])
+
+        assert fee.base_units == gross * take_rate_bps(tier) // 10_000
+        assert payout.base_units + fee.base_units == gross
 
     def test_advancing_a_finished_issue_is_conflict(self, client: TestClient) -> None:
         assert client.post(f"{API}/issues/ISS-1005/advance").status_code == 409
@@ -200,6 +222,18 @@ class TestMetrics:
             client.post(f"{API}/issues/ISS-1006/advance")
         client.post(f"{API}/issues/ISS-1006/complete")
         assert client.get(f"{API}/metrics").json()["settled_issues"] == before + 1
+
+    def test_metrics_report_the_take_rate_revenue(self, client: TestClient) -> None:
+        """The revenue line moves with each settlement, and never exceeds it."""
+        before = client.get(f"{API}/metrics").json()
+        for _ in range(3):
+            client.post(f"{API}/issues/ISS-1006/advance")
+        client.post(f"{API}/issues/ISS-1006/complete")
+        after = client.get(f"{API}/metrics").json()
+
+        fees = Usdc.from_decimal(after["platform_fees_usdc"])
+        assert fees.base_units > Usdc.from_decimal(before["platform_fees_usdc"]).base_units
+        assert fees.base_units < Usdc.from_decimal(after["matched_volume_usdc"]).base_units
 
 
 class TestDecisions:

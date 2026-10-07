@@ -16,7 +16,14 @@ from datetime import UTC, datetime, timedelta
 from misthos.domain import issue as lifecycle
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc
-from misthos.domain.pricing import ComplexitySignals, PriceProposal, UnfundableIssue, propose
+from misthos.domain.pricing import (
+    ComplexitySignals,
+    PriceProposal,
+    UnfundableIssue,
+    platform_fee,
+    propose,
+    take_rate_bps,
+)
 from misthos.schemas import (
     Claim,
     Contributor,
@@ -78,6 +85,7 @@ class IssueRecord:
     review: Review | None = None
     contributor_id: str | None = None
     paid: Usdc | None = None
+    platform_fee: Usdc | None = None
     decisions: list[Decision] = field(default_factory=list)
 
     @property
@@ -305,15 +313,25 @@ class Store:
         when: datetime | None = None,
     ) -> None:
         assert rec.escrow is not None and rec.proposal is not None
+        gross = rec.proposal.recommended
+        tier = self.publishers[rec.publisher_id].tier
+        # The publisher paid the fix price and nothing else, so the take rate comes
+        # out of the commitment. The basis points are what the escrow would enforce
+        # for this issue, and the division floors the same way.
+        fee = platform_fee(gross, tier)
         rec.escrow.released = True
-        rec.paid = rec.proposal.recommended
+        rec.platform_fee = fee
+        rec.paid = gross - fee
         rec.state = IssueState.PAID
         self._log(
             rec,
             actor="system",
             action="released",
             rule=rule,
-            outcome=f"released {rec.paid} to contributor",
+            outcome=(
+                f"released {rec.paid} to contributor and {fee} platform fee "
+                f"at {take_rate_bps(tier)} bps"
+            ),
             cost="0.01",
             when=when,
         )
@@ -526,6 +544,7 @@ class Store:
             review=rec.review,
             contributor_id=rec.contributor_id,
             paid_usdc=str(rec.paid.decimal) if rec.paid else None,
+            platform_fee_usdc=str(rec.platform_fee.decimal) if rec.platform_fee else None,
             github_url=rec.github_url,
         )
 
@@ -575,7 +594,19 @@ class Store:
             if len([r for r in funded if r.publisher_id == p]) > 1
         ]
 
-        matched = sum((r.paid.base_units for r in settled if r.paid), start=0)
+        # Matched volume is what the publishers committed. The take rate is a slice
+        # of it rather than an addition to it, so the revenue line is separate.
+        matched = sum(
+            (
+                r.paid.base_units + (r.platform_fee.base_units if r.platform_fee else 0)
+                for r in settled
+                if r.paid
+            ),
+            start=0,
+        )
+        fee_revenue = sum(
+            (r.platform_fee.base_units for r in settled if r.platform_fee), start=0
+        )
 
         durations = [
             (r.decisions[-1].created_at - r.claim.issued_at).total_seconds() / 3600
@@ -602,6 +633,7 @@ class Store:
                 round(len(repeat) / len(publishers_with_issues), 2) if publishers_with_issues else 0.0
             ),
             matched_volume_usdc=f"{Usdc(matched).decimal:.2f}",
+            platform_fees_usdc=f"{Usdc(fee_revenue).decimal:.2f}",
             median_hours_to_payout=round(sorted(durations)[len(durations) // 2], 1) if durations else None,
             dispute_rate=0.0,
             # Not modelled yet: a publisher who declines a passing verdict has no
