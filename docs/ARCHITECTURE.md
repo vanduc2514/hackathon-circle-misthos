@@ -16,7 +16,7 @@ The diagrams below describe the target system. This table is what is actually in
 | Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
 | Core | FastAPI, lifecycle, pricing engine, decision log | Built. 48 tests |
 | Worker | Job runner and deadline sweeper | Not built. The simulation has no timers |
-| Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
+| Contracts | `MisthosEscrow` | Built. Example, fuzz and invariant tests |
 | Data | Postgres, Redis | Not built. State is in process and resets on restart |
 | Integrations | GitHub App, Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
 
@@ -215,6 +215,11 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 3. Refund happens on a deadline without requiring anyone to act.
 4. A per-issue ceiling is enforced here, so an agent with a compromised key cannot drain a budget.
 
+Those four are checked by the fuzz and invariant tests in
+[contracts/test/](contracts/test/): the campaign drives random sequences of commit,
+release, refund, ceiling updates and attestor rotations, and asserts the properties after
+every step. They run on every pull request with the rest of the Foundry suite.
+
 ### Circle primitives
 
 | Primitive | Role in Misthos | Why this one |
@@ -259,7 +264,7 @@ flowchart LR
 | Decision log | In process, append-only per issue | Postgres, append-only, replicated |
 | Escrow state | Mirrored in process | Read from the chain on a schedule, never trusted from our own copy |
 | Claim lock and idempotency keys | Not implemented | Redis |
-| Contract | `contracts/`, 18 Foundry tests | Deployed to Arc testnet |
+| Contract | `contracts/`, Foundry example, fuzz and invariant tests | Deployed to Arc testnet |
 
 Two consequences worth being explicit about, because they are the difference between a demo and a system.
 
