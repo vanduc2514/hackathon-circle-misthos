@@ -13,6 +13,7 @@ from misthos.config import settings
 from misthos.domain import plans
 from misthos.domain.money import Usdc
 from misthos.main import app
+from misthos.schemas import SubscriptionPayment
 from misthos.services.billing import TRANSFER_TOPIC, ArcRail, SimulatedRail
 from misthos.store import _now, store
 
@@ -197,3 +198,135 @@ class TestOnArc:
         r = client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
         assert r.status_code == 503
         assert TestClient(app).get(f"{API}/publishers/{pid}/subscription").status_code == 401
+
+
+class TestAStaleHashCannotRewindThePeriod:
+    """A transaction pays for one period, and a replay is refused however it arrives.
+
+    The old code tried to tell a replay from an activation that never finished by
+    comparing period ends, and finished the payment either way. A hash copied out of
+    wallet history, replayed against a fresh purchase, therefore overwrote an
+    activated period with an older one and reported 200 while doing it.
+    """
+
+    def test_replaying_the_first_hash_after_renewing_does_not_move_the_period(
+        self, publisher: tuple[TestClient, str]
+    ) -> None:
+        client, pid = publisher
+        first = buy_team(client, pid)
+        stale = first["payments"][0]["tx_hash"]
+
+        second = buy_team(client, pid)
+        assert len(second["payments"]) == 2
+        period_end = second["period_end"]
+
+        # A third purchase, then the stale hash from the first one.
+        client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
+        replay = client.post(
+            f"{API}/publishers/{pid}/subscription/payment", json={"tx_hash": stale}
+        )
+        assert replay.status_code == 409, replay.text
+        assert "already paid" in replay.json()["detail"]
+
+        after = client.get(f"{API}/publishers/{pid}/subscription").json()
+        assert after["period_end"] == period_end, "the paid period moved"
+        assert len(after["payments"]) == 2, "a payment was written by a replay"
+
+    def test_a_replay_is_refused_even_with_nothing_pending(
+        self, publisher: tuple[TestClient, str]
+    ) -> None:
+        client, pid = publisher
+        stale = buy_team(client, pid)["payments"][0]["tx_hash"]
+        r = client.post(f"{API}/publishers/{pid}/subscription/payment", json={"tx_hash": stale})
+        # Nothing is pending, so it is refused before a replay is even considered.
+        assert r.status_code == 409, r.text
+        assert "nothing is waiting" in r.json()["detail"]
+
+
+class TestAContractPlanIsChangedWithUs:
+    def test_an_enterprise_organisation_cannot_end_its_own_plan(
+        self, publisher: tuple[TestClient, str]
+    ) -> None:
+        """Open is self-serve too, and it used to return before the guard ran."""
+        client, pid = publisher
+        store.set_contract_plan(pid, "enterprise", _now() + timedelta(days=365))
+
+        r = client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "open"})
+        assert r.status_code == 409, r.text
+        assert "agreed with us" in r.json()["detail"]
+
+        sub = client.get(f"{API}/publishers/{pid}/subscription").json()
+        assert sub["plan"] == "enterprise"
+        assert sub["cancel_at_period_end"] is False, "the plan was ended anyway"
+
+    def test_a_team_customer_can_still_choose_open(
+        self, publisher: tuple[TestClient, str]
+    ) -> None:
+        client, pid = publisher
+        buy_team(client, pid)
+        r = client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "open"})
+        assert r.status_code == 200, r.text
+        assert r.json()["cancel_at_period_end"] is True
+
+
+class TestAHalfFinishedActivation:
+    """The payment row is written before the subscription, so a crash in between
+    leaves a period that was paid for and never activated.
+
+    Finishing that row is recovery, and it has to be told apart from a replay of a
+    hash that already paid for a *different* period. The difference is whether the
+    subscription has already moved past the row.
+    """
+
+    def _record_without_activating(self, pid: str, tx: str, amount: str) -> None:
+        now = _now()
+        store.repo.add_subscription_payment(
+            SubscriptionPayment(
+                publisher_id=pid,
+                plan="team",
+                amount_usdc=amount,
+                tx_hash=tx,
+                period_start=now,
+                period_end=now + plans.PERIOD,
+                paid_at=now,
+            )
+        )
+
+    def test_it_is_finished_rather_than_stranded(
+        self, publisher: tuple[TestClient, str]
+    ) -> None:
+        client, pid = publisher
+        pending = client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"}).json()[
+            "pending"
+        ]
+        assert isinstance(store.rail, SimulatedRail)
+        tx = store.rail.send(
+            pending["payer"], pending["pay_to"], Usdc.from_decimal(pending["amount_usdc"])
+        )
+        self._record_without_activating(pid, tx, pending["amount_usdc"])
+
+        # The customer retries the hash they paid with.
+        r = client.post(f"{API}/publishers/{pid}/subscription/payment", json={"tx_hash": tx})
+        assert r.status_code == 200, r.text
+        sub = r.json()
+        assert sub["plan"] == "team" and sub["status"] == "active"
+        assert len(sub["payments"]) == 1, "recovery wrote a second row"
+
+        # And the hash is spent now: a further replay does not buy another period.
+        client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
+        again = client.post(f"{API}/publishers/{pid}/subscription/payment", json={"tx_hash": tx})
+        assert again.status_code == 409, again.text.lower()
+
+    def test_a_hash_from_an_earlier_period_is_not_recovery(
+        self, publisher: tuple[TestClient, str]
+    ) -> None:
+        """The subscription has moved past the row, so the row was already activated."""
+        client, pid = publisher
+        first = buy_team(client, pid)  # row written and activated
+        spent = first["payments"][0]["tx_hash"]
+        buy_team(client, pid)  # the subscription is now a period further on
+
+        client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
+        r = client.post(f"{API}/publishers/{pid}/subscription/payment", json={"tx_hash": spent})
+        assert r.status_code == 409, r.text
+        assert len(client.get(f"{API}/publishers/{pid}/subscription").json()["payments"]) == 2
