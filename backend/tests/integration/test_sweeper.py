@@ -9,15 +9,22 @@ import pytest
 
 from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
 from misthos.models.records import IssueRecord
+from misthos.services.review import ReviewFailed
 from misthos.store import store
-from misthos.workers.sweeper import sweep_once
+from misthos.workers.sweeper import (
+    MAX_REVIEW_ATTEMPTS,
+    reset_review_failures,
+    sweep_once,
+)
 
 A_MINUTE = timedelta(minutes=1)
+IN_REVIEW = "ISS-1002"  # seeded, PR #903, no verdict yet
 
 
 @pytest.fixture(autouse=True)
 def fresh_store():
     store.reset()
+    reset_review_failures()
     yield
 
 
@@ -176,3 +183,85 @@ class TestSweeping:
         assert report.failed == ["ISS-1001"]
         assert get("ISS-1001").state is IssueState.FUNDED  # nothing half-saved
         assert report.applied  # every other due issue still moved
+
+
+class TestAFailingReview:
+    """A submission the reviewer cannot judge must not be retried forever.
+
+    Every attempt is a billed model call, and the pass only reviews a fixed number of
+    submissions, so one that always fails would hold a slot while the submissions
+    queued behind it are never looked at.
+    """
+
+    def test_a_submission_that_keeps_failing_is_left_for_a_person(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        judged: list[str] = []
+
+        class AlwaysFails:
+            name = "broken"
+
+            def judge(self, submitted: object) -> None:
+                judged.append("attempt")
+                raise ReviewFailed("the model refused")
+
+        monkeypatch.setattr(store, "reviewer", AlwaysFails())
+
+        for _ in range(MAX_REVIEW_ATTEMPTS):
+            report = sweep_once(store)
+            assert IN_REVIEW in report.failed
+
+        assert len(judged) == MAX_REVIEW_ATTEMPTS
+        assert get(IN_REVIEW).review is None
+
+        # Past the cap the sweeper stops paying for the same failure.
+        sweep_once(store)
+        assert len(judged) == MAX_REVIEW_ATTEMPTS
+
+    def test_a_judged_submission_forgets_its_failures(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rules = store.reviewer
+        judged: list[str] = []
+
+        class FailsOnce:
+            name = "flaky"
+
+            def judge(self, submitted: object):
+                judged.append("attempt")
+                if len(judged) == 1:
+                    raise ReviewFailed("the model timed out")
+                return rules.judge(submitted)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(store, "reviewer", FailsOnce())
+
+        assert IN_REVIEW in sweep_once(store).failed
+        report = sweep_once(store)
+        assert IN_REVIEW in report.reviewed
+
+    def test_a_resubmitted_commit_gets_a_fresh_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The budget is per commit, so new work is reviewed even when the old commit
+        could not be, rather than the issue being silenced for good."""
+        judged: list[str] = []
+
+        class Fails:
+            name = "broken"
+
+            def judge(self, submitted: object) -> None:
+                judged.append("attempt")
+                raise ReviewFailed("broken")
+
+        monkeypatch.setattr(store, "reviewer", Fails())
+        for _ in range(MAX_REVIEW_ATTEMPTS):
+            sweep_once(store)
+        assert len(judged) == MAX_REVIEW_ATTEMPTS
+
+        rec = get(IN_REVIEW)
+        assert rec.submission is not None
+        rec.submission = rec.submission.model_copy(update={"head_sha": "f" * 40})
+        store.save(rec)  # the contributor pushed a new commit
+
+        sweep_once(store)
+        assert len(judged) == MAX_REVIEW_ATTEMPTS + 1

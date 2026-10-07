@@ -30,7 +30,12 @@ API_VERSION = "2023-06-01"
 # Enough for any patch a fixed-price issue should produce. Beyond it the review says
 # it saw a truncated diff instead of pretending it saw everything.
 MAX_DIFF_CHARS = 120_000
-MAX_OUTPUT_TOKENS = 2048
+# The cap has to cover the model's own reasoning as well as the judgement, and on
+# Sonnet 5.5 thinking is on by default and counts against `max_tokens`. A judgement
+# of twelve criteria needs a couple of thousand tokens, so this leaves headroom
+# rather than risking `stop_reason: max_tokens` and no tool block at all. Only what
+# is generated is billed, so a generous ceiling costs nothing by itself.
+MAX_OUTPUT_TOKENS = 8192
 
 SYSTEM = """You review a pull request for Misthos, a marketplace that pays a \
 contributor when their pull request meets an issue's published acceptance criteria.
@@ -50,6 +55,10 @@ Record your judgement with the record_judgement tool."""
 TOOL = {
     "name": "record_judgement",
     "description": "Record whether each acceptance criterion is met, with evidence.",
+    # Sonnet 5.5 rejects a forced `tool_choice`, so the tool is called on merit and
+    # the schema is enforced by the tool itself: `strict` makes the API validate the
+    # arguments against `input_schema` instead of returning whatever shapes.
+    "strict": True,
     "input_schema": {
         "type": "object",
         "properties": {
@@ -128,7 +137,13 @@ class ClaudeReviewer:
             "max_tokens": MAX_OUTPUT_TOKENS,
             "system": SYSTEM,
             "tools": [TOOL],
-            "tool_choice": {"type": "tool", "name": TOOL["name"]},
+            # Not forced: Sonnet 5.5 answers a forced `tool_choice` with a 400, and
+            # a 400 here would mean no verdict could ever be issued. The system
+            # prompt asks for the tool and `strict` keeps its arguments in schema.
+            "tool_choice": {"type": "auto"},
+            # Between-tool thinking is this model's way of turning up-front
+            # reasoning off, which keeps the token budget for the judgement.
+            "thinking": {"type": "between_tools"},
             "messages": [{"role": "user", "content": render(submitted)}],
         }
         try:
@@ -141,9 +156,16 @@ class ClaudeReviewer:
         used = next((b for b in reply.get("content", []) if b.get("type") == "tool_use"), None)
         if used is None:
             raise ReviewFailed("the model returned no judgement")
+        answer = used.get("input")
+        # A refusal that ignores the tool, or one that fills it with the wrong
+        # shapes, is a failed review rather than a 500 from a TypeError below.
+        if not isinstance(answer, dict):
+            raise ReviewFailed("the model's judgement was not an object")
+        if not isinstance(answer.get("criteria"), list):
+            raise ReviewFailed("the model's judgement named no criteria")
         return Judgement(
-            checks=_checks(submitted.criteria, used.get("input") or {}),
-            summary=str((used.get("input") or {}).get("summary", "")).strip(),
+            checks=_checks(submitted.criteria, answer),
+            summary=str(answer.get("summary") or "").strip(),
             reviewer=self.name,
             cost=self._cost(reply.get("usage") or {}),
         )
@@ -157,7 +179,11 @@ class ClaudeReviewer:
 
 def _checks(criteria: tuple[str, ...], answer: dict[str, Any]) -> tuple[CriterionCheck, ...]:
     given = {}
-    for item in answer.get("criteria", []):
+    for item in answer["criteria"]:
+        # `strict` should keep every item an object, but a judgement is not worth a
+        # 500 if one arrives malformed: an unreadable entry is simply not addressed.
+        if not isinstance(item, dict):
+            continue
         try:
             index = int(item["index"])
         except (KeyError, TypeError, ValueError):
