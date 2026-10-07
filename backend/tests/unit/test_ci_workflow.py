@@ -22,7 +22,7 @@ TRIGGERS_KEY = True
 EXPECTED_COMMANDS = {
     "backend": ["mise run lint:backend", "mise run test:backend"],
     "web": ["mise run lint:web", "mise run test:web"],
-    "edge": ["mise run lint:edge"],
+    "edge": ["mise run lint:edge", "mise run test:edge"],
     "contracts": ["mise run test:contracts"],
 }
 

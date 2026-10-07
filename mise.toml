@@ -58,7 +58,7 @@ run = "test -d lib/forge-std || git clone --depth 1 https://github.com/foundry-r
 
 [tasks.test]
 description = "Run every test suite"
-run = "mise run test:backend && mise run test:web && mise run test:contracts"
+run = "mise run test:backend && mise run test:web && mise run test:edge && mise run test:contracts"
 
 [tasks."test:backend"]
 dir = "backend"
@@ -67,6 +67,10 @@ run = "uv run pytest -q"
 [tasks."test:web"]
 dir = "frontend"
 run = "npm run test"
+
+[tasks."test:edge"]
+dir = "edge"
+run = "npm test"
 
 [tasks."test:contracts"]
 dir = "contracts"

@@ -13,7 +13,7 @@ The diagrams below describe the target system. This table is what is actually in
 | Layer | Component | State |
 | --- | --- | --- |
 | Web | Vite + React SPA, generated API client | Built. Three routes, live against the API |
-| Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
+| Edge | Express x402 gate and Circle CLI bridge | Built. The gate settles through Circle Gateway Nanopayments when `MISTHOS_SIMULATED=false`; simulated by default |
 | Core | FastAPI, lifecycle, pricing engine, decision log | Built. 48 tests |
 | Worker | Job runner and deadline sweeper | Not built. The simulation has no timers |
 | Contracts | `MisthosEscrow` | Built. 18 Foundry tests |

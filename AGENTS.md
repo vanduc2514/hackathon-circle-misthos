@@ -91,6 +91,7 @@ mise run dev:edge        # edge service :8080
 mise run test            # backend + web + contracts
 mise run test:backend    # pytest
 mise run test:web        # vitest
+mise run test:edge       # node --test
 mise run test:contracts  # forge test
 mise run lint            # ruff + tsc for both TS packages
 mise run codegen         # regenerate frontend API types from the live schema
@@ -107,7 +108,7 @@ Prefer the `mise run` task over the underlying command so the tool versions matc
 
 [.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every pull request, in four
 jobs, one per runtime: `ruff` and `pytest`, then `tsc` and `vitest`, then the edge
-`tsc`, then `forge test`. Each job installs only its own dependencies through
+`tsc` and `node --test`, then `forge test`. Each job installs only its own dependencies through
 `mise run setup:<runtime>`, so a failure names the runtime it came from.
 
 `mise run ci` is the same thing locally. `MISTHOS_SIMULATED=true` is pinned in the
