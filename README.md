@@ -126,6 +126,28 @@ Publishing an issue with its number then reads it from GitHub and prices it from
 issue and the repository. A pull request from the claimant that says `Fixes #<n>`
 puts the issue in review, and merging it releases the payment.
 
+### Signing in
+
+Outside the simulation nothing is written anonymously. A wallet signs in with a
+Sign-In with Ethereum message (`POST /api/v1/auth/nonce`, then `/auth/verify`), takes
+a role once, publisher or contributor (`/auth/role`), and links its GitHub account
+(`/auth/github/start`). A publisher acts only on its own issues, and a contributor
+submits only a pull request it opened. The loop then runs through explicit actions:
+
+| Who | Action | Endpoint |
+| --- | --- | --- |
+| Publisher | Publish an issue and get a price | `POST /issues` |
+| Publisher | Approve the acceptance criteria, then the price, which commits the funds | `POST /issues/{id}/criteria`, then `/fund` |
+| Contributor | Claim the issue, then submit the pull request | `POST /issues/{id}/claim`, then `/submit` |
+| Either | Have the review agent judge it now rather than on the sweeper's next pass | `POST /issues/{id}/review` |
+| Publisher | Merge on GitHub, which releases the payment | The webhook |
+
+Linking is simulated until a GitHub OAuth App is configured
+(`MISTHOS_GITHUB_OAUTH_CLIENT_ID` and `MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`), and
+`MISTHOS_SESSION_SECRET` keeps sessions across a restart. The demo stepper
+(`/advance` and `/complete`) runs only in the simulation, because it fabricates the
+pull request and the merge.
+
 ### The whole system
 
 To run the web app, the API, the worker and the edge against Postgres and Redis, the

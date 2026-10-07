@@ -1,9 +1,9 @@
 """An organisation's own controls and records: its spending policy, its spend, and
 its audit export (epic #13).
 
-These are the organisation's alone, and organisations cannot sign in yet (#70), so
-every route here is served by the simulation only; an operator exports the audit
-record with `python -m misthos.services.audit`.
+These are the organisation's alone: a signed-in publisher sees and sets its own,
+and the simulation lets the demo see any. An operator exports the audit record with
+`python -m misthos.services.audit`.
 """
 
 from __future__ import annotations
@@ -13,27 +13,24 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.concurrency import run_in_threadpool
 
-from misthos.config import settings
+from misthos.api.session import SIGNED_IN, require_owner_or_simulation
 from misthos.domain.policy import PolicyRefusal
-from misthos.schemas import AuditExport, PolicyRequest, Publisher, SpendOut
+from misthos.schemas import Account, AuditExport, PolicyRequest, Publisher, SpendOut
 from misthos.services.audit import export, to_csv
 from misthos.store import store
 
 router = APIRouter(prefix="/publishers", tags=["publishers"])
 
 
-def _simulation_only(what: str) -> None:
-    if not settings.simulated:
-        raise HTTPException(
-            status_code=403, detail=f"{what} is served to the organisation once sign-in exists"
-        )
-
-
 @router.put("/{publisher_id}/policy", response_model=Publisher)
-async def set_policy(publisher_id: str, payload: PolicyRequest) -> Publisher:
+async def set_policy(
+    publisher_id: str,
+    payload: PolicyRequest,
+    account: Account | None = SIGNED_IN,
+) -> Publisher:
     """Replace the organisation's spending policy: a release threshold with its named
     approvers, and monthly limits per issue label."""
-    _simulation_only("the spending policy")
+    require_owner_or_simulation(account, publisher_id, "set this spending policy")
     try:
         return await run_in_threadpool(
             lambda: store.set_policy(
@@ -50,10 +47,14 @@ async def set_policy(publisher_id: str, payload: PolicyRequest) -> Publisher:
 
 
 @router.get("/{publisher_id}/spend", response_model=SpendOut)
-async def spend(publisher_id: str, year: int | None = None) -> SpendOut:
+async def spend(
+    publisher_id: str,
+    year: int | None = None,
+    account: Account | None = SIGNED_IN,
+) -> SpendOut:
     """What was budgeted, committed, released and refunded in a year, by category,
     and the settled fixes to file for a security review."""
-    _simulation_only("the spend view")
+    require_owner_or_simulation(account, publisher_id, "see this spend")
     try:
         return await run_in_threadpool(store.spend, publisher_id, year)
     except KeyError as exc:
@@ -66,11 +67,13 @@ async def spend(publisher_id: str, year: int | None = None) -> SpendOut:
     responses={200: {"content": {"text/csv": {}}}},
 )
 async def audit(
-    publisher_id: str, format: Literal["json", "csv"] = Query(default="json")
+    publisher_id: str,
+    format: Literal["json", "csv"] = Query(default="json"),
+    account: Account | None = SIGNED_IN,
 ) -> AuditExport | Response:
     """The decision record and the money events for every issue the organisation
     funded, unedited, as JSON or one sortable CSV."""
-    _simulation_only("the audit export")
+    require_owner_or_simulation(account, publisher_id, "export this audit record")
     found = await run_in_threadpool(export, store, publisher_id)
     if found is None:
         raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}")

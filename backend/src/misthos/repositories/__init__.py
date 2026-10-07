@@ -9,7 +9,12 @@ repository is Postgres in a deployment and a SQLite file for durable local runs.
 
 from __future__ import annotations
 
-from misthos.repositories.base import AppendOnlyViolation, Repository, StaleIssue
+from misthos.repositories.base import (
+    AccountConflict,
+    AppendOnlyViolation,
+    Repository,
+    StaleIssue,
+)
 from misthos.repositories.memory import MemoryRepository
 
 
@@ -24,6 +29,7 @@ def build_repository(database_url: str) -> Repository:
 
 
 __all__ = [
+    "AccountConflict",
     "AppendOnlyViolation",
     "MemoryRepository",
     "Repository",

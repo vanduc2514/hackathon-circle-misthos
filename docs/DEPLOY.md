@@ -34,8 +34,10 @@ fails the build if any service does not become healthy.
 
 Pass real integrations through from your shell or a `.env` file next to
 `compose.yaml`: `MISTHOS_GITHUB_APP_ID`, `MISTHOS_GITHUB_APP_PRIVATE_KEY`,
-`MISTHOS_GITHUB_WEBHOOK_SECRET` and `MISTHOS_ANTHROPIC_API_KEY`. Every other setting is
-in `backend/.env.example`.
+`MISTHOS_GITHUB_WEBHOOK_SECRET`, `MISTHOS_ANTHROPIC_API_KEY`, and for sign-in
+`MISTHOS_PUBLIC_URL`, `MISTHOS_SESSION_SECRET`, `MISTHOS_GITHUB_OAUTH_CLIENT_ID` and
+`MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`. Every other setting is in
+`backend/.env.example`.
 
 ### Observing it
 

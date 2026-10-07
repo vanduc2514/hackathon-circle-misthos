@@ -1,0 +1,298 @@
+"""Sign-in with a wallet (#70), a linked GitHub account (#80), approved criteria
+before funding (#21), and the explicit actions that take an issue from publication
+to payment without the demo stepper (#71)."""
+
+from __future__ import annotations
+
+import json
+from urllib.parse import parse_qs, urlsplit
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+from siwe_wallet import Wallet
+
+from misthos.api.v1 import auth as auth_routes
+from misthos.config import settings
+from misthos.domain.issue import IssueState
+from misthos.domain.review import ChangedFile
+from misthos.domain.signals import IssueFacts
+from misthos.main import app
+from misthos.services.github import PullRequest, SimulatedGitHub
+from misthos.services.github.oauth import GitHubOAuth
+from misthos.store import store
+
+API = "/api/v1"
+REPO = "acme/widgets"
+
+
+@pytest.fixture(autouse=True)
+def fresh_store():
+    store.reset()
+    yield
+
+
+@pytest.fixture
+def github() -> SimulatedGitHub:
+    assert isinstance(store.github, SimulatedGitHub)
+    return store.github
+
+
+def sign_in(client: TestClient, wallet: Wallet) -> dict:
+    nonce = client.post(f"{API}/auth/nonce").json()["nonce"]
+    message = wallet.message(nonce)
+    r = client.post(
+        f"{API}/auth/verify", json={"message": message, "signature": wallet.sign(message)}
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def onboard(client: TestClient, wallet: Wallet, role: str, name: str, login: str) -> dict:
+    sign_in(client, wallet)
+    account = client.post(f"{API}/auth/role", json={"role": role, "name": name})
+    assert account.status_code == 201, account.text
+    linked = client.post(f"{API}/auth/github/simulate", json={"login": login})
+    assert linked.status_code == 200, linked.text
+    return linked.json()
+
+
+class TestSignIn:
+    def test_a_wallet_signs_in_and_chooses_a_role_once(self) -> None:
+        client = TestClient(app)
+        wallet = Wallet(11)
+        session = sign_in(client, wallet)
+        assert session["address"] == wallet.address.lower()
+        assert session["account"] is None
+        assert client.get(f"{API}/auth/me").json()["account"] is None
+
+        r = client.post(f"{API}/auth/role", json={"role": "contributor", "name": "ada"})
+        assert r.status_code == 201 and r.json()["party_id"].startswith("CON-")
+        again = client.post(f"{API}/auth/role", json={"role": "publisher", "name": "Ada Inc"})
+        assert again.status_code == 409
+        assert client.get(f"{API}/auth/me").json()["account"]["role"] == "contributor"
+
+    def test_a_nonce_signs_in_once(self) -> None:
+        client = TestClient(app)
+        wallet = Wallet(12)
+        nonce = client.post(f"{API}/auth/nonce").json()["nonce"]
+        message = wallet.message(nonce)
+        body = {"message": message, "signature": wallet.sign(message)}
+        assert client.post(f"{API}/auth/verify", json=body).status_code == 200
+        assert client.post(f"{API}/auth/verify", json=body).status_code == 401
+
+    def test_a_message_for_another_site_is_refused(self) -> None:
+        client = TestClient(app)
+        wallet = Wallet(13)
+        nonce = client.post(f"{API}/auth/nonce").json()["nonce"]
+        message = wallet.message(nonce, domain="evil.example")
+        r = client.post(
+            f"{API}/auth/verify", json={"message": message, "signature": wallet.sign(message)}
+        )
+        assert r.status_code == 401
+
+    def test_a_bearer_token_works_like_the_cookie(self) -> None:
+        token = sign_in(TestClient(app), Wallet(14))["token"]
+        fresh = TestClient(app)
+        assert fresh.get(f"{API}/auth/me").status_code == 401
+        me = fresh.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+
+    def test_signing_out_ends_the_session(self) -> None:
+        client = TestClient(app)
+        sign_in(client, Wallet(15))
+        client.post(f"{API}/auth/logout")
+        assert client.get(f"{API}/auth/me").status_code == 401
+
+
+class TestGitHubLink:
+    def test_linking_goes_through_github_and_keeps_only_the_login(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[httpx.Request] = []
+
+        def github(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/login/oauth/access_token":
+                return httpx.Response(200, json={"access_token": "gho_once"})
+            return httpx.Response(200, json={"login": "ada-dev"})
+
+        client_ = GitHubOAuth("client-1", "secret-1", transport=httpx.MockTransport(github))
+        monkeypatch.setattr(auth_routes, "oauth", lambda: client_)
+
+        client = TestClient(app)
+        sign_in(client, Wallet(21))
+        client.post(f"{API}/auth/role", json={"role": "contributor", "name": "ada"})
+        start = client.post(f"{API}/auth/github/start").json()["authorize_url"]
+        state = parse_qs(urlsplit(start).query)["state"][0]
+        assert parse_qs(urlsplit(start).query)["client_id"] == ["client-1"]
+
+        r = client.get(
+            f"{API}/auth/github/callback", params={"code": "c0de", "state": state},
+            follow_redirects=False,
+        )  # fmt: skip
+        assert r.status_code == 303
+        account = client.get(f"{API}/auth/me").json()["account"]
+        assert account["github_login"] == "ada-dev"
+        contributor = store.get_contributor(account["party_id"])
+        assert contributor is not None and contributor.handle == "ada-dev"
+        assert seen[-1].headers["Authorization"] == "Bearer gho_once"
+        # The state is spent.
+        replay = client.get(f"{API}/auth/github/callback", params={"code": "c0de", "state": state})
+        assert replay.status_code == 400
+
+    def test_one_github_login_belongs_to_one_wallet(self) -> None:
+        first, second = TestClient(app), TestClient(app)
+        onboard(first, Wallet(22), "contributor", "a", "same-login")
+        sign_in(second, Wallet(23))
+        second.post(f"{API}/auth/role", json={"role": "contributor", "name": "b"})
+        r = second.post(f"{API}/auth/github/simulate", json={"login": "same-login"})
+        assert r.status_code == 409
+
+
+class TestTheWholeLoopWithoutTheDemoStepper:
+    def test_publication_to_payment_through_explicit_actions(self, github: SimulatedGitHub) -> None:
+        publisher, contributor = TestClient(app), TestClient(app)
+        onboard(publisher, Wallet(31), "publisher", "Acme", "acme-bot")
+        alice = onboard(contributor, Wallet(32), "contributor", "alice", "alice-dev")
+
+        github.put_issue(
+            IssueFacts(repo=REPO, number=5, title="Retry on 503", body="Fix `src/retry.py`.")
+        )
+        published = publisher.post(
+            f"{API}/issues",
+            json={"repo": REPO, "number": 5, "title": "x", "publisher_id": "PUB-1"},
+        )
+        assert published.status_code == 201, published.text
+        issue = published.json()
+        assert issue["publisher_id"] != "PUB-1"  # a signed-in publisher publishes as itself
+        iid = issue["id"]
+
+        # No funding before the criteria are approved (#21).
+        assert publisher.post(f"{API}/issues/{iid}/fund").status_code == 409
+        criteria = ["A test reproduces the 503.", "Retries back off.", "Changelog entry."]
+        r = publisher.post(f"{API}/issues/{iid}/criteria", json={"criteria": criteria})
+        assert r.status_code == 200 and r.json()["acceptance_criteria"] == criteria
+        assert publisher.post(f"{API}/issues/{iid}/fund").json()["state"] == "FUNDED"
+
+        assert contributor.post(f"{API}/issues/{iid}/claim").json()["state"] == "CLAIMED"
+
+        pr = PullRequest(
+            repo=REPO, number=77, author="alice-dev", head_sha="c" * 40,
+            body=f"Fixes #{5}", merged=False, files_changed=3, additions=40, deletions=2,
+        )  # fmt: skip
+        github.put_pull_request(pr)
+        github.put_checks(REPO, "c" * 40, True)
+        github.put_files(
+            REPO,
+            77,
+            [ChangedFile("src/retry.py", 30, 2), ChangedFile("tests/test_retry.py", 10),
+             ChangedFile("CHANGELOG.md", 1)],
+        )  # fmt: skip
+        submitted = contributor.post(f"{API}/issues/{iid}/submit", json={"pr_number": 77})
+        assert submitted.status_code == 200 and submitted.json()["state"] == "IN_REVIEW"
+
+        reviewed = publisher.post(f"{API}/issues/{iid}/review")
+        assert reviewed.status_code == 200 and reviewed.json()["state"] == "ACCEPTED"
+
+        merged = {
+            "action": "closed",
+            "repository": {"full_name": REPO},
+            "pull_request": {
+                "number": 77, "user": {"login": "alice-dev"}, "head": {"sha": "c" * 40},
+                "body": "Fixes #5", "merged": True,
+            },
+        }  # fmt: skip
+        hook = publisher.post(
+            f"{API}/webhooks/github",
+            content=json.dumps(merged),
+            headers={"X-GitHub-Event": "pull_request", "Content-Type": "application/json"},
+        )
+        assert hook.status_code == 202
+        rec = store.get(iid)
+        assert rec is not None and rec.state is IssueState.PAID
+        actions = [d.action for d in rec.decisions]
+        for step in ("published", "criteria_approved", "price_approved", "claimed",
+                     "submitted", "verdict_issued", "merged", "released"):  # fmt: skip
+            assert step in actions, step
+        assert rec.contributor_id == alice["party_id"]
+
+    def test_only_the_claimants_own_pull_request_can_be_submitted(
+        self, github: SimulatedGitHub
+    ) -> None:
+        contributor = TestClient(app)
+        onboard(contributor, Wallet(41), "contributor", "bob", "bob-dev")
+        contributor.post(f"{API}/issues/ISS-1001/claim")
+        github.put_pull_request(
+            PullRequest(
+                repo="acme/ledger-core",
+                number=9,
+                author="mallory",
+                head_sha="d" * 40,
+                body="",
+                merged=False,
+                files_changed=1,
+                additions=1,
+                deletions=0,
+            )  # fmt: skip
+        )
+        r = contributor.post(f"{API}/issues/ISS-1001/submit", json={"pr_number": 9})
+        assert r.status_code == 403 and "mallory" in r.json()["detail"]
+
+
+class TestWhoMayDoWhat:
+    def test_an_unlinked_account_cannot_price_or_contribute(self) -> None:
+        client = TestClient(app)
+        sign_in(client, Wallet(51))
+        client.post(f"{API}/auth/role", json={"role": "contributor", "name": "c"})
+        r = client.post(f"{API}/issues/ISS-1001/claim")
+        assert r.status_code == 403 and "link your GitHub" in r.json()["detail"]
+
+    def test_a_publisher_acts_only_on_its_own_issues(self) -> None:
+        client = TestClient(app)
+        onboard(client, Wallet(52), "publisher", "Other Co", "other-co")
+        r = client.post(f"{API}/issues/ISS-1006/criteria", json={"criteria": ["x"]})
+        assert r.status_code == 403
+
+    def test_a_contributor_cannot_publish(self) -> None:
+        client = TestClient(app)
+        onboard(client, Wallet(53), "contributor", "d", "d-dev")
+        r = client.post(
+            f"{API}/issues", json={"repo": "a/b", "title": "x", "publisher_id": "PUB-1"}
+        )
+        assert r.status_code == 403
+
+    def test_outside_the_simulation_a_budget_is_its_publishers_alone(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = TestClient(app)
+        onboard(client, Wallet(54), "publisher", "Budget Co", "budget-co")
+        mine = client.get(f"{API}/auth/me").json()["account"]["party_id"]
+        monkeypatch.setattr(settings, "simulated", False)
+
+        rows = {p["id"]: p for p in client.get(f"{API}/publishers").json()}
+        assert rows[mine]["budget_remaining_usdc"] is not None
+        others = [p for pid, p in rows.items() if pid != mine]
+        assert others
+        assert all(p["budget_remaining_usdc"] is None and p["approvers"] == [] for p in others)
+        anonymous = TestClient(app).get(f"{API}/publishers").json()
+        assert all(p["budget_remaining_usdc"] is None for p in anonymous)
+
+    def test_outside_the_simulation_anonymous_writes_are_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "simulated", False)
+        client = TestClient(app)
+        assert (
+            client.post(
+                f"{API}/issues", json={"repo": "a/b", "title": "x", "publisher_id": "PUB-1"}
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post(f"{API}/issues/ISS-1006/criteria", json={"criteria": ["x"]}).status_code
+            == 401
+        )
+        assert client.post(f"{API}/issues/ISS-1001/claim").status_code == 401
+        # The demo stepper fabricates pull requests, so a deployment refuses it outright.
+        assert client.post(f"{API}/issues/ISS-1006/advance").status_code == 403

@@ -283,7 +283,8 @@ class TestStatements:
         from misthos.config import settings
 
         monkeypatch.setattr(settings, "simulated", False)
-        assert client.get(f"{API}/contributors/CON-3/statements/2026").status_code == 403
+        # Anonymous outside the simulation: sign in first.
+        assert client.get(f"{API}/contributors/CON-3/statements/2026").status_code == 401
 
 
 class TestPrivacy:

@@ -10,7 +10,7 @@ from typing import Protocol
 from misthos.domain.compliance import PartyKind, Screening
 from misthos.domain.issue import IssueState
 from misthos.models.records import IssueRecord
-from misthos.schemas import Contributor, Decision, Publisher
+from misthos.schemas import Account, Contributor, Decision, Publisher
 
 
 class StaleIssue(Exception):
@@ -27,6 +27,10 @@ class StaleIssue(Exception):
 
 class AppendOnlyViolation(Exception):
     """A save would remove or rewrite a decision that is already on record."""
+
+
+class AccountConflict(Exception):
+    """A GitHub login can belong to one wallet only."""
 
 
 class Repository(Protocol):
@@ -60,6 +64,12 @@ class Repository(Protocol):
 
     def purge_screenings(self, before: datetime) -> int:
         """Delete checks older than the retention period. Returns how many went."""
+
+    def get_account(self, address: str) -> Account | None: ...
+
+    def save_account(self, account: Account) -> None:
+        """Create or update. A GitHub login already linked to another wallet is refused
+        with AccountConflict."""
 
     def record_delivery(self, delivery_id: str, event: str, at: datetime) -> bool:
         """Note a webhook delivery. False if it was already noted: GitHub redelivers,

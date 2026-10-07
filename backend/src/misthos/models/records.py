@@ -49,6 +49,8 @@ class IssueRecord:
     payout_hold: str | None = None
     """Why an entitled payout has not left the escrow yet, from the compliance gate."""
     payout_checked_at: datetime | None = None
+    criteria_approved_at: datetime | None = None
+    """When the publisher approved the acceptance criteria. No funding before it (#21)."""
     relisted_from: str | None = None
     """The issue this one re-lists at a higher band after nobody claimed it."""
     decisions: list[Decision] = field(default_factory=list)

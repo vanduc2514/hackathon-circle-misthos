@@ -125,7 +125,7 @@ class TestPublisherDecline:
         issue_id = self.accepted()
         monkeypatch.setattr(settings, "simulated", False)
         r = client.post(f"{API}/issues/{issue_id}/decline", json={"reason": "no"})
-        assert r.status_code == 403
+        assert r.status_code == 401
 
 
 @pytest.fixture
