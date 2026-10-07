@@ -25,13 +25,20 @@ contract Deploy is Script {
     function run() external returns (MisthosEscrow escrow) {
         address attestor = vm.envOr("MISTHOS_ATTESTOR_ADDRESS", msg.sender);
         address usdc = vm.envOr("MISTHOS_USDC_ADDRESS", ARC_USDC);
+        // Where the take rate goes. Left unset, the escrow still works for issues
+        // with no fee, but a release with a rate set would have nowhere to pay it.
+        address feeRecipient = vm.envOr("MISTHOS_FEE_RECIPIENT_ADDRESS", address(0));
 
         vm.startBroadcast();
         escrow = new MisthosEscrow(attestor, usdc);
+        if (feeRecipient != address(0)) {
+            escrow.setFeeRecipient(feeRecipient);
+        }
         vm.stopBroadcast();
 
         console.log("MisthosEscrow deployed at", address(escrow));
         console.log("Attestor              ", attestor);
         console.log("USDC                  ", usdc);
+        console.log("Fee recipient         ", feeRecipient);
     }
 }

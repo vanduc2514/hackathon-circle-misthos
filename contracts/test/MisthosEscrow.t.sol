@@ -41,6 +41,7 @@ contract MisthosEscrowTest is Test {
     address constant ATTESTOR = address(0xA77E5);
     address constant PUBLISHER = address(0xB0B);
     address constant CONTRIBUTOR = address(0xC0FE);
+    address constant FEE_RECIPIENT = address(0xFEE);
 
     bytes32 constant ISSUE = keccak256("ISS-1001");
 
@@ -107,7 +108,9 @@ contract MisthosEscrowTest is Test {
 
     // ---------------------------------------------------------------- release
 
-    function test_release_pays_the_contributor_in_one_transfer() public {
+    /// With no take rate configured the commitment is the contributor's whole
+    /// payment, which is the only configuration where one transfer settles it.
+    function test_release_without_a_take_rate_pays_the_whole_commitment() public {
         _commit();
 
         vm.prank(ATTESTOR);
@@ -160,6 +163,131 @@ contract MisthosEscrowTest is Test {
         escrow.release(ISSUE, CONTRIBUTOR, FIX);
 
         vm.expectRevert(MisthosEscrow.NotHeld.selector);
+        vm.prank(ATTESTOR);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
+    }
+
+    // -------------------------------------------------------------- take rate
+
+    /// The platform's revenue is the tier's rate on the fix price, carved out of
+    /// the commitment rather than added to it, and it lands in the same call.
+    function test_a_release_carves_the_tier_take_rate_out_of_the_commitment() public {
+        // 1200 basis points is the Open tier's 12 percent.
+        escrow.setFeeRecipient(FEE_RECIPIENT);
+        escrow.setFee(ISSUE, 1200);
+        _commit();
+
+        vm.prank(ATTESTOR);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
+
+        uint256 fee = (FIX * 1200) / 10_000;
+        assertEq(usdc.balanceOf(FEE_RECIPIENT), fee);
+        assertEq(usdc.balanceOf(CONTRIBUTOR), FIX - fee);
+        assertEq(usdc.balanceOf(FEE_RECIPIENT) + usdc.balanceOf(CONTRIBUTOR), FIX);
+        assertEq(usdc.balanceOf(address(escrow)), 0);
+    }
+
+    /// Rounding an odd commitment goes the contributor's way: the fee is floored,
+    /// so the platform never takes a base unit the rate did not earn.
+    function test_the_take_rate_rounds_down_in_the_contributors_favour() public {
+        uint256 odd = 55_555_555; // 55.555555 USDC
+        escrow.setFeeRecipient(FEE_RECIPIENT);
+        escrow.setFee(ISSUE, 1200);
+
+        vm.prank(PUBLISHER);
+        escrow.commit(ISSUE, odd, uint64(block.timestamp + 14 days));
+        vm.prank(ATTESTOR);
+        escrow.release(ISSUE, CONTRIBUTOR, odd);
+
+        uint256 fee = (odd * 1200) / 10_000; // 6.6666666 floors to 6.666666
+        assertEq(usdc.balanceOf(FEE_RECIPIENT), fee);
+        assertEq(usdc.balanceOf(CONTRIBUTOR), odd - fee);
+    }
+
+    /// A zero rate is a legal configuration and leaves the contributor whole.
+    function test_a_zero_take_rate_leaves_the_contributor_whole() public {
+        escrow.setFeeRecipient(FEE_RECIPIENT);
+        escrow.setFee(ISSUE, 0);
+        _commit();
+
+        vm.prank(ATTESTOR);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
+
+        assertEq(usdc.balanceOf(FEE_RECIPIENT), 0);
+        assertEq(usdc.balanceOf(CONTRIBUTOR), FIX);
+    }
+
+    /// Above 15 percent the tier table says the rate is renegotiated, so the
+    /// contract refuses to carry one even for the owner.
+    function test_the_take_rate_cannot_exceed_the_published_ceiling() public {
+        assertEq(escrow.MAX_FEE_BPS(), 1500);
+        vm.expectRevert(abi.encodeWithSelector(MisthosEscrow.FeeTooHigh.selector, 1501, 1500));
+        escrow.setFee(ISSUE, 1501);
+    }
+
+    /// A rate with nowhere to send the money would strand it in the contract,
+    /// where no one has a claim on it.
+    function test_a_release_with_a_fee_and_no_recipient_is_refused() public {
+        escrow.setFee(ISSUE, 1200);
+        _commit();
+
+        vm.expectRevert(MisthosEscrow.FeeRecipientNotSet.selector);
+        vm.prank(ATTESTOR);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
+    }
+
+    /// The rate and its recipient are the owner's to set, like the ceiling.
+    function test_only_the_owner_can_set_the_take_rate_and_its_recipient() public {
+        vm.expectRevert(MisthosEscrow.NotOwner.selector);
+        vm.prank(PUBLISHER);
+        escrow.setFee(ISSUE, 1200);
+
+        vm.expectRevert(MisthosEscrow.NotOwner.selector);
+        vm.prank(PUBLISHER);
+        escrow.setFeeRecipient(FEE_RECIPIENT);
+    }
+
+    /// A refund returns the publisher's money untouched: no fee is earned on work
+    /// that was never accepted.
+    function test_a_refund_never_pays_a_fee() public {
+        escrow.setFeeRecipient(FEE_RECIPIENT);
+        escrow.setFee(ISSUE, 1200);
+        uint64 deadline = _commit();
+        uint256 before = usdc.balanceOf(PUBLISHER);
+
+        vm.warp(deadline + 1);
+        escrow.refund(ISSUE);
+
+        assertEq(usdc.balanceOf(PUBLISHER) - before, FIX);
+        assertEq(usdc.balanceOf(FEE_RECIPIENT), 0);
+    }
+
+    /// Rotating the treasury moves where later fees land, not fees already paid.
+    function test_rotating_the_fee_recipient_moves_only_later_fees() public {
+        escrow.setFeeRecipient(FEE_RECIPIENT);
+        escrow.setFee(ISSUE, 1200);
+        _commit();
+
+        address next = address(0xFEE2);
+        escrow.setFeeRecipient(next);
+
+        vm.prank(ATTESTOR);
+        escrow.release(ISSUE, CONTRIBUTOR, FIX);
+
+        assertEq(usdc.balanceOf(FEE_RECIPIENT), 0);
+        assertEq(usdc.balanceOf(next), (FIX * 1200) / 10_000);
+    }
+
+    /// `Released` reports what the contributor received, not the gross
+    /// commitment, so an indexer cannot read the fee back as a contributor payout.
+    function test_released_reports_the_contributor_payout_not_the_gross() public {
+        escrow.setFeeRecipient(FEE_RECIPIENT);
+        escrow.setFee(ISSUE, 1200);
+        _commit();
+        uint256 fee = (FIX * 1200) / 10_000;
+
+        vm.expectEmit(true, true, false, true, address(escrow));
+        emit MisthosEscrow.Released(ISSUE, CONTRIBUTOR, FIX - fee);
         vm.prank(ATTESTOR);
         escrow.release(ISSUE, CONTRIBUTOR, FIX);
     }
