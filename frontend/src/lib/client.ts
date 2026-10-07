@@ -17,6 +17,42 @@ export type Publisher = components['schemas']['PublisherListing']
 export type LoopOut = components['schemas']['LoopOut']
 export type SpendOut = components['schemas']['SpendOut']
 
+export type Account = components['schemas']['Account']
+export type MeOut = components['schemas']['MeOut']
+export type SessionOut = components['schemas']['SessionOut']
+
+/** A refusal from the API, carrying the reason it gave. */
+export class ApiError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
+/** FastAPI's `detail`: a sentence, or a list of validation errors. */
+export function detailOf(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('detail' in error)) return null
+  const detail = (error as { detail: unknown }).detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) =>
+        item && typeof item === 'object' && 'msg' in item ? String(item.msg) : String(item),
+      )
+      .join('; ')
+  }
+  return null
+}
+
+/** The body of a successful call, or an ApiError with the API's own reason. */
+export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
+  if (result.error === undefined && result.data !== undefined) return result.data
+  const { status, statusText } = result.response
+  throw new ApiError(status, detailOf(result.error) ?? `${status} ${statusText}`.trim())
+}
+
 export type Money = { usdc: string | number; base_units: number }
 
 export const money = (value: unknown): string => {

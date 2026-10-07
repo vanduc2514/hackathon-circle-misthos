@@ -26,6 +26,7 @@ the step.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import random
 import threading
@@ -113,6 +114,17 @@ from misthos.services.review import Reviewer, build_reviewer
 
 __all__ = ["IssueRecord", "Store", "store"]
 
+
+def _demo_files(repo: str) -> list[ChangedFile]:
+    """The file list of a pull request the simulation makes up."""
+    slug = repo.split("/")[-1].replace("-", "_")
+    return [
+        ChangedFile(f"src/{slug}/fix.py", additions=40, deletions=6),
+        ChangedFile(f"tests/test_{slug}.py", additions=22),
+        ChangedFile(f"docs/{slug}.md", additions=12),
+        ChangedFile("CHANGELOG.md", additions=2),
+    ]
+
 # Recorded on every commitment. Set MISTHOS_ESCROW_CONTRACT to the deployed address.
 ESCROW_CONTRACT = settings.escrow_contract
 CHAIN = settings.chain
@@ -159,6 +171,10 @@ class AccountExists(Exception):
 
 class CriteriaNotApproved(Exception):
     """No funding before the publisher approves the acceptance criteria (#21)."""
+
+
+class NotSimulated(Exception):
+    """A step only the simulated GitHub can take, asked of the real one."""
 
 
 class DeclineRefused(Exception):
@@ -1820,17 +1836,62 @@ class Store:
         pull requests that do not exist."""
         if rec.submission is None or not isinstance(self.github, SimulatedGitHub):
             return
-        slug = rec.repo.split("/")[-1].replace("-", "_")
-        self.github.put_files(
-            rec.repo,
-            rec.submission.pr_number,
-            [
-                ChangedFile(f"src/{slug}/fix.py", additions=40, deletions=6),
-                ChangedFile(f"tests/test_{slug}.py", additions=22),
-                ChangedFile(f"docs/{slug}.md", additions=12),
-                ChangedFile("CHANGELOG.md", additions=2),
-            ],
+        self.github.put_files(rec.repo, rec.submission.pr_number, _demo_files(rec.repo))
+
+    # ------------------------------------------------- the simulated GitHub's side
+
+    def demo_pull_request(self, issue_id: str) -> PullRequest:
+        """Open, on the simulated GitHub, the pull request the claimant would open on
+        the real one: a fix, its test, docs and a changelog line, checks passing.
+        After rework it is a new commit on the same pull request. Submitting it is
+        still the claimant's explicit action."""
+        self.ensure_ready()
+        if not isinstance(self.github, SimulatedGitHub):
+            raise NotSimulated("only the simulated GitHub opens pull requests for you")
+        rec = self.repo.get_issue(issue_id)
+        if rec is None:
+            raise KeyError(issue_id)
+        if rec.contributor_id is None or rec.state not in {
+            IssueState.CLAIMED,
+            IssueState.REWORK,
+        }:
+            raise lifecycle.IllegalTransition(rec.state, IssueState.IN_REVIEW)
+        files = _demo_files(rec.repo)
+        pr = PullRequest(
+            repo=rec.repo,
+            number=rec.submission.pr_number if rec.submission else rec.number + 400,
+            author=self._handle(rec.contributor_id),
+            head_sha=f"{random.getrandbits(160):040x}",
+            body=f"Fixes #{rec.number}",
+            merged=False,
+            files_changed=len(files),
+            additions=sum(f.additions for f in files),
+            deletions=sum(f.deletions for f in files),
         )
+        self.github.put_pull_request(pr)
+        self.github.put_files(rec.repo, pr.number, files)
+        self.github.put_checks(rec.repo, pr.head_sha, True)
+        return pr
+
+    def demo_merge(self, issue_id: str) -> IssueRecord:
+        """Merge the submitted pull request on the simulated GitHub, as the publisher
+        would on the real one, and handle it as that merge's webhook is handled."""
+        self.ensure_ready()
+        if not isinstance(self.github, SimulatedGitHub):
+            raise NotSimulated("merge the pull request on GitHub")
+        rec = self.repo.get_issue(issue_id)
+        if rec is None:
+            raise KeyError(issue_id)
+        if rec.submission is None:
+            raise NotTheSubmission(f"{issue_id} has no pull request to merge")
+        number = rec.submission.pr_number
+        try:
+            opened = self.github.read_pull_request(rec.repo, number)
+        except GitHubError:
+            opened = None
+        if opened is not None:
+            self.github.put_pull_request(dataclasses.replace(opened, merged=True))
+        return self.pull_request_closed(issue_id, number, merged=True)
 
     # ------------------------------------------------------------- accounts
 
@@ -2255,6 +2316,8 @@ class Store:
             contributor_id=rec.contributor_id,
             paid_usdc=str(rec.paid.decimal) if rec.paid else None,
             github_url=rec.github_url,
+            criteria_approved_at=rec.criteria_approved_at,
+            awaiting_approver=rec.payout_hold == PayoutGate.AWAIT_APPROVER.value,
         )
 
     def summaries(self, records: list[IssueRecord]) -> list[IssueSummaryOut]:

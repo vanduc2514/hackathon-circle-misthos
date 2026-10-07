@@ -12,7 +12,7 @@ The diagrams below describe the target system. This table is what is actually in
 
 | Layer | Component | State |
 | --- | --- | --- |
-| Web | Vite + React SPA, generated API client | Built. Five routes, live against the API. Sign-in screens are #73 |
+| Web | Vite + React SPA, generated API client | Built. Sign-in, publishing and every lifecycle action, live against the API (#73); a Playwright test drives the whole loop in CI |
 | Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
 | Core | FastAPI, lifecycle, pricing engine, review agent, decision log, money ledger | Built. Money moves through a chain gateway, simulated until #69. The review agent is Claude once `MISTHOS_ANTHROPIC_API_KEY` is set, and a rule reviewer otherwise |
 | Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
@@ -149,7 +149,7 @@ The Circle box is a platform dependency rather than a library. Three things in t
 | Component | Responsibility | Notes |
 | --- | --- | --- |
 | `frontend/` | The interface for publishers and contributors | Vite 6, React 19, TypeScript. An SPA, so no server rendering and no SEO to lose behind a login |
-| Routing | `react-router-dom` | Three routes: overview, issues, issue detail |
+| Routing | `react-router-dom` | Overview, issues, issue detail with its actions, loop, spend, publish, account |
 | Server state | TanStack Query | Caching and invalidation. A lifecycle action invalidates the issue, its timeline, the list and the metrics in one go |
 | API access | `openapi-typescript` plus `openapi-fetch` | The client is generated from the API's OpenAPI schema, so backend and frontend drift is a compile error rather than a runtime surprise |
 
@@ -554,7 +554,7 @@ The line between T1 and T2 is a wallet signature. A wallet signs in with a Sign-
 | Spend, audit export, statements, a publisher's budget and policy | The party itself | 401, 403 |
 | Everything else read-only | Anyone | |
 
-Criteria are approved before the price, and funding is refused until they are (#21), so the contract a contributor claims is the one the publisher read. The simulation still lets an anonymous visitor drive the seeded demo, and only the simulation serves the demo stepper, which fabricates a pull request and a merge.
+Criteria are approved before the price, and funding is refused until they are (#21), so the contract a contributor claims is the one the publisher read. The simulation still lets an anonymous visitor drive the seeded demo, and only the simulation serves the demo stepper, which fabricates a pull request and a merge. It also serves the simulated GitHub's side to the web app: `/demo/issues/{id}/pull-request` opens the claimant's pull request and `/demo/issues/{id}/merge` merges it, handled exactly as the real merge's webhook is, so the browser can run the loop with every other step real.
 
 The interesting line is between T3 and T4. Our services can produce an acceptance attestation, but only the escrow contract can act on it, and only for an issue whose funds are committed. Compromising a service gets an attacker the ability to request a release, not the ability to move a budget.
 

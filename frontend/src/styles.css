@@ -791,6 +791,101 @@ button {
   flex-wrap: wrap;
 }
 
+/* ----------------------------------------------------------------- forms */
+
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 720px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--g300);
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.field.grow {
+  flex: 1 1 240px;
+}
+
+.input {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--white);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  width: 100%;
+  resize: vertical;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+.input:invalid:not(:placeholder-shown) {
+  border-color: rgba(194, 84, 63, 0.5);
+}
+
+.radio-row {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  color: var(--g100);
+}
+
+.radio-row label,
+.check {
+  cursor: pointer;
+  color: var(--g100);
+  font-size: 12px;
+}
+
+input[type='radio'],
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.form-error {
+  margin-top: 12px;
+}
+
+.action-hint {
+  margin-bottom: 12px;
+}
+
+.align-end {
+  align-self: flex-end;
+}
+
+.demo-shortcuts {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 @media (max-width: 980px) {
   .hero,
   .detail-cols,

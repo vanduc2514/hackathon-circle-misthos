@@ -1,17 +1,22 @@
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { lazy, Suspense } from 'react'
+import { Link, NavLink, Route, Routes } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, type IssueOut } from './lib/client'
+import { useHealth, useMe } from './lib/session'
 import Dashboard from './routes/Dashboard'
 import Issues from './routes/Issues'
 import IssueDetail from './routes/IssueDetail'
 import Loop from './routes/Loop'
+import Publish from './routes/Publish'
 import Spend from './routes/Spend'
 
+// Signing carries the curve arithmetic, so it loads only where someone signs in.
+const AccountPage = lazy(() => import('./routes/Account'))
+
 function Layout({ children }: { children: React.ReactNode }) {
-  const { data: health } = useQuery({
-    queryKey: ['health'],
-    queryFn: async () => (await api.GET('/api/v1/health')).data,
-  })
+  const { data: health } = useHealth()
+  const { data: me } = useMe()
+  const account = me?.account ?? null
 
   return (
     <div className="shell">
@@ -33,6 +38,11 @@ function Layout({ children }: { children: React.ReactNode }) {
           <NavLink to="/spend" className={({ isActive }) => (isActive ? 'active' : '')}>
             Spend
           </NavLink>
+          {account?.role === 'publisher' && (
+            <NavLink to="/publish" className={({ isActive }) => (isActive ? 'active' : '')}>
+              Publish
+            </NavLink>
+          )}
           <a href="/docs" target="_blank" rel="noreferrer">
             API
           </a>
@@ -45,13 +55,20 @@ function Layout({ children }: { children: React.ReactNode }) {
               simulated
             </span>
           )}
+          <Link to="/account" className={`chip ${me ? '' : 'accent'}`}>
+            {!me
+              ? 'Sign in'
+              : account
+                ? `${account.role} · ${account.github_login ?? account.party_id}`
+                : 'Choose a side'}
+          </Link>
         </div>
       </nav>
       <main className="main">{children}</main>
       <footer className="footer">
         <span>
-          Misthos &middot; fixed price per issue, settled in USDC on Arc. This build is a
-          simulation: no chain is contacted.
+          Misthos &middot; fixed price per issue, settled in USDC on Arc.
+          {health?.simulated && ' This build is a simulation: no chain is contacted.'}
         </span>
         <span>{health ? `${health.seeded_issues} seeded issues` : ''}</span>
       </footer>
@@ -73,6 +90,15 @@ export default function App() {
         <Route path="/issues/:issueId" element={<IssueDetail />} />
         <Route path="/loop" element={<Loop />} />
         <Route path="/spend" element={<Spend />} />
+        <Route path="/publish" element={<Publish />} />
+        <Route
+          path="/account"
+          element={
+            <Suspense fallback={<div className="empty">Loading…</div>}>
+              <AccountPage />
+            </Suspense>
+          }
+        />
         <Route
           path="*"
           element={

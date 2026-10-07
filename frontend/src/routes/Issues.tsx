@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api, money, relativeTime, type IssueSummaryOut } from '../lib/client'
+import { useMe } from '../lib/session'
 import { Panel, StateBadge } from '../components/ui'
 
 const FILTERS = [
@@ -17,7 +18,11 @@ const FILTERS = [
 ]
 
 export default function Issues() {
-  const [state, setState] = useState('')
+  // The filter lives in the URL, so a link can open the list already filtered.
+  const [params, setParams] = useSearchParams()
+  const state = params.get('state') ?? ''
+  const setState = (next: string) => setParams(next ? { state: next } : {})
+  const { data: me } = useMe()
   const [complianceOnly, setComplianceOnly] = useState(false)
 
   const { data, isLoading, error } = useQuery({
@@ -49,6 +54,11 @@ export default function Issues() {
             because the price is already public.
           </p>
         </div>
+        {me?.account?.role === 'publisher' && (
+          <Link className="btn primary" to="/publish">
+            Publish an issue
+          </Link>
+        )}
       </div>
 
       <div className="filter-bar">

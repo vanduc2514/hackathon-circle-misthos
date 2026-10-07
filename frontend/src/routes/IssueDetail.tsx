@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import {
   api,
@@ -10,33 +10,13 @@ import {
   type TimelineEntry,
 } from '../lib/client'
 import { Bar, Panel, StateBadge, Stepper } from '../components/ui'
-
-/** The one step the demo runner can take from the current state. */
-function nextAction(state: string): { label: string; hint: string } | null {
-  switch (state) {
-    case 'AWAITING_APPROVAL':
-      return {
-        label: 'Approve price and commit funds',
-        hint: 'Human checkpoint: the agent cannot commit money.',
-      }
-    case 'FUNDED':
-      return { label: 'Claim the issue', hint: 'First claim wins, held for 72 hours.' }
-    case 'CLAIMED':
-      return { label: 'Submit a pull request', hint: 'Runs the project’s own checks.' }
-    case 'IN_REVIEW':
-      return { label: 'Issue the verdict', hint: 'The platform reviews; no human confirms it.' }
-    case 'REWORK':
-      return { label: 'Resubmit after rework', hint: 'Rework rounds are bounded.' }
-    case 'ACCEPTED':
-      return { label: 'Merge and release', hint: 'Merge is acceptance. Silence for 7 days releases too.' }
-    default:
-      return null
-  }
-}
+import IssueActions from '../components/IssueActions'
+import { useHealth, useMe } from '../lib/session'
 
 export default function IssueDetail() {
   const { issueId = '' } = useParams()
-  const qc = useQueryClient()
+  const me = useMe()
+  const health = useHealth()
 
   const { data: issue, isLoading, error } = useQuery({
     queryKey: ['issue', issueId],
@@ -49,26 +29,6 @@ export default function IssueDetail() {
       (await api.GET('/api/v1/issues/{issue_id}/timeline', { params: { path: { issue_id: issueId } } })).data as TimelineEntry[] | undefined,
   })
 
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['issue', issueId] })
-    qc.invalidateQueries({ queryKey: ['timeline', issueId] })
-    qc.invalidateQueries({ queryKey: ['issues'] })
-    qc.invalidateQueries({ queryKey: ['metrics'] })
-    qc.invalidateQueries({ queryKey: ['decisions'] })
-  }
-
-  const step = useMutation({
-    mutationFn: async () =>
-      (await api.POST('/api/v1/issues/{issue_id}/advance', { params: { path: { issue_id: issueId } } })).data,
-    onSuccess: invalidate,
-  })
-
-  const complete = useMutation({
-    mutationFn: async () =>
-      (await api.POST('/api/v1/issues/{issue_id}/complete', { params: { path: { issue_id: issueId } } })).data,
-    onSuccess: invalidate,
-  })
-
   if (isLoading) return <div className="empty">Loading…</div>
   if (error || !issue)
     return (
@@ -78,8 +38,6 @@ export default function IssueDetail() {
     )
 
   const p = issue.proposal
-  const action = nextAction(issue.state)
-  const isSettled = ['PAID', 'REFUNDED'].includes(issue.state)
   const signals = p ? Object.entries(p.signals) : []
 
   // Place the recommended price inside the band for the visual.
@@ -127,6 +85,11 @@ export default function IssueDetail() {
         {/* ------------------------------------------------------- left column */}
         <div className="col">
           <Panel title="Acceptance criteria">
+            <p className="stat-hint" style={{ marginBottom: 10 }}>
+              {issue.criteria_approved_at
+                ? `Approved by the publisher ${shortTime(issue.criteria_approved_at)}. The review judges the work against these.`
+                : 'Drafted by the agent. The publisher approves them before any money is committed.'}
+            </p>
             <ul className="criteria">
               {issue.acceptance_criteria.map((c) => (
                 <li key={c}>{c}</li>
@@ -303,40 +266,7 @@ export default function IssueDetail() {
           )}
 
           <Panel title="Next step">
-            {isSettled ? (
-              <p className="dim">
-                This issue is closed. {issue.state === 'PAID' ? 'The contributor was paid.' : 'Funds returned to the publisher.'}
-              </p>
-            ) : action ? (
-              <>
-                <p className="dim" style={{ marginBottom: 12 }}>
-                  {action.hint}
-                </p>
-                <div className="btn-row">
-                  <button
-                    className="btn primary"
-                    onClick={() => step.mutate()}
-                    disabled={step.isPending}
-                  >
-                    {step.isPending ? 'Working…' : action.label}
-                  </button>
-                  <button
-                    className="btn"
-                    onClick={() => complete.mutate()}
-                    disabled={complete.isPending}
-                  >
-                    {complete.isPending ? 'Working…' : 'Run to settlement'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <p className="dim">Nothing to do from {issue.state}.</p>
-            )}
-            {(step.error || complete.error) && (
-              <div className="error-box" style={{ marginTop: 12 }}>
-                {String((step.error ?? complete.error) as Error)?.slice(0, 200)}
-              </div>
-            )}
+            <IssueActions issue={issue} me={me.data} simulated={health.data?.simulated ?? false} />
           </Panel>
 
           <Panel title="Parties">

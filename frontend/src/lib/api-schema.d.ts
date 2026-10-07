@@ -493,6 +493,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/demo/issues/{issue_id}/pull-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo Pull Request
+         * @description Open the claimant's pull request on the simulated GitHub, so the browser can
+         *     submit it. The simulation's only; submitting stays the claimant's own action.
+         */
+        post: operations["demo_pull_request_api_v1_demo_issues__issue_id__pull_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/demo/issues/{issue_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo Merge
+         * @description Merge the submitted pull request on the simulated GitHub, as the publisher
+         *     would on the real one; it is handled exactly as that merge's webhook. The
+         *     simulation's only.
+         */
+        post: operations["demo_merge_api_v1_demo_issues__issue_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/demo/reset": {
         parameters: {
             query?: never;
@@ -868,6 +911,18 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /**
+         * DemoPullRequestOut
+         * @description A pull request the simulated GitHub opened for the claimant (simulation only).
+         */
+        DemoPullRequestOut: {
+            /** Pr Number */
+            pr_number: number;
+            /** Author */
+            author: string;
+            /** Head Sha */
+            head_sha: string;
+        };
         /** DisputeRequest */
         DisputeRequest: {
             /** Reason */
@@ -999,6 +1054,13 @@ export interface components {
             paid_usdc?: string | null;
             /** Github Url */
             github_url: string;
+            /** Criteria Approved At */
+            criteria_approved_at?: string | null;
+            /**
+             * Awaiting Approver
+             * @default false
+             */
+            awaiting_approver: boolean;
         };
         /** IssueSummaryOut */
         IssueSummaryOut: {
@@ -2354,6 +2416,99 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Decision"][];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    demo_pull_request_api_v1_demo_issues__issue_id__pull_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoPullRequestOut"];
+                };
+            };
+            /** @description Outside the simulation, or not the claimant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Nothing claimed and waiting for a pull request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    demo_merge_api_v1_demo_issues__issue_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Outside the simulation, or not the publisher */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No pull request to merge, or nothing to release */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
