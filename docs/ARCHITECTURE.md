@@ -253,7 +253,7 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 
 ## Runtime topology
 
-Four processes, three ports, and no infrastructure to run for the simulation.
+Four processes, three ports, and no infrastructure to run for the simulation. `compose.yaml` runs all four against Postgres and Redis, and [DEPLOY.md](./DEPLOY.md) covers it and the testnet deploy.
 
 ```mermaid
 flowchart LR
@@ -274,7 +274,9 @@ flowchart LR
 | `web` | Node 22, Vite | 5173 | `frontend/src/main.tsx` | Built |
 | `api` | Python 3.11, uvicorn | 8000 | `backend/src/misthos/main.py` | Built |
 | `edge` | Node 22, Express | 8080 | `edge/src/index.ts` | Built, rails stubbed |
-| `worker` | Python 3.11 | none | `backend/src/misthos/workers/` | Built. Runs inside `api` by default; a separate process needs Postgres |
+| `worker` | Python 3.11 | 9100, metrics only | `backend/src/misthos/workers/` | Built. Runs inside `api` by default; a separate process needs Postgres, as in compose |
+
+Every process logs one JSON object per line when `MISTHOS_LOG_JSON` is set, each with a correlation id that follows a request into the store and groups a sweeper pass. The API serves Prometheus metrics at `/internal/metrics` and the worker on its metrics port: request latency by route, price and review latency, review cost, money events by kind, and the ledger divergence gauge and alert counter (`backend/src/misthos/observability/`).
 
 | Data | Where it lives today | Where it goes |
 | --- | --- | --- |

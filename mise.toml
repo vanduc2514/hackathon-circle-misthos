@@ -42,6 +42,15 @@ description = "Replay the review agent over the regression corpus and report agr
 dir = "backend"
 run = "uv run python -m misthos.services.review.harness"
 
+[tasks."compose:up"]
+description = "Build and run the whole system: web, api, worker, edge, Postgres and Redis"
+run = "docker compose up --build"
+
+[tasks."contracts:deploy"]
+description = "Deploy MisthosEscrow to Arc testnet with the misthos-deployer keystore"
+dir = "contracts"
+run = "forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast"
+
 [tasks."dev:edge"]
 description = "x402 gate and Circle CLI bridge on :8080"
 dir = "edge"

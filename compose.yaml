@@ -1,0 +1,119 @@
+# The whole system as it ships: the web app, the API, the sweeper and the edge
+# service, against Postgres and Redis.
+#
+#   docker compose up --build
+#
+# Then the web app is on http://localhost:5173, the API reference on
+# http://localhost:5173/docs, and the edge on http://localhost:8080. Everything is
+# still simulated: no chain is contacted unless you configure one (docs/DEPLOY.md).
+name: misthos
+
+x-backend: &backend
+  build: ./backend
+  environment: &backend-env
+    MISTHOS_DATABASE_URL: postgresql+psycopg://misthos:misthos@postgres:5432/misthos
+    MISTHOS_REDIS_URL: redis://redis:6379/0
+    MISTHOS_LOG_JSON: "true"
+    # Anything else from backend/.env.example, such as the GitHub App or the review
+    # agent's key, can be passed through from your shell or an .env file here.
+    MISTHOS_GITHUB_APP_ID: ${MISTHOS_GITHUB_APP_ID:-}
+    MISTHOS_GITHUB_APP_PRIVATE_KEY: ${MISTHOS_GITHUB_APP_PRIVATE_KEY:-}
+    MISTHOS_GITHUB_WEBHOOK_SECRET: ${MISTHOS_GITHUB_WEBHOOK_SECRET:-dev-secret}
+    MISTHOS_ANTHROPIC_API_KEY: ${MISTHOS_ANTHROPIC_API_KEY:-}
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: misthos
+      POSTGRES_PASSWORD: misthos
+      POSTGRES_DB: misthos
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U misthos"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      # The worker owns the sweeper, so it runs once however many API processes run.
+      MISTHOS_SWEEPER_IN_PROCESS: "false"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "misthos.workers"]
+    environment:
+      <<: *backend-env
+      MISTHOS_WORKER_METRICS_PORT: "9100"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/metrics')"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  web:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  edge:
+    build: ./edge
+    environment:
+      EDGE_PORT: "8080"
+      CORE_API_URL: http://api:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  pgdata:

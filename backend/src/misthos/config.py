@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # real screening provider replaces the simulated one; this is for demos and tests.
     screening_denylist: str = ""
 
+    # Logging and metrics. JSON lines for a log pipeline, plain text for a terminal.
+    log_json: bool = False
+    log_level: str = "INFO"
+    # Where a separate worker serves its Prometheus metrics; zero serves none.
+    worker_metrics_port: int = 0
+
     # Redis for the per-issue lock, idempotency keys and rate limits across processes.
     # Empty keeps them in this process: right for one process, wrong for two.
     redis_url: str = ""

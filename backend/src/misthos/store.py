@@ -54,6 +54,14 @@ from misthos.domain.review import ChangedFile, Judgement, Submitted, Verdict, de
 from misthos.domain.signals import read as read_signals
 from misthos.domain.timers import TimedAction
 from misthos.models.records import IssueRecord
+from misthos.observability.metrics import (
+    DIVERGENCE_ALERTS,
+    DIVERGENCES,
+    MONEY_EVENTS,
+    PRICE_SECONDS,
+    REVIEW_COST_USDC,
+    REVIEW_SECONDS,
+)
 from misthos.repositories import MemoryRepository, Repository, StaleIssue, build_repository
 from misthos.schemas import (
     Claim,
@@ -94,8 +102,9 @@ from misthos.services.review import Reviewer, build_reviewer
 
 __all__ = ["IssueRecord", "Store", "store"]
 
-ESCROW_CONTRACT = "0x7A3f19bE5c2D80416aB9e0C7d3F5a12B6c8E4d90"
-CHAIN = "arc-testnet"
+# Recorded on every commitment. Set MISTHOS_ESCROW_CONTRACT to the deployed address.
+ESCROW_CONTRACT = settings.escrow_contract
+CHAIN = settings.chain
 
 REPO_POOL = [
     "acme/ledger-core",
@@ -459,8 +468,8 @@ class Store:
         """The only assignment of an issue's state, and it asks the domain first."""
         rec.state = lifecycle.transition(rec.state, to)
 
-    @staticmethod
     def _book(
+        self,
         rec: IssueRecord,
         kind: MoneyEventKind,
         amount: Usdc,
@@ -468,18 +477,18 @@ class Store:
         tx_hash: str,
         at: datetime,
     ) -> None:
-        rec.money_events.append(
-            MoneyEvent(
-                issue_id=rec.id,
-                kind=kind,
-                amount=amount,
-                counterparty_id=counterparty_id,
-                tx_hash=tx_hash,
-                occurred_at=at,
-            )
+        event = MoneyEvent(
+            issue_id=rec.id,
+            kind=kind,
+            amount=amount,
+            counterparty_id=counterparty_id,
+            tx_hash=tx_hash,
+            occurred_at=at,
         )
+        rec.money_events.append(event)
         # Refuse here, before the save, any history money cannot have taken.
         ledger.position(rec.money_events)
+        self._later(f"{kind} on {rec.id} recorded", lambda: _observe_money(event))
 
     @staticmethod
     def _committed(rec: IssueRecord) -> Usdc:
@@ -982,7 +991,7 @@ class Store:
         for suspect in suspects:
             if suspect.issue_id not in records:
                 # Money on chain for an issue we have no record of at all.
-                log.error("ALERT ledger divergence: %s", suspect)
+                _alert(suspect)
                 confirmed.append(suspect)
                 continue
             try:
@@ -991,6 +1000,7 @@ class Store:
             except (Busy, StaleIssue):
                 continue  # Someone is acting on it; the next pass looks again.
             confirmed.extend(found)
+        DIVERGENCES.set(len(confirmed))
         return confirmed
 
     def _record_divergence(self, issue_id: str, now: datetime) -> list[Divergence]:
@@ -1001,7 +1011,7 @@ class Store:
             {issue_id: rec.money_events}, {issue_id: theirs} if theirs else {}
         )
         for divergence in found:
-            log.error("ALERT ledger divergence: %s", divergence)
+            _alert(divergence)
             outcome = f"ledger says {divergence.ledger}, chain says {divergence.chain}"
             if any(
                 d.action == "ledger_divergence" and d.outcome == outcome for d in rec.decisions
@@ -1216,6 +1226,7 @@ class Store:
         publisher = self.repo.get_publisher(payload.publisher_id)
         if publisher is None:
             raise KeyError(payload.publisher_id)
+        started = time.perf_counter()
         facts = None
         if payload.number and not payload.signals:
             try:
@@ -1272,6 +1283,7 @@ class Store:
             outcome="issue published and price proposed",
         )
         self.repo.save_issues(rec)
+        _observe_price(rec, "github" if facts is not None else "form", started)
         return rec
 
     # ------------------------------------------------------------- review
@@ -1361,6 +1373,7 @@ class Store:
                 when=when,
             )
             self.repo.save_issues(fresh)
+            _observe_review(fresh.id, judgement, decided.verdict.value, seconds)
             return fresh
 
     def dispute(self, issue_id: str, reason: str, now: datetime | None = None) -> IssueRecord:
@@ -1615,6 +1628,7 @@ class Store:
                 raise KeyError(issue_id)
             if rec.state not in {IssueState.PRICED, IssueState.AWAITING_APPROVAL}:
                 raise lifecycle.IllegalTransition(rec.state, IssueState.PRICED)
+            started = time.perf_counter()
             facts = self.github.read_issue(rec.repo, rec.number)
             if facts is None or rec.proposal is None:
                 return rec
@@ -1653,6 +1667,7 @@ class Store:
                 when=when,
             )
             self.repo.save_issues(rec)
+            _observe_price(rec, "reprice", started)
             return rec
 
     def submit_pull_request(
@@ -1880,6 +1895,66 @@ class Store:
 
     def metrics(self, now: datetime | None = None) -> MetricsOut:
         return metrics.compute(self.list_issues(), now or _now())
+
+
+# ------------------------------------------------------------------ observed
+
+
+def _observe_money(event: MoneyEvent) -> None:
+    MONEY_EVENTS.labels(kind=event.kind.value).inc()
+    log.info(
+        "money event",
+        extra={
+            "issue_id": event.issue_id,
+            "kind": event.kind.value,
+            "amount_usdc": f"{event.amount.decimal:.6f}",
+            "counterparty_id": event.counterparty_id,
+            "tx_hash": event.tx_hash,
+        },
+    )
+
+
+def _observe_review(issue_id: str, judgement: Judgement, verdict: str, seconds: float) -> None:
+    REVIEW_SECONDS.labels(reviewer=judgement.reviewer, verdict=verdict).observe(seconds)
+    REVIEW_COST_USDC.labels(reviewer=judgement.reviewer).observe(float(judgement.cost.decimal))
+    log.info(
+        "verdict issued",
+        extra={
+            "issue_id": issue_id,
+            "verdict": verdict,
+            "reviewer": judgement.reviewer,
+            "seconds": seconds,
+            "cost_usdc": _cost_text(judgement.cost),
+        },
+    )
+
+
+def _observe_price(rec: IssueRecord, source: str, started: float) -> None:
+    seconds = time.perf_counter() - started
+    PRICE_SECONDS.labels(source=source).observe(seconds)
+    log.info(
+        "price proposed",
+        extra={
+            "issue_id": rec.id,
+            "source": source,
+            "seconds": round(seconds, 3),
+            "price_usdc": f"{rec.proposal.recommended.decimal:.2f}" if rec.proposal else None,
+        },
+    )
+
+
+def _alert(divergence: Divergence) -> None:
+    DIVERGENCE_ALERTS.inc()
+    log.error(
+        "ALERT ledger divergence: %s",
+        divergence,
+        extra={
+            "alert": "ledger_divergence",
+            "issue_id": divergence.issue_id,
+            "ledger": divergence.ledger,
+            "chain": divergence.chain,
+        },
+    )
 
 
 # ------------------------------------------------------------------ review
