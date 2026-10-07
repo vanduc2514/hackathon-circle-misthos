@@ -414,19 +414,40 @@ class TestReadPath:
         assert "could not read acme/private#5" in r.json()["detail"]
 
 
+class LiveGateway(SimulatedGitHub):
+    """The App's gateway as far as the receiver is concerned.
+
+    It keeps the simulation's fixtures so a signed delivery still lands and can be
+    read back, but it reports the live name, which is what the receiver keys
+    verification on. That lets a test prove the guard fires for a real deployment
+    while `MISTHOS_SIMULATED` is still at its default.
+    """
+
+    name = "github-app"
+
+
+@pytest.fixture
+def live(monkeypatch: pytest.MonkeyPatch) -> LiveGateway:
+    """Put a live App in front of the receiver, with the chain flag untouched."""
+    gateway = LiveGateway()
+    monkeypatch.setattr(store, "github", gateway)
+    return gateway
+
+
 class TestReceiver:
-    def test_production_refuses_an_unsigned_delivery(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    def test_a_live_deployment_refuses_an_unsigned_delivery(
+        self, client: TestClient, live: LiveGateway, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(settings, "simulated", False)
+        """The documented App setup leaves MISTHOS_SIMULATED on, and that must not
+        disable verification: an unsigned delivery here could release escrow."""
+        assert settings.simulated is True  # the default the README tells operators to keep
         monkeypatch.setattr(settings, "github_webhook_secret", "a-real-secret")
         r = client.post(HOOK, json={"zen": "hi"}, headers={"X-GitHub-Event": "ping"})
         assert r.status_code == 401
 
-    def test_production_refuses_everything_until_the_secret_is_set(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    def test_a_live_deployment_refuses_everything_until_the_secret_is_set(
+        self, client: TestClient, live: LiveGateway
     ) -> None:
-        monkeypatch.setattr(settings, "simulated", False)
         body = b"{}"
         r = client.post(
             HOOK,
@@ -435,13 +456,32 @@ class TestReceiver:
         )
         assert r.status_code == 503
 
-    def test_a_signed_delivery_is_accepted_in_production(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    def test_a_signed_delivery_is_accepted_against_a_live_app(
+        self, client: TestClient, live: LiveGateway, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(settings, "simulated", False)
         monkeypatch.setattr(settings, "github_webhook_secret", "a-real-secret")
         out = deliver(client, "ping", {"zen": "hi"})
         assert out["signature_verified"] and out["handled"]
+
+    def test_a_mismatched_signature_is_refused_against_a_live_app(
+        self, client: TestClient, live: LiveGateway, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "github_webhook_secret", "a-real-secret")
+        r = client.post(
+            HOOK,
+            content=b"{}",
+            headers={"X-Hub-Signature-256": "sha256=deadbeef", "X-GitHub-Event": "ping"},
+        )
+        assert r.status_code == 401
+
+    def test_the_simulation_still_accepts_an_unsigned_delivery(
+        self, client: TestClient
+    ) -> None:
+        """Only the simulation may skip verification; it is the demo's hand driver."""
+        assert store.github.name == "simulated"
+        r = client.post(HOOK, json={"zen": "hi"}, headers={"X-GitHub-Event": "ping"})
+        assert r.status_code == 202
+        assert r.json()["signature_verified"] is False
 
     def test_a_body_that_is_not_json_is_refused(self, client: TestClient) -> None:
         r = client.post(HOOK, content=b"not json", headers={"X-GitHub-Event": "ping"})

@@ -2,9 +2,15 @@
 
 Every delivery is verified against the App's webhook secret before anything is read
 from it: a receiver that skips that is the easiest way to let anyone post a merge,
-and a merge releases money. In production a delivery without a signature is refused,
-and so is every delivery while the secret is still the development default. The
-simulation accepts unsigned deliveries so the demo can be driven by hand.
+and a merge releases money. When a live App is configured a delivery without a
+signature is refused, and so is every delivery while the secret is still the
+development default. Only the simulation accepts unsigned deliveries, so the demo
+can be driven by hand.
+
+Whether a signature is required follows from which gateway is in use, never from
+`MISTHOS_SIMULATED`: that flag describes the chain, and the documented App setup
+leaves it on, so keying the check on it would leave a real App's endpoint accepting
+unsigned deliveries that release escrow.
 
 Each delivery is handled once. GitHub's delivery id is recorded first, a redelivery
 is answered without acting again, and a delivery whose handling failed is forgotten
@@ -26,13 +32,15 @@ from fastapi.concurrency import run_in_threadpool
 from misthos.config import settings
 from misthos.repositories import StaleIssue
 from misthos.services.coordination import Busy
-from misthos.services.github import GitHubError
+from misthos.services.github import GitHubError, SimulatedGitHub
 from misthos.services.github.events import HANDLED_EVENTS, Handled, dispatch
 from misthos.store import store
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 DEV_SECRET = "dev-secret"
+# The only gateway that may accept an unsigned delivery: GitHub never posts to it.
+SIMULATED_GATEWAY = SimulatedGitHub.name
 # An action holds its issue for well under a second, so a delivery that finds the
 # issue busy waits briefly rather than failing back to GitHub.
 BUSY_RETRIES = 5
@@ -68,6 +76,16 @@ def _handle(event: str, payload: dict[str, Any]) -> Handled:
     raise AssertionError("unreachable")
 
 
+def signatures_are_required() -> bool:
+    """Whether a delivery must carry a signature the App's secret can verify.
+
+    A live App means GitHub is the only legitimate sender, so every delivery is
+    verified. The simulation is the one exception, because nothing signs the
+    hand-driven demo deliveries.
+    """
+    return store.github.name != SIMULATED_GATEWAY
+
+
 @router.post("/github", status_code=status.HTTP_202_ACCEPTED)
 async def receive(
     request: Request,
@@ -77,8 +95,9 @@ async def receive(
 ) -> dict[str, object]:
     body = await request.body()
 
-    # Verification runs even in simulation when a signature is sent.
-    if not settings.simulated:
+    # Required whenever a real App is configured. A signature that is present is
+    # always checked, so the simulation cannot be used to smuggle one either.
+    if signatures_are_required():
         if settings.github_webhook_secret == DEV_SECRET:
             raise HTTPException(status_code=503, detail="the webhook secret is not configured")
         if not x_hub_signature_256:
