@@ -106,6 +106,22 @@ class TestLifecycleThroughTheApi:
         assert rec.state is IssueState.PAID
         assert rec.decisions[-1].rule == "silent_publisher_grace_period"
 
+    def test_an_issue_awaiting_merge_still_counts_as_open(self, client: TestClient) -> None:
+        """ACCEPTED holds committed money until the publisher merges."""
+        before = client.get(f"{API}/metrics").json()["open_issues"]
+        client.post(f"{API}/issues/ISS-1002/advance")  # IN_REVIEW -> ACCEPTED
+        assert client.get(f"{API}/issues/ISS-1002").json()["state"] == "ACCEPTED"
+        assert client.get(f"{API}/metrics").json()["open_issues"] == before
+
+    def test_advancing_a_state_with_no_demo_leg_is_conflict(
+        self, client: TestClient
+    ) -> None:
+        """Refuse rather than return an unchanged record behind a 200."""
+        rec = store.get("ISS-1006")
+        assert rec is not None
+        rec.state = IssueState.PRICED
+        assert client.post(f"{API}/issues/ISS-1006/advance").status_code == 409
+
     def test_every_transition_leaves_a_decision(self, client: TestClient) -> None:
         before = len(client.get(f"{API}/issues/ISS-1006/timeline").json())
         client.post(f"{API}/issues/ISS-1006/advance")
@@ -134,6 +150,39 @@ class TestPublish:
             json={"repo": "a/b", "title": "x", "publisher_id": "PUB-999"},
         )
         assert r.status_code == 400
+
+    def test_publishing_beyond_the_budget_is_refused_with_a_reason(
+        self, client: TestClient
+    ) -> None:
+        """A budget under the price floor cannot carry its own review cost."""
+        store.publishers["PUB-3"].budget_remaining_usdc = "40.00"
+        r = client.post(
+            f"{API}/issues",
+            json={
+                "repo": "acme/ledger-core",
+                "title": "Rewrite the rounding path",
+                "publisher_id": "PUB-3",
+                "signals": {
+                    "code_surface": 5.0,
+                    "requirement_clarity": 5.0,
+                    "test_coverage": 5.0,
+                    "dependency_depth": 5.0,
+                    "prior_attempts": 5.0,
+                    "blast_radius": 5.0,
+                },
+            },
+        )
+        assert r.status_code == 422
+        assert "minimum" in r.json()["detail"]
+
+    def test_a_published_issue_reports_whether_it_is_fundable(
+        self, client: TestClient
+    ) -> None:
+        body = client.post(
+            f"{API}/issues",
+            json={"repo": "a/b", "title": "Add a health endpoint", "publisher_id": "PUB-1"},
+        ).json()
+        assert body["proposal"]["fundable"] is True
 
 
 class TestMetrics:

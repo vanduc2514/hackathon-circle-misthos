@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from misthos.domain import issue as lifecycle
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc
-from misthos.domain.pricing import ComplexitySignals, PriceProposal, propose
+from misthos.domain.pricing import ComplexitySignals, PriceProposal, UnfundableIssue, propose
 from misthos.schemas import (
     Claim,
     Contributor,
@@ -115,6 +115,12 @@ class Store:
             comparables=spec.get("comparables", 0),
             urgency=Usdc.from_decimal(spec["urgency"]) if spec.get("urgency") else None,
             risk_premium=Usdc.from_decimal(spec["risk"]) if spec.get("risk") else None,
+            # The publisher's remaining budget actually constrains the price, which
+            # is the whole point of reading it. Seeded demo issues declare none.
+            affordability_ceiling=spec.get("affordability_ceiling"),
+            # The floor depends on the tier's take rate, so the tier has to reach
+            # the engine rather than being assumed.
+            tier=self.publishers[spec["publisher_id"]].tier,
         )
         now = _now()
         rec = IssueRecord(
@@ -417,6 +423,12 @@ class Store:
                         "deletions": 21,
                     },
                 )
+            case _:
+                # DRAFT, PRICED and REJECTED are legal states with no demo leg out of
+                # them. Refuse with the state the lifecycle declares next rather than
+                # returning an unchanged record behind a 200.
+                nxt = next(iter(lifecycle.TRANSITIONS[rec.state]), rec.state)
+                raise lifecycle.IllegalTransition(rec.state, nxt)
         return rec
 
     def approve_and_accept(self, issue_id: str) -> IssueRecord:
@@ -429,6 +441,7 @@ class Store:
         return rec
 
     def publish(self, payload) -> IssueRecord:
+        publisher = self.publishers[payload.publisher_id]
         spec = {
             "repo": payload.repo,
             "number": payload.number or random.randint(100, 999),
@@ -443,6 +456,9 @@ class Store:
                 "Public behaviour is documented in the changelog.",
             ],
             "publisher_id": payload.publisher_id,
+            "affordability_ceiling": Usdc.from_decimal(
+                publisher.budget_remaining_usdc.replace(",", "")
+            ),
             "age_days": 0,
             "comparables": random.randint(0, 7),
             "signals": payload.signals
@@ -456,6 +472,9 @@ class Store:
             },
         }
         rec = self._build(spec)
+        if rec.proposal is not None and not rec.proposal.fundable:
+            # Refuse rather than publish a price the platform would lose money on.
+            raise UnfundableIssue(rec.proposal.justification)
         rec.state = IssueState.AWAITING_APPROVAL
         self._log(
             rec,
@@ -479,6 +498,7 @@ class Store:
                 "band_high": money(p.band_high),
                 "recommended": money(p.recommended),
                 "estimated_hours": p.estimated_hours,
+                "fundable": p.fundable,
                 "complexity_score": p.complexity_score,
                 "confidence": p.confidence,
                 "signals": p.signals,

@@ -42,13 +42,16 @@ TRANSITIONS: dict[IssueState, frozenset[IssueState]] = {
     IssueState.REFUNDED: frozenset(),
 }
 
-# States where money is committed and the issue is still live.
+# States where money is committed and the issue is still live. ACCEPTED belongs
+# here: a passing verdict with an unmerged pull request is exactly that, for up to
+# the length of the silent-publisher grace period.
 OPEN_STATES = frozenset(
     {
         IssueState.FUNDED,
         IssueState.CLAIMED,
         IssueState.IN_REVIEW,
         IssueState.REWORK,
+        IssueState.ACCEPTED,
     }
 )
 

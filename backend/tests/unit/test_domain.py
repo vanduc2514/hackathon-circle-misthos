@@ -21,7 +21,14 @@ from misthos.domain.issue import (
     transition,
 )
 from misthos.domain.money import NativeUsdc, Usdc, format_usdc
-from misthos.domain.pricing import MIN_FIX_PRICE, ComplexitySignals, confidence_for, propose
+from misthos.domain.pricing import (
+    REVIEW_COST_PER_ISSUE,
+    TAKE_RATE_BY_TIER,
+    ComplexitySignals,
+    confidence_for,
+    min_fix_price,
+    propose,
+)
 
 
 class TestUsdc:
@@ -114,16 +121,42 @@ class TestPricing:
         p = propose(ComplexitySignals(3, 3, 3, 3, 3, 3))
         assert p.band_low < p.recommended < p.band_high
 
-    def test_the_cheapest_scoped_issue_clears_the_price_floor(self) -> None:
+    def test_the_cheapest_scoped_issue_clears_the_floor(self) -> None:
         """The engine's own minimum output must not fall below break-even."""
         p = propose(ComplexitySignals(1, 1, 1, 1, 1, 1))
         assert p.fundable
-        assert p.recommended >= MIN_FIX_PRICE
+        assert p.recommended >= min_fix_price("open")
+
+    def test_every_tier_floor_clears_its_own_review_cost(self) -> None:
+        """This is the point of deriving the floor per tier instead of picking one."""
+        for tier, rate in TAKE_RATE_BY_TIER.items():
+            floor = min_fix_price(tier)
+            assert floor * rate >= REVIEW_COST_PER_ISSUE, tier
+
+    def test_the_floor_rises_as_the_take_rate_thins(self) -> None:
+        assert min_fix_price("open") < min_fix_price("team") < min_fix_price("enterprise")
+
+    def test_the_floor_is_applied_at_the_publisher_tier(self) -> None:
+        """A price that clears the Open floor can still fail the Enterprise one."""
+        signals = ComplexitySignals(4, 4, 4, 4, 4, 4)
+        ceiling = Usdc.from_decimal("60")
+        assert propose(signals, affordability_ceiling=ceiling, tier="open").fundable is True
+        assert propose(signals, affordability_ceiling=ceiling, tier="enterprise").fundable is False
+
+    def test_a_ceiling_below_the_floor_reports_both_reasons(self) -> None:
+        """The cap fires first, then the floor declines what the cap produced."""
+        p = propose(
+            ComplexitySignals(4, 4, 4, 4, 4, 4),
+            affordability_ceiling=Usdc.from_decimal("50"),
+        )
+        assert p.fundable is False
+        assert "Capped" in p.justification
+        assert "minimum" in p.justification
 
     def test_a_price_below_the_floor_is_declined_not_published(self) -> None:
         """Below the floor, review costs more than the take it earns."""
         p = propose(ComplexitySignals(1, 1, 1, 1, 1, 1), rate_per_hour=Usdc.from_decimal("10"))
-        assert p.recommended < MIN_FIX_PRICE
+        assert p.recommended < min_fix_price("open")
         assert p.fundable is False
         assert "minimum" in p.justification
 

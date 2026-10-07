@@ -28,14 +28,43 @@ WEIGHTS: dict[str, float] = {
 # Reference rate per hour by rough seniority band.
 RATE_PER_HOUR = Usdc.from_decimal("90")
 
-# The floor is derived, not chosen: review costs roughly 6.31 per issue, so at the
-# Open tier's 12% take rate the break-even is about 53. Below it the platform
-# declines the issue rather than subsidising it. Tiers with a thinner take rate
-# need a higher floor (see docs/misthos/06-pricing-engine.md).
-MIN_FIX_PRICE = Usdc.from_decimal("55")
+# What one issue costs us to review: agent inference, settlement and amortised
+# screening. It is not a line on the publisher's invoice, so it comes out of the
+# take rate, and that is what sets the price floor.
+REVIEW_COST_PER_ISSUE = Usdc.from_decimal("6.31")
+
+# Take rate by publisher tier. The tier table in docs/misthos/06 is the source of
+# truth for these, and the floor is derived from them rather than picked.
+TAKE_RATE_BY_TIER: dict[str, Decimal] = {
+    "open": Decimal("0.12"),
+    "team": Decimal("0.10"),
+    "enterprise": Decimal("0.08"),
+}
+
+# Published floors are the break-even rounded up to the next whole $5, so every
+# issue clears its own review cost with a little room. Deriving it per tier is what
+# stops the Enterprise rate, which is the thinnest, from subsidising small issues.
+FLOOR_ROUNDING = 5
+
+
+def min_fix_price(tier: str = "open") -> Usdc:
+    """The lowest fix price we will publish for a tier, derived from break-even."""
+    rate = TAKE_RATE_BY_TIER[tier]
+    break_even = REVIEW_COST_PER_ISSUE.decimal / rate
+    rounded = (break_even / FLOOR_ROUNDING).to_integral_value(rounding="ROUND_CEILING")
+    return Usdc.from_decimal(rounded * FLOOR_ROUNDING)
+
 
 BAND_LOW = Decimal("0.7")
 BAND_HIGH = Decimal("1.4")
+
+
+class UnfundableIssue(Exception):
+    """The engine will not put a price on this issue, and says why."""
+
+    def __init__(self, justification: str) -> None:
+        super().__init__(justification)
+        self.justification = justification
 
 
 @dataclass(frozen=True)
@@ -115,6 +144,7 @@ def propose(
     compliance_driven: bool = False,
     comparables: int = 0,
     affordability_ceiling: Usdc | None = None,
+    tier: str = "open",
 ) -> PriceProposal:
     """Produce a price band with a written justification."""
     hours = estimate_hours(signals)
@@ -156,13 +186,15 @@ def propose(
                 "work, so this issue cannot be funded as scoped. Consider splitting it."
             )
 
-    if fundable and recommended < MIN_FIX_PRICE:
+    floor = min_fix_price(tier)
+    if fundable and recommended < floor:
         # Below the floor review costs more than the take it earns, so decline the
         # issue rather than publish a price the platform loses money on.
         fundable = False
         notes.append(
-            f"At {recommended} this issue is below the {MIN_FIX_PRICE} minimum, which "
-            "is where review pays for itself. Consider bundling it with related work."
+            f"At {recommended} this issue is below the {floor} minimum for this "
+            "publisher's tier, which is where review pays for itself. Consider "
+            "bundling it with related work."
         )
 
     return PriceProposal(

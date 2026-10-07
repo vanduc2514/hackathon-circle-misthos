@@ -445,6 +445,11 @@ export interface components {
             };
             /** Estimated Hours */
             estimated_hours: number;
+            /**
+             * Fundable
+             * @default true
+             */
+            fundable: boolean;
             /** Complexity Score */
             complexity_score: number;
             /**

@@ -10,7 +10,7 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **Acceptance criteria.** The written conditions a submission has to meet. Drafted by the agent from the issue and the project's test suite, edited and approved by the publisher, then shown to contributors before they start work. These are what the platform reviews the pull request against, and the publisher is not expected to read the diff themselves.
 
-**Price floor.** The lowest fix price the platform will publish, about $55. Derived from break-even rather than chosen: below it, review costs more than the take rate earns. The thinner a tier's take rate, the higher its floor.
+**Price floor.** The lowest fix price the platform will publish: $55 at the Open tier, $65 at Team and $80 at Enterprise. Derived from break-even rather than chosen, and rounded up to the next $5, because below it review costs more than the take rate earns. The thinner a tier's take rate, the higher its floor, and publishing under it is refused.
 
 **Claim.** A contributor's exclusive, time-boxed reservation of a funded issue. Expires if no pull request appears, so desirable work cannot be squatted on. First claim wins, and there is nothing to bid against because the price is already published.
 
