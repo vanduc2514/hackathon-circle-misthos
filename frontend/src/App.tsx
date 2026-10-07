@@ -5,6 +5,7 @@ import Dashboard from './routes/Dashboard'
 import Issues from './routes/Issues'
 import IssueDetail from './routes/IssueDetail'
 import Loop from './routes/Loop'
+import Spend from './routes/Spend'
 
 function Layout({ children }: { children: React.ReactNode }) {
   const { data: health } = useQuery({
@@ -28,6 +29,9 @@ function Layout({ children }: { children: React.ReactNode }) {
           </NavLink>
           <NavLink to="/loop" className={({ isActive }) => (isActive ? 'active' : '')}>
             Loop
+          </NavLink>
+          <NavLink to="/spend" className={({ isActive }) => (isActive ? 'active' : '')}>
+            Spend
           </NavLink>
           <a href="/docs" target="_blank" rel="noreferrer">
             API
@@ -68,6 +72,7 @@ export default function App() {
         <Route path="/issues" element={<Issues />} />
         <Route path="/issues/:issueId" element={<IssueDetail />} />
         <Route path="/loop" element={<Loop />} />
+        <Route path="/spend" element={<Spend />} />
         <Route
           path="*"
           element={

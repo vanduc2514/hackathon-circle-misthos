@@ -60,6 +60,9 @@ publishers = Table(
     Column("wallet_address", String(64), nullable=False),
     Column("chain", String(32), nullable=False),
     Column("budget_remaining_base_units", BigInteger, nullable=False),
+    Column("approval_threshold_base_units", BigInteger),
+    Column("approvers", Json, nullable=False),
+    Column("category_limits", Json, nullable=False),
 )
 
 contributors = Table(

@@ -118,6 +118,16 @@ class SqlRepository:
             "wallet_address": publisher.wallet.address,
             "chain": publisher.wallet.chain,
             "budget_remaining_base_units": _parse_usdc(publisher.budget_remaining_usdc).base_units,
+            "approval_threshold_base_units": (
+                _parse_usdc(publisher.approval_threshold_usdc).base_units
+                if publisher.approval_threshold_usdc is not None
+                else None
+            ),
+            "approvers": list(publisher.approvers),
+            "category_limits": {
+                label: _parse_usdc(limit).base_units
+                for label, limit in publisher.category_limits.items()
+            },
         }
         with self.engine.begin() as conn:
             _upsert(conn, t.publishers, {"id": publisher.id}, values)
@@ -629,6 +639,16 @@ def _publisher(row: Row) -> Publisher:
         tier=row["tier"],
         wallet=Wallet(address=row["wallet_address"], chain=row["chain"]),
         budget_remaining_usdc=format_usdc(Usdc(row["budget_remaining_base_units"])),
+        approval_threshold_usdc=(
+            format_usdc(Usdc(row["approval_threshold_base_units"]))
+            if row["approval_threshold_base_units"] is not None
+            else None
+        ),
+        approvers=list(row["approvers"] or []),
+        category_limits={
+            label: format_usdc(Usdc(int(units)))
+            for label, units in (row["category_limits"] or {}).items()
+        },
     )
 
 

@@ -34,6 +34,12 @@ class Publisher(BaseModel):
     tier: Tier
     wallet: Wallet
     budget_remaining_usdc: str
+    # The organisation's own spending policy (domain/policy.py).
+    approval_threshold_usdc: str | None = None
+    """Releases above this wait for one of the approvers."""
+    approvers: list[str] = Field(default_factory=list)
+    category_limits: dict[str, str] = Field(default_factory=dict)
+    """Issue label to the most that may be committed under it in a calendar month."""
 
 
 class Contributor(BaseModel):
@@ -248,6 +254,92 @@ class PublishRequest(BaseModel):
     publisher_id: str
     compliance_driven: bool = False
     signals: dict[str, float] = Field(default_factory=dict)
+
+
+class PolicyRequest(BaseModel):
+    approval_threshold_usdc: str | None = None
+    approvers: list[str] = Field(default_factory=list, max_length=20)
+    category_limits: dict[str, str] = Field(default_factory=dict)
+
+
+class ApproveReleaseRequest(BaseModel):
+    approver: str = Field(min_length=1, max_length=200)
+
+
+class SpendCategory(BaseModel):
+    label: str
+    committed: dict[str, str | int]
+    released: dict[str, str | int]
+    limit: dict[str, str | int] | None = None
+
+
+class FileableItem(BaseModel):
+    """One settled fix, with what a security review needs to file it."""
+
+    issue_id: str
+    repo: str
+    number: int
+    title: str
+    labels: list[str]
+    compliance_driven: bool
+    acceptance_criteria: list[str]
+    amount: dict[str, str | int]
+    settled_at: datetime
+    github_url: str
+
+
+class SpendOut(BaseModel):
+    """What an organisation budgeted, committed, released and can file (#50)."""
+
+    publisher_id: str
+    name: str
+    year: int
+    budget_remaining: dict[str, str | int]
+    committed_held: dict[str, str | int]
+    """In escrow now, across every open issue."""
+    committed: dict[str, str | int]
+    """Committed during the year."""
+    released: dict[str, str | int]
+    refunded: dict[str, str | int]
+    by_category: list[SpendCategory]
+    fileable: list[FileableItem]
+    """Settled fixes that were compliance-driven or security-labelled."""
+
+
+class AuditMoneyEvent(BaseModel):
+    occurred_at: datetime
+    kind: str
+    amount: dict[str, str | int]
+    counterparty_id: str
+    tx_hash: str | None
+    """The organisation's own transfers only. A release's reference would link the
+    contributor's wallet to their handle, so it stays on their statement (PRIVACY.md)."""
+
+
+class AuditIssue(BaseModel):
+    id: str
+    repo: str
+    number: int
+    title: str
+    state: str
+    labels: list[str]
+    compliance_driven: bool
+    acceptance_criteria: list[str]
+    created_at: datetime
+    price: dict[str, str | int] | None
+    decisions: list[Decision]
+    money_events: list[AuditMoneyEvent]
+
+
+class AuditExport(BaseModel):
+    """Everything an auditor needs about one organisation's issues, from the decision
+    log and the money ledger, unedited (#52)."""
+
+    publisher_id: str
+    name: str
+    generated_at: datetime
+    simulated: bool
+    issues: list[AuditIssue]
 
 
 class DeclineRequest(BaseModel):

@@ -135,6 +135,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issues/{issue_id}/approve-release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Release
+         * @description A named approver approves a release held over the organisation's threshold.
+         */
+        post: operations["approve_release_api_v1_issues__issue_id__approve_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/loop": {
         parameters: {
             query?: never;
@@ -314,6 +334,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/publishers/{publisher_id}/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Policy
+         * @description Replace the organisation's spending policy: a release threshold with its named
+         *     approvers, and monthly limits per issue label.
+         */
+        put: operations["set_policy_api_v1_publishers__publisher_id__policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/spend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spend
+         * @description What was budgeted, committed, released and refunded in a year, by category,
+         *     and the settled fixes to file for a security review.
+         */
+        get: operations["spend_api_v1_publishers__publisher_id__spend_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit
+         * @description The decision record and the money events for every issue the organisation
+         *     funded, unedited, as JSON or one sortable CSV.
+         */
+        get: operations["audit_api_v1_publishers__publisher_id__audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/webhooks/github": {
         parameters: {
             query?: never;
@@ -367,6 +450,81 @@ export interface components {
             generated_at: string;
             /** Simulated */
             simulated: boolean;
+        };
+        /** ApproveReleaseRequest */
+        ApproveReleaseRequest: {
+            /** Approver */
+            approver: string;
+        };
+        /**
+         * AuditExport
+         * @description Everything an auditor needs about one organisation's issues, from the decision
+         *     log and the money ledger, unedited (#52).
+         */
+        AuditExport: {
+            /** Publisher Id */
+            publisher_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Simulated */
+            simulated: boolean;
+            /** Issues */
+            issues: components["schemas"]["AuditIssue"][];
+        };
+        /** AuditIssue */
+        AuditIssue: {
+            /** Id */
+            id: string;
+            /** Repo */
+            repo: string;
+            /** Number */
+            number: number;
+            /** Title */
+            title: string;
+            /** State */
+            state: string;
+            /** Labels */
+            labels: string[];
+            /** Compliance Driven */
+            compliance_driven: boolean;
+            /** Acceptance Criteria */
+            acceptance_criteria: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Price */
+            price: {
+                [key: string]: string | number;
+            } | null;
+            /** Decisions */
+            decisions: components["schemas"]["Decision"][];
+            /** Money Events */
+            money_events: components["schemas"]["AuditMoneyEvent"][];
+        };
+        /** AuditMoneyEvent */
+        AuditMoneyEvent: {
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Kind */
+            kind: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /** Counterparty Id */
+            counterparty_id: string;
+            /** Tx Hash */
+            tx_hash: string | null;
         };
         /** Claim */
         Claim: {
@@ -470,6 +628,37 @@ export interface components {
              * @default false
              */
             refunded: boolean;
+        };
+        /**
+         * FileableItem
+         * @description One settled fix, with what a security review needs to file it.
+         */
+        FileableItem: {
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Number */
+            number: number;
+            /** Title */
+            title: string;
+            /** Labels */
+            labels: string[];
+            /** Compliance Driven */
+            compliance_driven: boolean;
+            /** Acceptance Criteria */
+            acceptance_criteria: string[];
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /**
+             * Settled At
+             * Format: date-time
+             */
+            settled_at: string;
+            /** Github Url */
+            github_url: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -660,6 +849,17 @@ export interface components {
             /** Median Review Cost Usdc */
             median_review_cost_usdc?: string | null;
         };
+        /** PolicyRequest */
+        PolicyRequest: {
+            /** Approval Threshold Usdc */
+            approval_threshold_usdc?: string | null;
+            /** Approvers */
+            approvers?: string[];
+            /** Category Limits */
+            category_limits?: {
+                [key: string]: string;
+            };
+        };
         /** PriceProposalOut */
         PriceProposalOut: {
             /** Band Low */
@@ -746,6 +946,14 @@ export interface components {
             wallet: components["schemas"]["Wallet"];
             /** Budget Remaining Usdc */
             budget_remaining_usdc: string;
+            /** Approval Threshold Usdc */
+            approval_threshold_usdc?: string | null;
+            /** Approvers */
+            approvers?: string[];
+            /** Category Limits */
+            category_limits?: {
+                [key: string]: string;
+            };
         };
         /**
          * ReputationEventOut
@@ -796,6 +1004,59 @@ export interface components {
             seconds?: number | null;
             /** Cost Usdc */
             cost_usdc?: string | null;
+        };
+        /** SpendCategory */
+        SpendCategory: {
+            /** Label */
+            label: string;
+            /** Committed */
+            committed: {
+                [key: string]: string | number;
+            };
+            /** Released */
+            released: {
+                [key: string]: string | number;
+            };
+            /** Limit */
+            limit?: {
+                [key: string]: string | number;
+            } | null;
+        };
+        /**
+         * SpendOut
+         * @description What an organisation budgeted, committed, released and can file (#50).
+         */
+        SpendOut: {
+            /** Publisher Id */
+            publisher_id: string;
+            /** Name */
+            name: string;
+            /** Year */
+            year: number;
+            /** Budget Remaining */
+            budget_remaining: {
+                [key: string]: string | number;
+            };
+            /** Committed Held */
+            committed_held: {
+                [key: string]: string | number;
+            };
+            /** Committed */
+            committed: {
+                [key: string]: string | number;
+            };
+            /** Released */
+            released: {
+                [key: string]: string | number;
+            };
+            /** Refunded */
+            refunded: {
+                [key: string]: string | number;
+            };
+            /** By Category */
+            by_category: components["schemas"]["SpendCategory"][];
+            /** Fileable */
+            fileable: components["schemas"]["FileableItem"][];
         };
         /** StatementLine */
         StatementLine: {
@@ -1178,6 +1439,58 @@ export interface operations {
             };
         };
     };
+    approve_release_api_v1_issues__issue_id__approve_release_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Not one of the organisation's named approvers */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No release is waiting for approval */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     loop_api_v1_loop_get: {
         parameters: {
             query?: {
@@ -1420,6 +1733,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnnualStatement"];
+                    "text/csv": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_policy_api_v1_publishers__publisher_id__policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Publisher"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    spend_api_v1_publishers__publisher_id__spend_get: {
+        parameters: {
+            query?: {
+                year?: number | null;
+            };
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpendOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_api_v1_publishers__publisher_id__audit_get: {
+        parameters: {
+            query?: {
+                format?: "json" | "csv";
+            };
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExport"];
                     "text/csv": unknown;
                 };
             };

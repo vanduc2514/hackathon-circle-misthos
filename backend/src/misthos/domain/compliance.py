@@ -55,6 +55,9 @@ class PayoutGate(StrEnum):
     AWAIT_IDENTITY = "await_identity"
     BLOCKED_SANCTIONS = "blocked_sanctions"
     BLOCKED_IDENTITY = "blocked_identity"
+    AWAIT_APPROVER = "await_approver"
+    """Over the organisation's release threshold, waiting for a named approver.
+    Not a compliance gate: the organisation's own policy (domain/policy.py)."""
 
 
 @dataclass(frozen=True)

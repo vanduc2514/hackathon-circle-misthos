@@ -140,6 +140,17 @@ class TestSaving:
             any_store.save(fresh_one, stale)
         assert any_store.get("ISS-1001").title != "renamed"  # type: ignore[union-attr]
 
+    def test_a_spending_policy_round_trips(self, any_store: Store) -> None:
+        saved = any_store.set_policy(
+            "PUB-1",
+            approval_threshold_usdc="1500",
+            approvers=["dana@acme.example"],
+            category_limits={"security": "12000.5"},
+        )
+        again = any_store.get_publisher("PUB-1")
+        assert again == saved
+        assert again is not None and again.category_limits == {"security": "12,000.50"}
+
     def test_a_webhook_delivery_is_recorded_once(self, any_store: Store) -> None:
         at = datetime(2026, 10, 7, tzinfo=UTC)
         assert any_store.repo.record_delivery("d-1", "pull_request", at)

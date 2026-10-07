@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from misthos.api.v1 import contributors, issues, webhooks
+from misthos.api.v1 import contributors, issues, publishers, webhooks
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(issues.router)
 api_router.include_router(contributors.router)
+api_router.include_router(publishers.router)
 api_router.include_router(webhooks.router)

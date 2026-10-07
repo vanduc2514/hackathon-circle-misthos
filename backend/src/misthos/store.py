@@ -49,6 +49,13 @@ from misthos.domain.compliance import (
 from misthos.domain.issue import IssueState
 from misthos.domain.ledger import Divergence, MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc
+from misthos.domain.policy import (
+    PolicyRefusal,
+    SpendingPolicy,
+    category_breaches,
+    may_approve,
+    needs_approval,
+)
 from misthos.domain.pricing import ComplexitySignals, UnfundableIssue, propose
 from misthos.domain.review import ChangedFile, Judgement, Submitted, Verdict, decide
 from misthos.domain.signals import read as read_signals
@@ -68,6 +75,7 @@ from misthos.schemas import (
     Contributor,
     Decision,
     EscrowCommitment,
+    FileableItem,
     IssueOut,
     IssueSummaryOut,
     LoopOut,
@@ -75,6 +83,8 @@ from misthos.schemas import (
     MetricsOut,
     Publisher,
     Review,
+    SpendCategory,
+    SpendOut,
     Submission,
     TimelineEntry,
     Wallet,
@@ -817,6 +827,16 @@ class Store:
         gate = compliance.payout_gate(screening.outcome, identity)
         rec.payout_checked_at = now
 
+        publisher = self.repo.get_publisher(rec.publisher_id)
+        assert publisher is not None
+        policy = _policy(publisher)
+        if (
+            gate is PayoutGate.RELEASE
+            and needs_approval(policy, self._committed(rec))
+            and not any(d.action == "release_approved" for d in rec.decisions)
+        ):
+            gate = PayoutGate.AWAIT_APPROVER
+
         if gate is PayoutGate.RELEASE:
             rule = (
                 "silent_publisher_grace_period"
@@ -827,17 +847,60 @@ class Store:
             return True
 
         if rec.payout_hold != gate.value:
-            rule, outcome = _HOLDS[gate]
+            if gate is PayoutGate.AWAIT_APPROVER:
+                rule = "release_threshold"
+                outcome = (
+                    f"the release of {self._committed(rec)} is over {publisher.name}'s "
+                    f"{policy.approval_threshold} threshold, so it waits for one of "
+                    f"{', '.join(policy.approvers)} to approve it"
+                )
+            else:
+                rule, template = _HOLDS[gate]
+                outcome = template.format(handle=contributor.handle)
             self._log(
                 rec,
                 actor="system",
                 action="payout_held",
                 rule=rule,
-                outcome=outcome.format(handle=contributor.handle),
+                outcome=outcome,
                 when=now,
             )
         rec.payout_hold = gate.value
         return False
+
+    def _check_category_limits(self, rec: IssueRecord, now: datetime) -> None:
+        """Refuse a commitment that would take a category past the publisher's own
+        monthly limit, and say which and by how much."""
+        publisher = self.repo.get_publisher(rec.publisher_id)
+        assert publisher is not None and rec.proposal is not None
+        policy = _policy(publisher)
+        if not policy.category_limits:
+            return
+        month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        committed: dict[str, Usdc] = {}
+        for other in self.repo.list_issues():
+            if other.publisher_id != publisher.id or other.id == rec.id:
+                continue
+            for event in other.money_events:
+                if event.kind is MoneyEventKind.COMMITTED and event.occurred_at >= month:
+                    for label in other.labels:
+                        committed[label] = committed.get(label, Usdc(0)) + event.amount
+        breaches = category_breaches(
+            policy, rec.labels, rec.proposal.recommended, committed
+        )
+        if not breaches:
+            return
+        reason = "; ".join(breaches)
+        self._log(
+            rec,
+            actor="system",
+            action="funding_refused",
+            rule="category_limit",
+            outcome=f"{publisher.name}'s own policy refuses this commitment: {reason}",
+            when=now,
+        )
+        self.repo.save_issues(rec)
+        raise PolicyRefusal(reason)
 
     def _screen_publisher_for_funding(self, rec: IssueRecord, now: datetime) -> None:
         """Screen the publisher before the first money is committed, and refuse a hit."""
@@ -1131,6 +1194,7 @@ class Store:
         match rec.state:
             case IssueState.AWAITING_APPROVAL:
                 self._screen_publisher_for_funding(rec, now)
+                self._check_category_limits(rec, now)
                 self._fund(rec)
                 self._log(
                     rec,
@@ -1492,6 +1556,159 @@ class Store:
                 )
             self.repo.save_issues(rec)
             return rec
+
+    # ------------------------------------------------------------- policy
+
+    def set_policy(
+        self,
+        publisher_id: str,
+        *,
+        approval_threshold_usdc: str | None,
+        approvers: list[str],
+        category_limits: dict[str, str],
+    ) -> Publisher:
+        """Replace a publisher's spending policy, after checking it can work."""
+        self.ensure_ready()
+        publisher = self.repo.get_publisher(publisher_id)
+        if publisher is None:
+            raise KeyError(publisher_id)
+        try:
+            updated = publisher.model_copy(
+                update={
+                    "approval_threshold_usdc": (
+                        _display(Usdc.from_decimal(approval_threshold_usdc))
+                        if approval_threshold_usdc
+                        else None
+                    ),
+                    "approvers": [a.strip() for a in approvers if a.strip()],
+                    "category_limits": {
+                        label.strip(): _display(Usdc.from_decimal(limit))
+                        for label, limit in category_limits.items()
+                        if label.strip()
+                    },
+                }
+            )
+        except (ArithmeticError, ValueError) as exc:
+            raise PolicyRefusal(f"not an amount: {exc}") from exc
+        _policy(updated).validate()
+        self.repo.save_publisher(updated)
+        return updated
+
+    def approve_release(
+        self, issue_id: str, approver: str, now: datetime | None = None
+    ) -> IssueRecord:
+        """A named approver approves a release held over the publisher's threshold,
+        and the release goes ahead at once if nothing else holds it."""
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.state is not IssueState.ACCEPTED or rec.payout_hold != (
+                PayoutGate.AWAIT_APPROVER.value
+            ):
+                raise lifecycle.IllegalTransition(rec.state, IssueState.PAID)
+            publisher = self.repo.get_publisher(rec.publisher_id)
+            assert publisher is not None
+            if not may_approve(_policy(publisher), approver):
+                raise PolicyRefusal(f"{approver} is not one of {publisher.name}'s approvers")
+            when = now or _now()
+            self._log(
+                rec,
+                actor="publisher",
+                action="release_approved",
+                rule="named_approver",
+                outcome=f"{approver.strip()} approved the release of {self._committed(rec)}",
+                when=when,
+            )
+            self._pay(rec, when)
+            self.repo.save_issues(rec)
+            return rec
+
+    def spend(
+        self, publisher_id: str, year: int | None = None, now: datetime | None = None
+    ) -> SpendOut:
+        """What a publisher budgeted, committed, released and refunded in a year, by
+        category, and the settled fixes a security review can file (#50)."""
+        self.ensure_ready()
+        publisher = self.repo.get_publisher(publisher_id)
+        if publisher is None:
+            raise KeyError(publisher_id)
+        year = year or (now or _now()).year
+        policy = _policy(publisher)
+        mine = [r for r in self.repo.list_issues() if r.publisher_id == publisher_id]
+
+        def total(kind: MoneyEventKind) -> Usdc:
+            return Usdc(
+                sum(
+                    e.amount.base_units
+                    for r in mine
+                    for e in r.money_events
+                    if e.kind is kind and e.occurred_at.year == year
+                )
+            )
+
+        held = Usdc(
+            sum(
+                p.held.base_units
+                for r in mine
+                if (p := ledger.position(r.money_events)) is not None
+            )
+        )
+        labels = sorted({label for r in mine for label in r.labels} | set(policy.category_limits))
+        by_category = []
+        for label in labels:
+            tagged = [r for r in mine if label in r.labels]
+
+            def tagged_total(kind: MoneyEventKind, issues: list[IssueRecord] = tagged) -> int:
+                return sum(
+                    e.amount.base_units
+                    for r in issues
+                    for e in r.money_events
+                    if e.kind is kind and e.occurred_at.year == year
+                )
+
+            limit = policy.category_limits.get(label)
+            by_category.append(
+                SpendCategory(
+                    label=label,
+                    committed=money(Usdc(tagged_total(MoneyEventKind.COMMITTED))),
+                    released=money(Usdc(tagged_total(MoneyEventKind.RELEASED))),
+                    limit=money(limit) if limit is not None else None,
+                )
+            )
+
+        fileable = [
+            FileableItem(
+                issue_id=r.id,
+                repo=r.repo,
+                number=r.number,
+                title=r.title,
+                labels=r.labels,
+                compliance_driven=r.compliance_driven,
+                acceptance_criteria=r.acceptance_criteria,
+                amount=money(e.amount),
+                settled_at=e.occurred_at,
+                github_url=r.github_url,
+            )
+            for r in mine
+            for e in r.money_events
+            if e.kind is MoneyEventKind.RELEASED
+            and e.occurred_at.year == year
+            and (r.compliance_driven or any(_security(label) for label in r.labels))
+        ]
+        return SpendOut(
+            publisher_id=publisher.id,
+            name=publisher.name,
+            year=year,
+            budget_remaining=money(_budget(publisher)),
+            committed_held=money(held),
+            committed=money(total(MoneyEventKind.COMMITTED)),
+            released=money(total(MoneyEventKind.RELEASED)),
+            refunded=money(total(MoneyEventKind.REFUNDED)),
+            by_category=by_category,
+            fileable=sorted(fileable, key=lambda f: f.settled_at),
+        )
 
     # ------------------------------------------------------------- standing
 
@@ -1895,6 +2112,35 @@ class Store:
 
     def metrics(self, now: datetime | None = None) -> MetricsOut:
         return metrics.compute(self.list_issues(), now or _now())
+
+
+# ------------------------------------------------------------------ policy
+
+
+def _policy(publisher: Publisher) -> SpendingPolicy:
+    return SpendingPolicy(
+        approval_threshold=(
+            Usdc.from_decimal(publisher.approval_threshold_usdc.replace(",", ""))
+            if publisher.approval_threshold_usdc
+            else None
+        ),
+        approvers=tuple(publisher.approvers),
+        category_limits={
+            label: Usdc.from_decimal(limit.replace(",", ""))
+            for label, limit in publisher.category_limits.items()
+        },
+    )
+
+
+def _display(amount: Usdc) -> str:
+    return f"{amount.decimal:,.2f}"
+
+
+_SECURITY_WORDS = ("security", "cve", "vulnerability")
+
+
+def _security(label: str) -> bool:
+    return any(word in label.lower() for word in _SECURITY_WORDS)
 
 
 # ------------------------------------------------------------------ observed

@@ -14,6 +14,7 @@ export type TimelineEntry = components['schemas']['TimelineEntry']
 export type Decision = components['schemas']['Decision']
 export type Publisher = components['schemas']['Publisher']
 export type LoopOut = components['schemas']['LoopOut']
+export type SpendOut = components['schemas']['SpendOut']
 
 export type Money = { usdc: string | number; base_units: number }
 

@@ -502,6 +502,15 @@ Every key is prefixed `misthos:`. The sweeper's single-runner lock is a Postgres
 
 A `released` money event is written with the transfer the chain returned, and the transaction hash is unique. A retry that tries to write the same hash fails on the constraint rather than paying twice, which is the failure the market research warns about: an agent that retries after a timeout can pay an invoice twice and the books will still balance. The idempotency key stops the retry before it reaches the chain, and the contract's `NotHeld` check stops a second release if one somehow did.
 
+## The organisation tier
+
+An organisation sets its own spending policy, and the store enforces it at the two moments money moves, out of the agent's reach (`domain/policy.py`, #51):
+
+- **Category limits.** A monthly cap per issue label. A commitment that would pass it is refused at funding, with the limit and the month's total in the reason.
+- **A release threshold with named approvers.** A payout above it is held as `await_approver` until one of them approves, whether the merge or the grace period triggered it. The approval is required, not requested.
+
+`/publishers/{id}/spend` reports what was budgeted, committed, released and refunded, by category against those limits, and the settled compliance and security fixes a security review can file (#50). `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are served by the simulation only until organisations can sign in. Plans, billing and SSO (#53) are not built.
+
 ## Trust boundaries
 
 ```mermaid
