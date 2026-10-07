@@ -266,7 +266,8 @@ function ApproveAndFund({ issue, busy, run }: Step) {
       <label className="field">
         <span>
           1. The acceptance criteria, one per line. The review judges the work against
-          exactly these.
+          exactly these, so each must name something a reviewer can check: a test, a file,
+          an output or a number.
         </span>
         <textarea
           className="input"
