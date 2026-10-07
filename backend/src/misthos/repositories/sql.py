@@ -23,6 +23,12 @@ from typing import Any
 from sqlalchemy import Connection, create_engine, delete, func, insert, select, text, update
 from sqlalchemy.engine import Engine
 
+from misthos.domain.compliance import (
+    PartyKind,
+    Screening,
+    ScreeningOutcome,
+    ScreeningReason,
+)
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc, format_usdc
 from misthos.domain.pricing import PriceProposal
@@ -139,16 +145,83 @@ class SqlRepository:
             "reputation": contributor.reputation,
             "settled_issues": contributor.settled_issues,
             "earned_base_units": _parse_usdc(contributor.earned_usdc).base_units,
-            "verified": contributor.verified,
+            "identity_status": contributor.identity_status,
+            "identity_reference": contributor.identity_reference,
+            "identity_verified_at": contributor.identity_verified_at,
         }
         with self.engine.begin() as conn:
             _upsert(conn, t.contributors, {"id": contributor.id}, values)
+
+    def get_contributor(self, contributor_id: str) -> Contributor | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            row = (
+                conn.execute(select(t.contributors).where(t.contributors.c.id == contributor_id))
+                .mappings()
+                .first()
+            )
+        return _contributor(row) if row else None
 
     def list_contributors(self) -> list[Contributor]:
         self.migrate()
         with self.engine.connect() as conn:
             rows = conn.execute(select(t.contributors).order_by(t.contributors.c.id)).mappings()
             return [_contributor(r) for r in rows]
+
+    # ---------------------------------------------------------- screenings
+
+    def record_screening(self, screening: Screening) -> None:
+        self.migrate()
+        with self.engine.begin() as conn:
+            conn.execute(
+                insert(t.screenings).values(
+                    party_kind=screening.party_kind.value,
+                    party_id=screening.party_id,
+                    wallet_address=screening.wallet_address,
+                    outcome=screening.outcome.value,
+                    list_name=screening.list_name,
+                    provider=screening.provider,
+                    reason=screening.reason.value,
+                    checked_at=screening.checked_at,
+                )
+            )
+
+    def latest_screening(self, party_kind: PartyKind, party_id: str) -> Screening | None:
+        found = self._screenings(party_kind, party_id, newest_first=True, limit=1)
+        return found[0] if found else None
+
+    def list_screenings(self, party_kind: PartyKind, party_id: str) -> list[Screening]:
+        return self._screenings(party_kind, party_id)
+
+    def _screenings(
+        self,
+        party_kind: PartyKind,
+        party_id: str,
+        *,
+        newest_first: bool = False,
+        limit: int | None = None,
+    ) -> list[Screening]:
+        self.migrate()
+        columns = (t.screenings.c.checked_at, t.screenings.c.id)
+        order = [c.desc() for c in columns] if newest_first else list(columns)
+        query = (
+            select(t.screenings)
+            .where(
+                t.screenings.c.party_kind == party_kind.value,
+                t.screenings.c.party_id == party_id,
+            )
+            .order_by(*order)
+            .limit(limit)
+        )
+        with self.engine.connect() as conn:
+            return [_screening(r) for r in conn.execute(query).mappings()]
+
+    def purge_screenings(self, before: datetime) -> int:
+        self.migrate()
+        with self.engine.begin() as conn:
+            return conn.execute(
+                delete(t.screenings).where(t.screenings.c.checked_at < before)
+            ).rowcount
 
     # -------------------------------------------------------------- issues
 
@@ -235,6 +308,11 @@ def _save(conn: Connection, rec: IssueRecord) -> None:
         "created_at": rec.created_at,
         "deadline": rec.deadline,
         "paid_base_units": rec.paid.base_units if rec.paid else None,
+        "paid_at": rec.paid_at,
+        "payout_tx_hash": rec.payout_tx_hash,
+        "accepted_by": rec.accepted_by,
+        "payout_hold": rec.payout_hold,
+        "payout_checked_at": rec.payout_checked_at,
         "relisted_from": rec.relisted_from,
     }
     if rec.version == 0:
@@ -444,6 +522,11 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             review=_review(reviews[row["id"]]) if row["id"] in reviews else None,
             contributor_id=row["contributor_id"],
             paid=Usdc(row["paid_base_units"]) if row["paid_base_units"] is not None else None,
+            paid_at=_utc_or_none(row["paid_at"]),
+            payout_tx_hash=row["payout_tx_hash"],
+            accepted_by=row["accepted_by"],
+            payout_hold=row["payout_hold"],
+            payout_checked_at=_utc_or_none(row["payout_checked_at"]),
             relisted_from=row["relisted_from"],
             decisions=logs[row["id"]],
             version=row["version"],
@@ -455,6 +538,10 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
 def _utc(moment: datetime) -> datetime:
     # SQLite hands timestamps back without a zone; everything here is stored in UTC.
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _utc_or_none(moment: datetime | None) -> datetime | None:
+    return _utc(moment) if moment is not None else None
 
 
 def _parse_usdc(display: str) -> Usdc:
@@ -480,7 +567,9 @@ def _contributor(row: Row) -> Contributor:
         reputation=row["reputation"],
         settled_issues=row["settled_issues"],
         earned_usdc=format_usdc(Usdc(row["earned_base_units"])),
-        verified=row["verified"],
+        identity_status=row["identity_status"],
+        identity_reference=row["identity_reference"],
+        identity_verified_at=_utc_or_none(row["identity_verified_at"]),
     )
 
 
@@ -549,4 +638,17 @@ def _decision(row: Row) -> Decision:
         outcome=row["outcome"],
         cost_usdc=row["cost_usdc"],
         created_at=_utc(row["created_at"]),
+    )
+
+
+def _screening(row: Row) -> Screening:
+    return Screening(
+        party_kind=PartyKind(row["party_kind"]),
+        party_id=row["party_id"],
+        wallet_address=row["wallet_address"],
+        outcome=ScreeningOutcome(row["outcome"]),
+        provider=row["provider"],
+        reason=ScreeningReason(row["reason"]),
+        checked_at=_utc(row["checked_at"]),
+        list_name=row["list_name"],
     )

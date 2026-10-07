@@ -130,23 +130,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/contributors": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Contributors */
-        get: operations["list_contributors_api_v1_contributors_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/metrics": {
         parameters: {
             query?: never;
@@ -201,6 +184,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/contributors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Contributors
+         * @description Public profiles. A wallet is never served next to a handle; see docs/PRIVACY.md.
+         */
+        get: operations["list_contributors_api_v1_contributors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/contributors/{contributor_id}/statements/{year}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Statement
+         * @description One contributor's payouts for one calendar year, to file from.
+         *
+         *     A statement is personal: its settlement references would link a wallet to a
+         *     handle. Until contributors can sign in it is served only by the simulation, whose
+         *     numbers are not real; outside it, an operator exports it with
+         *     `python -m misthos.services.statements`.
+         */
+        get: operations["statement_api_v1_contributors__contributor_id__statements__year__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/webhooks/github": {
         parameters: {
             query?: never;
@@ -223,6 +251,38 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnnualStatement
+         * @description Every payout one contributor received in one calendar year, in UTC.
+         *
+         *     Built for a finance team to file from without asking anything: each line carries
+         *     its date, issue, counterparty, amount and settlement reference.
+         */
+        AnnualStatement: {
+            /** Contributor Id */
+            contributor_id: string;
+            /** Handle */
+            handle: string;
+            /** Year */
+            year: number;
+            /** Identity Status */
+            identity_status: string;
+            /** Lines */
+            lines: components["schemas"]["StatementLine"][];
+            /** Total */
+            total: {
+                [key: string]: string | number;
+            };
+            /** Payouts */
+            payouts: number;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Simulated */
+            simulated: boolean;
+        };
         /** Claim */
         Claim: {
             /** Contributor Id */
@@ -243,13 +303,15 @@ export interface components {
              */
             active: boolean;
         };
-        /** Contributor */
-        Contributor: {
+        /**
+         * ContributorProfile
+         * @description What anyone may see about a contributor: no wallet, no provider reference.
+         */
+        ContributorProfile: {
             /** Id */
             id: string;
             /** Handle */
             handle: string;
-            wallet: components["schemas"]["Wallet"];
             /** Reputation */
             reputation: number;
             /** Settled Issues */
@@ -536,6 +598,40 @@ export interface components {
              * Format: date-time
              */
             decided_at: string;
+        };
+        /** StatementLine */
+        StatementLine: {
+            /**
+             * Paid At
+             * Format: date-time
+             */
+            paid_at: string;
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Issue Number */
+            issue_number: number;
+            /** Issue Title */
+            issue_title: string;
+            /** Counterparty Id */
+            counterparty_id: string;
+            /** Counterparty Name */
+            counterparty_name: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /**
+             * Currency
+             * @default USDC
+             * @constant
+             */
+            currency: "USDC";
+            /** Chain */
+            chain: string;
+            /** Tx Hash */
+            tx_hash: string | null;
         };
         /** Submission */
         Submission: {
@@ -836,26 +932,6 @@ export interface operations {
             };
         };
     };
-    list_contributors_api_v1_contributors_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Contributor"][];
-                };
-            };
-        };
-    };
     metrics_api_v1_metrics_get: {
         parameters: {
             query?: never;
@@ -925,6 +1001,61 @@ export interface operations {
                     "application/json": {
                         [key: string]: number;
                     };
+                };
+            };
+        };
+    };
+    list_contributors_api_v1_contributors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributorProfile"][];
+                };
+            };
+        };
+    };
+    statement_api_v1_contributors__contributor_id__statements__year__get: {
+        parameters: {
+            query?: {
+                format?: "json" | "csv";
+            };
+            header?: never;
+            path: {
+                contributor_id: string;
+                year: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnualStatement"];
+                    "text/csv": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

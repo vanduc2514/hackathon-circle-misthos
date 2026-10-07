@@ -37,13 +37,47 @@ class Publisher(BaseModel):
 
 
 class Contributor(BaseModel):
+    """A contributor as the platform holds them. Never served as is: it carries the
+    wallet, and a wallet next to a GitHub handle is exactly the link 08 says we must
+    never publish. `ContributorProfile` is the public view."""
+
     id: str
     handle: str
     wallet: Wallet
     reputation: int
     settled_issues: int
     earned_usdc: str
+    identity_status: Literal["unverified", "pending", "verified", "failed"] = "unverified"
+    """Verified at first payout, never at signup."""
+    identity_reference: str | None = None
+    """The identity provider's reference. The documents stay with the provider."""
+    identity_verified_at: datetime | None = None
+
+    @property
+    def verified(self) -> bool:
+        return self.identity_status == "verified"
+
+
+class ContributorProfile(BaseModel):
+    """What anyone may see about a contributor: no wallet, no provider reference."""
+
+    id: str
+    handle: str
+    reputation: int
+    settled_issues: int
+    earned_usdc: str
     verified: bool
+
+    @classmethod
+    def of(cls, contributor: Contributor) -> ContributorProfile:
+        return cls(
+            id=contributor.id,
+            handle=contributor.handle,
+            reputation=contributor.reputation,
+            settled_issues=contributor.settled_issues,
+            earned_usdc=contributor.earned_usdc,
+            verified=contributor.verified,
+        )
 
 
 class Decision(BaseModel):
@@ -190,3 +224,37 @@ class HealthOut(BaseModel):
     chain: str
     seeded_issues: int
     simulated: bool
+
+
+class StatementLine(BaseModel):
+    paid_at: datetime
+    issue_id: str
+    repo: str
+    issue_number: int
+    issue_title: str
+    counterparty_id: str
+    """The publisher who funded the work."""
+    counterparty_name: str
+    amount: dict[str, str | int]
+    currency: Literal["USDC"] = "USDC"
+    chain: str
+    tx_hash: str | None
+
+
+class AnnualStatement(BaseModel):
+    """Every payout one contributor received in one calendar year, in UTC.
+
+    Built for a finance team to file from without asking anything: each line carries
+    its date, issue, counterparty, amount and settlement reference.
+    """
+
+    contributor_id: str
+    handle: str
+    year: int
+    identity_status: str
+    lines: list[StatementLine]
+    total: dict[str, str | int]
+    payouts: int
+    generated_at: datetime
+    simulated: bool
+    """True when no chain was contacted. A simulated statement is not a tax record."""

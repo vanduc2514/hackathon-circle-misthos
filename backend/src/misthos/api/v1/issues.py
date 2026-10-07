@@ -4,11 +4,11 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 
 from misthos.config import settings
+from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.issue import IllegalTransition, IssueState
 from misthos.domain.pricing import UnfundableIssue
 from misthos.repositories import StaleIssue
 from misthos.schemas import (
-    Contributor,
     Decision,
     HealthOut,
     IssueOut,
@@ -37,6 +37,11 @@ def _conflict(exc: Exception) -> HTTPException:
     # A stale copy means someone, or the sweeper, moved the issue first. Retrying
     # reads the new state; overwriting it could undo a refund or a release.
     return HTTPException(status_code=409, detail=str(exc))
+
+
+def _refused(exc: ComplianceRefusal) -> HTTPException:
+    # Well formed and legal in the lifecycle, but money may not move for this party.
+    return HTTPException(status_code=403, detail=str(exc))
 
 
 @router.get("/health", response_model=HealthOut)
@@ -90,6 +95,8 @@ async def advance(issue_id: str) -> IssueOut:
         rec = await run_in_threadpool(store.advance, issue_id)
     except (IllegalTransition, StaleIssue) as exc:
         raise _conflict(exc) from exc
+    except ComplianceRefusal as exc:
+        raise _refused(exc) from exc
     return await run_in_threadpool(store.to_out, rec)
 
 
@@ -101,6 +108,8 @@ async def complete(issue_id: str) -> IssueOut:
         rec = await run_in_threadpool(store.approve_and_accept, issue_id)
     except (IllegalTransition, StaleIssue) as exc:
         raise _conflict(exc) from exc
+    except ComplianceRefusal as exc:
+        raise _refused(exc) from exc
     return await run_in_threadpool(store.to_out, rec)
 
 
@@ -120,11 +129,6 @@ async def publish(payload: PublishRequest) -> IssueOut:
 @router.get("/publishers", response_model=list[Publisher])
 async def list_publishers() -> list[Publisher]:
     return await run_in_threadpool(store.list_publishers)
-
-
-@router.get("/contributors", response_model=list[Contributor])
-async def list_contributors() -> list[Contributor]:
-    return await run_in_threadpool(store.list_contributors)
 
 
 @router.get("/metrics", response_model=MetricsOut)

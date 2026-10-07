@@ -72,7 +72,10 @@ contributors = Table(
     Column("reputation", Integer, nullable=False),
     Column("settled_issues", Integer, nullable=False),
     Column("earned_base_units", BigInteger, nullable=False),
-    Column("verified", Boolean, nullable=False),
+    # Only the outcome and the provider's reference: the documents stay with the provider.
+    Column("identity_status", String(16), nullable=False),
+    Column("identity_reference", String(128)),
+    Column("identity_verified_at", Timestamp),
 )
 
 issues = Table(
@@ -93,6 +96,11 @@ issues = Table(
     Column("created_at", Timestamp, nullable=False),
     Column("deadline", Timestamp),
     Column("paid_base_units", BigInteger),
+    Column("paid_at", Timestamp),
+    Column("payout_tx_hash", String(80)),
+    Column("accepted_by", String(16)),
+    Column("payout_hold", String(32)),
+    Column("payout_checked_at", Timestamp),
     Column("relisted_from", Id, ForeignKey("issues.id")),
     Column("version", Integer, nullable=False),
 )
@@ -189,6 +197,22 @@ decisions = Table(
     Column("cost_usdc", String(32)),
     Column("created_at", Timestamp, nullable=False, index=True),
     UniqueConstraint("issue_id", "position"),
+)
+
+# Append-only audit trail of every sanctions check, kept for SCREENING_RETENTION.
+screenings = Table(
+    "screenings",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("party_kind", String(16), nullable=False),
+    Column("party_id", Id, nullable=False),
+    Column("wallet_address", String(64), nullable=False),
+    Column("outcome", String(8), nullable=False),
+    Column("list_name", String(64)),
+    Column("provider", String(32), nullable=False),
+    Column("reason", String(16), nullable=False),
+    Column("checked_at", Timestamp, nullable=False),
+    Index("ix_screenings_party", "party_kind", "party_id", "checked_at"),
 )
 
 # Sequences for the human-readable ids (ISS-1001, DEC-0001), shared by every process.
