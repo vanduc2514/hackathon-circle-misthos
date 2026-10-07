@@ -299,6 +299,12 @@ export default function IssueDetail() {
                   ${money(issue.paid_usdc)}
                 </span>
               </div>
+              {issue.platform_fee_usdc && (
+                <div className="price-total" style={{ marginTop: 8 }}>
+                  <span className="dim">Platform take rate</span>
+                  <span className="mono-num">${money(issue.platform_fee_usdc)}</span>
+                </div>
+              )}
             </Panel>
           )}
 
