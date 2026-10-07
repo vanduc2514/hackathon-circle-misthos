@@ -61,6 +61,38 @@ class TestIssues:
         assert {"actor", "action", "outcome"} <= rows[0].keys()
 
 
+class TestWallets:
+    def test_a_session_links_the_contributor_wallet(self, client: TestClient) -> None:
+        body = client.post(f"{API}/wallets/contributor/CON-1/session").json()
+        assert body["simulated"] is True
+        assert body["challenge_id"] is None
+        linked = body["wallet"]
+        assert linked["circle_user_id"] == "misthos-contributor-CON-1"
+
+        contributors = {c["id"]: c for c in client.get(f"{API}/contributors").json()}
+        assert contributors["CON-1"]["wallet"]["address"] == linked["address"]
+
+    def test_link_reads_the_address_back_for_a_publisher(self, client: TestClient) -> None:
+        wallet = client.post(f"{API}/wallets/publisher/PUB-1/link").json()
+        publishers = {p["id"]: p for p in client.get(f"{API}/publishers").json()}
+        assert publishers["PUB-1"]["wallet"] == wallet
+
+    def test_an_unknown_party_or_id_is_refused(self, client: TestClient) -> None:
+        assert client.post(f"{API}/wallets/contributor/CON-999/session").status_code == 404
+        assert client.post(f"{API}/wallets/admin/1/session").status_code == 422
+
+    def test_a_release_pays_the_linked_wallet(self, client: TestClient) -> None:
+        accepted = client.get(f"{API}/issues", params={"state": "in_review"}).json()[0]
+        issue = client.get(f"{API}/issues/{accepted['id']}").json()
+        cid = issue["contributor_id"]
+        wallet = client.post(f"{API}/wallets/contributor/{cid}/session").json()["wallet"]
+
+        client.post(f"{API}/issues/{accepted['id']}/complete")
+        timeline = client.get(f"{API}/issues/{accepted['id']}/timeline").json()
+        released = [d for d in timeline if d["action"] == "released"]
+        assert released and wallet["address"] in released[0]["outcome"]
+
+
 class TestLifecycleThroughTheApi:
     def test_advance_funds_an_awaiting_approval_issue(self, client: TestClient) -> None:
         assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"

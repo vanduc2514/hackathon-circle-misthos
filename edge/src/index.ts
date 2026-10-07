@@ -16,6 +16,8 @@
 import express, { type Request, type Response } from 'express'
 import { createGate, settlementOf } from './x402-gate.js'
 import { walletStatus, type WalletOp } from './circle-cli.js'
+import { createWalletService } from './circle-wallets.js'
+import { walletRouter } from './wallet-routes.js'
 
 const app = express()
 app.use(express.json({ limit: '512kb' }))
@@ -53,6 +55,9 @@ app.get('/paid/pricing-report', gate.require('0.25'), (_req: Request, res: Respo
       res.status(502).json({ error: 'core unavailable', detail: String(err) }),
     )
 })
+
+/** Circle user-controlled wallets for publishers and contributors. Core only. */
+app.use('/wallets', walletRouter(createWalletService()))
 
 /** Wallet operations the Python core delegates here because the CLI is Node. */
 app.get('/wallet/status', async (_req: Request, res: Response) => {

@@ -308,17 +308,29 @@ class Store:
         rec.escrow.released = True
         rec.paid = rec.proposal.recommended
         rec.state = IssueState.PAID
+        contributor = self.contributors.get(rec.contributor_id or "")
+        payee = f"contributor wallet {contributor.wallet.address}" if contributor else "contributor"
         self._log(
             rec,
             actor="system",
             action="released",
             rule=rule,
-            outcome=f"released {rec.paid} to contributor",
+            outcome=f"released {rec.paid} to {payee}",
             cost="0.01",
             when=when,
         )
 
     # ---------------------------------------------------------------- actions
+
+    def link_wallet(self, party: str, party_id: str, wallet: Wallet) -> Wallet:
+        """Record the address a party's own Circle wallet reported. Payouts go there."""
+        if party == "publisher":
+            self.publishers[party_id] = self.publishers[party_id].model_copy(update={"wallet": wallet})
+        else:
+            self.contributors[party_id] = self.contributors[party_id].model_copy(
+                update={"wallet": wallet}
+            )
+        return wallet
 
     def get(self, issue_id: str) -> IssueRecord | None:
         return self.issues.get(issue_id)

@@ -22,6 +22,10 @@ class Settings(BaseSettings):
 
     github_webhook_secret: str = "dev-secret"
     circle_api_key: str = ""
+    # The edge service holds the Circle wallet SDK. The token proves a call came
+    # from the core; the edge refuses wallet routes without it.
+    edge_url: str = "http://127.0.0.1:8080"
+    edge_core_token: str = ""
 
     @property
     def cors_list(self) -> list[str]:
