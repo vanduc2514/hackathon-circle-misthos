@@ -262,7 +262,7 @@ class Store:
             chain=CHAIN,
             tx_hash=_tx_hash(),
             amount=money(committed),
-            deadline=(when or _now()) + timedelta(days=14),
+            deadline=(when or _now()) + lifecycle.FUNDING_WINDOW,
         )
         rec.deadline = rec.escrow.deadline
         rec.state = IssueState.FUNDED
@@ -317,6 +317,16 @@ class Store:
             cost="0.01",
             when=when,
         )
+
+    def _silent_release_due(self, rec: IssueRecord) -> bool:
+        """Whether the grace has run out and the release is ours to make.
+
+        The window is capped at the escrow deadline, so a late verdict releases when
+        the contract stops paying rather than seven days into a closed window.
+        """
+        if rec.review is None or rec.deadline is None:
+            return False
+        return _now() > lifecycle.silent_release_at(rec.review.decided_at, rec.deadline)
 
     # ---------------------------------------------------------------- actions
 
@@ -395,12 +405,10 @@ class Store:
                     outcome="accepted: criteria met, checks passing, diff in scope",
                     cost="6.00",
                 )
-            case IssueState.ACCEPTED if (
-                rec.review is not None
-                and _now() > rec.review.decided_at + lifecycle.SILENT_PUBLISHER_GRACE
-            ):
+            case IssueState.ACCEPTED if self._silent_release_due(rec):
                 # The verdict passed and the publisher went quiet past the grace
-                # window. Release rather than strand finished work.
+                # window, which is bounded by the escrow deadline. Release rather
+                # than strand finished work.
                 self._release(rec, rule="silent_publisher_grace_period")
             case IssueState.ACCEPTED:
                 self._release(rec)

@@ -7,7 +7,7 @@ testable without a database, a chain or a GitHub token.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 
@@ -68,6 +68,11 @@ HUMAN_CHECKPOINTS = frozenset(
 # this long. The only release path that does not carry one. See 08.
 SILENT_PUBLISHER_GRACE = timedelta(days=7)
 
+# How long committed funds stay in escrow before the publisher can reclaim them. The
+# contract refuses a release once it has passed, which is what makes this window and
+# the grace a pair rather than two independent timers. See `silent_release_at`.
+FUNDING_WINDOW = timedelta(days=14)
+
 
 class IllegalTransition(Exception):
     def __init__(self, current: IssueState, requested: IssueState) -> None:
@@ -88,3 +93,15 @@ def transition(current: IssueState, requested: IssueState) -> IssueState:
 
 def is_open(state: IssueState) -> bool:
     return state in OPEN_STATES
+
+
+def silent_release_at(decided_at: datetime, deadline: datetime) -> datetime:
+    """When a passing verdict releases without the publisher's signature.
+
+    The escrow only pays inside its own window, so the grace can never outlive the
+    deadline. A verdict that leaves less than the full grace on the clock releases at
+    the deadline instead of later: uncapped, the release the grace exists for would
+    land after the contract has closed and the only path left would be the refund to
+    the publisher that the grace was written to avoid.
+    """
+    return min(decided_at + SILENT_PUBLISHER_GRACE, deadline)

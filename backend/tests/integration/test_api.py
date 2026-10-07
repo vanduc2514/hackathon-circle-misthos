@@ -106,6 +106,30 @@ class TestLifecycleThroughTheApi:
         assert rec.state is IssueState.PAID
         assert rec.decisions[-1].rule == "silent_publisher_grace_period"
 
+    def test_a_late_verdict_releases_as_the_grace_not_as_a_merge_that_never_happened(
+        self,
+    ) -> None:
+        """The grace is capped at the escrow deadline, so a late verdict is not
+        stranded waiting on a window the contract has already closed."""
+        from datetime import UTC, datetime, timedelta
+
+        rec = store.get("ISS-1002")  # seeded IN_REVIEW
+        assert rec is not None and rec.escrow is not None
+        store.advance("ISS-1002")
+        assert rec.state is IssueState.ACCEPTED
+        assert rec.review is not None
+
+        # A verdict six days ago, with the escrow deadline already behind us: the
+        # full seven-day grace would have ended a day after the contract stopped
+        # paying, so the release window ends at the deadline instead.
+        rec.review.decided_at = datetime.now(UTC) - timedelta(days=6)
+        rec.deadline = datetime.now(UTC) - timedelta(hours=1)
+        rec.escrow.deadline = rec.deadline
+        store.advance("ISS-1002")
+
+        assert rec.state is IssueState.PAID
+        assert rec.decisions[-1].rule == "silent_publisher_grace_period"
+
     def test_an_issue_awaiting_merge_still_counts_as_open(self, client: TestClient) -> None:
         """ACCEPTED holds committed money until the publisher merges."""
         before = client.get(f"{API}/metrics").json()["open_issues"]
