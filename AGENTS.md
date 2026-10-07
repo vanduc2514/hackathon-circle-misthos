@@ -16,8 +16,9 @@ agent reviews the pull request against the acceptance criteria, and payment sett
 - **The platform owns review.** There is no third-party reviewer and no review fee. The
   review agent's verdict is the verdict. The publisher's merge is the only human
   signature on release, with a seven-day grace period if they go quiet.
-- The published minimum fix price is about **$55**, which is where review pays for
-  itself at the Open tier's 12 percent take rate.
+- The published minimum fix price is derived per tier from break-even and rounded up
+  to the next $5: **$55** at the Open tier's 12 percent, **$65** at Team's 10 percent,
+  **$80** at Enterprise's 8 percent. Publishing below it is refused with a reason.
 - **Two human checkpoints** carry consequences: approving the price, and merging the
   work, which is what acceptance means. Everything else — scoping, pricing, triage and review — is agent work.
 - The **platform is never a custodian**. Committed funds sit in `MisthosEscrow` on Arc,

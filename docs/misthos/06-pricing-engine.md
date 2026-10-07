@@ -206,13 +206,13 @@ Our reason is that we do two things a marketplace normally does not: we price th
 
 The tier table in the section below is the single source of truth for these numbers. Every rate quoted anywhere else in this set is one of those three.
 
-Who pays the fee is a smaller decision than it looks. Our default is to split it, with the publisher's side visible in the quote and the contributor's side deducted from the payout. A split keeps both sides aware of the cost and neither side feeling singled out.
+The publisher pays the fix price and nothing else. The take rate is charged on that amount rather than added to it, so the price a manager approves is the price on the issue. Note that the escrow releases the whole commitment to the contributor in one transfer (`contracts/src/MisthosEscrow.sol`), so the platform's cut is not carved out on chain yet; until it is, the take is a reporting-layer number and not a transfer.
 
 ### The price floor
 
-Review costs the platform about $6.31 an issue. It is not a line item on the publisher's invoice, so it has to come out of the take rate, and that sets a floor: at the Open tier's 12 percent a fix has to be worth about $53 before review pays for itself, which is why the published minimum is $55. Tiers with a thinner take rate carry a higher floor, about $63 at Team's 10 percent and $79 at Enterprise's 8 percent.
+Review costs the platform about $6.31 an issue. It is not a line item on the publisher's invoice, so it has to come out of the take rate, and that sets a floor: at the Open tier's 12 percent a fix has to be worth about $52.58 before review pays for itself, so the published minimum is the break-even rounded up to the next $5, which is $55. A thinner take rate needs a higher price: Team's 10 percent breaks even at $63.10 and publishes at $65, and Enterprise's 8 percent breaks even at $78.88 and publishes at $80.
 
-The floor is published rather than discovered. An issue below it is one the platform declines rather than subsidises.
+The floor is enforced when an issue is published, per the tier of the publisher asking. Below it the platform declines the work and says why, rather than subsidising it or quietly capping the contributor's pay.
 
 ### Tiers
 

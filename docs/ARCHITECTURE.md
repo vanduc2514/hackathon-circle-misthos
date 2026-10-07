@@ -170,7 +170,7 @@ This process exists for exactly two reasons and both are Node-only dependencies.
 | `backend/src/misthos/domain/` | Lifecycle state machine, money units, pricing engine | Deliberately IO-free, so the two places a bug costs real funds are testable without a database |
 | `backend/src/misthos/store.py` | State, and the seeded simulation | In-process today. Becomes repositories over Postgres |
 | Pricing engine | Produces the price band and its justification | Scores six signals, then applies market context and the publisher's affordability ceiling |
-| Review service | Runs the project's checks, drafts the verdict, files findings on the pull request | Produces a draft. A human confirms it |
+| Review service | Runs the project's checks, issues the verdict, files findings on the pull request | The verdict is the decision. Only a merge or the grace period moves money |
 | Settlement orchestrator | Commits, releases, refunds, reconciles | The only component that can move money, and it moves it by calling a contract |
 | Finance adapter | Reads budget and cash context, read-only | Pluggable. Firefly III first, then beancount, Odoo, ERPNext, Invoice Ninja |
 
@@ -402,7 +402,7 @@ sequenceDiagram
     end
 ```
 
-The review service produces a draft and never a decision. That separation is C2, and it is also the answer to the hackathon's own framing of delegated authority: the agent can do the work, but the limit sits somewhere it cannot reach.
+The review service issues the verdict and never releases money. That separation is C2, and it is also the answer to the hackathon's own framing of delegated authority: the agent can decide, but the limit sits somewhere it cannot reach.
 
 Rework rounds are bounded. An unbounded review loop costs more than the fix is worth, which is the exact problem the product exists to solve.
 
@@ -456,7 +456,7 @@ Reputation derives only from settled issues. Anything else rewards activity rath
 | EscrowCommitment | `escrow_commitments` | A cache. Refreshed from the chain, and reconciled on a schedule |
 | Claim | `claims` | Partial unique index on `(issue_id) WHERE active` enforces one active claim |
 | Submission | `submissions` | Unique on `(issue_id, head_sha)` |
-| Review | `reviews` | Holds the agent draft beside the human verdict so disagreement is measurable |
+| Review | `reviews` | The platform's verdict with its findings. There is no draft to confirm, so the publisher's merge is the only reversal |
 | Decision | `decisions` | Append-only, ordered by `created_at`. No update or delete grants |
 | ReputationEvent | `reputation_events` | Derived. Rebuildable from settled issues, so it is safe to recompute |
 | Payout | `payouts` | One row per release, with the transaction hash as the unique key |
@@ -570,7 +570,7 @@ Inference is roughly nine hundred times the settlement cost. Any optimisation ef
 | ADR-1 | Escrow funds live in a contract on Arc, never in a platform account | Removes custody, removes the failure mode that bankrupted the previous attempt in this category | Hard. This is the trust story |
 | ADR-2 | Two settlement paths: escrowed work payments, x402 for metered calls | Each mechanism is good at one job, and both are available. Forcing one to do both would cost programmable release or batched settlement | Medium |
 | ADR-3 | Fixed price set before publication, no bidding | See [06 The pricing engine](./misthos/06-pricing-engine.md). A price round rewards the least careful bidder | Medium |
-| ADR-4 | The review agent drafts, a human decides | C2, and the hackathon's own framing of where an agent's authority must stop | Hard |
+| ADR-4 | The review agent decides, and the publisher's merge is the only human signature on release | C2, and the hackathon's own framing of where an agent's authority must stop | Superseded: the human second opinion was a third party with a fee, and it cost more than it bought |
 | ADR-5 | GitHub only | One integration done deeply beats three done shallowly. Acceptance criteria can read the project's own test suite | Medium |
 | ADR-6 | Finance integration is read-only and adapter-shaped | Writing to a customer's ledger inherits liability with no product benefit. Firefly III is too narrow to be the only shape | Easy |
 | ADR-7 | Identity verification at payout, not signup | Verification at signup is the largest contributor drop-off cause | Easy |

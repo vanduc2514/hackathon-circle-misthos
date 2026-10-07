@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from misthos.config import settings
 from misthos.domain.issue import IllegalTransition, IssueState
+from misthos.domain.pricing import UnfundableIssue
 from misthos.schemas import (
     Contributor,
     Decision,
@@ -95,7 +96,12 @@ async def complete(issue_id: str) -> IssueOut:
 async def publish(payload: PublishRequest) -> IssueOut:
     if payload.publisher_id not in store.publishers:
         raise HTTPException(status_code=400, detail=f"unknown publisher {payload.publisher_id}")
-    rec = store.publish(payload)
+    try:
+        rec = store.publish(payload)
+    except UnfundableIssue as exc:
+        # Well formed, but the work cannot carry its own review cost. Say why rather
+        # than publish a price the platform loses money on.
+        raise HTTPException(status_code=422, detail=exc.justification) from exc
     return store.to_out(rec)
 
 

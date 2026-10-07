@@ -62,6 +62,9 @@ class PriceProposalOut(BaseModel):
     band_high: dict[str, str | int]
     recommended: dict[str, str | int]
     estimated_hours: float
+    fundable: bool = True
+    """False when the engine will not put a price on this issue. The justification
+    says why, and publishing is refused rather than quietly subsidised."""
     complexity_score: float
     confidence: Literal["low", "medium", "high"]
     signals: dict[str, float]

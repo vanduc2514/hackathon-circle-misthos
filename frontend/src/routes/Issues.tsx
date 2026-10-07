@@ -11,7 +11,7 @@ const FILTERS = [
   { key: 'CLAIMED', label: 'Claimed' },
   { key: 'IN_REVIEW', label: 'In review' },
   { key: 'REWORK', label: 'Rework' },
-  { key: 'PAID', label: 'Paid' },
+  { key: 'ACCEPTED', label: 'Awaiting merge' },
   { key: 'PAID', label: 'Settled' },
   { key: 'REFUNDED', label: 'Refunded' },
 ]

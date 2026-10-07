@@ -20,7 +20,7 @@ Three criteria in the organisers' own priority order:
 
 | Criterion | Weight | Our position | Evidence we will submit |
 | --- | --- | --- | --- |
-| Agentic sophistication | 30% | Strong. The agent prices work, explains its reasoning, triages submissions and drafts verdicts. Two human checkpoints are deliberate and named. | A recorded run: issue in, price and reasoning out, pull request in, review out. Plus the written rationale for the two checkpoints that stay human. |
+| Agentic sophistication | 30% | Strong. The agent prices work, explains its reasoning, triages submissions and issues verdicts. Two human checkpoints are deliberate and named. | A recorded run: issue in, price and reasoning out, pull request in, review out. Plus the written rationale for the two checkpoints that stay human. |
 | Traction | 30% | Weakest area, and honestly so. One design partner and one funded issue is the realistic outcome in twelve days. | Name the business. Show the funded issue. Show the USDC settled, labelled testnet. |
 | Circle tool usage | 20% | Strong if we use the stack rather than one primitive. | Agent wallets for both sides, escrowed commitment on Arc, x402 settlement, App Kit for any cross-chain move, USYC considered for idle escrow. |
 | Innovation | 20% | Strong on two counts: pricing work from the buyer's own financial position, and the agent's verdict as the settlement condition. | The pricing brief itself is the artifact. So is a recorded run where the verdict is what moves the money. |
