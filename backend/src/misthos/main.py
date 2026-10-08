@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
@@ -22,6 +23,8 @@ from misthos.services.attestor import (
 from misthos.store import AlreadyListed, store
 from misthos.workers.sweeper import run_forever
 
+log = logging.getLogger("misthos.main")
+
 DESCRIPTION = """
 Marketplace where a company or a maintainer puts a **fixed price** on a GitHub
 issue and pays whoever fixes it, settled in USDC on Arc.
@@ -42,6 +45,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Run the sweeper beside the API unless a dedicated worker process owns it."""
     logs.configure(json_lines=settings.log_json, level=settings.log_level)
     sessions.warn_if_unshared()
+    await report_settlement_problems()
     sweeper = (
         asyncio.create_task(run_forever(store, settings.sweep_interval_seconds))
         if settings.sweeper_in_process
@@ -54,6 +58,19 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             sweeper.cancel()
             with suppress(asyncio.CancelledError):
                 await sweeper
+
+
+async def report_settlement_problems() -> list[str]:
+    """Say at startup what would stop the escrow paying a funded issue out, such as no
+    fee recipient on it (#127). Funding refuses on the same check, so this is the
+    operator hearing of it before a publisher does; it does not stop the API, which
+    still serves everything that moves no money."""
+    if settings.simulated:
+        return []
+    problems = await asyncio.to_thread(store.chain.settlement_problems)
+    for problem in problems:
+        log.error("settlement is not ready: %s", problem, extra={"alert": "settlement"})
+    return problems
 
 
 def create_app() -> FastAPI:

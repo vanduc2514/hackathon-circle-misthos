@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {MisthosEscrow} from "../src/MisthosEscrow.sol";
+import {MockUsdcToken} from "./support/MockUsdcToken.sol";
 
 contract DeployTest is Test {
     Deploy script;
@@ -54,9 +55,46 @@ contract DeployTest is Test {
     // Outside a broadcast, `run()` itself must take the dry-run path.
     function test_run_outside_a_broadcast_leaves_the_real_record_alone() public {
         vm.setEnv("MISTHOS_USDC_ADDRESS", vm.toString(USDC));
+        vm.setEnv("MISTHOS_FEE_RECIPIENT_ADDRESS", vm.toString(FEES));
         string memory before = _recordOrNothing();
-        script.run();
+        MisthosEscrow escrow = script.run();
         assertEq(_recordOrNothing(), before);
+        assertEq(escrow.feeRecipient(), FEES);
+    }
+
+    // The platform sets a take rate on every issue, eight percent at the least, and
+    // the escrow refuses a release with a rate and nowhere to pay it. An escrow
+    // deployed without a recipient would take money it could never release (#127).
+    function test_a_deploy_without_a_fee_recipient_is_refused() public {
+        vm.expectRevert(Deploy.FeeRecipientRequired.selector);
+        script.deploy(ATTESTOR, USDC, address(0), 0, "");
+    }
+
+    // The escrow the script deploys runs the platform's own sequence end to end: the
+    // tier's rate and the approval, the publisher's commitment, then a release that
+    // pays the contributor and the treasury from the same commitment.
+    function test_an_escrow_the_script_deploys_pays_a_release_at_a_tier_rate() public {
+        MockUsdcToken usdc = new MockUsdcToken();
+        MisthosEscrow escrow = script.deploy(ATTESTOR, address(usdc), FEES, 0, "");
+        bytes32 issue = keccak256("ISS-1009");
+        address publisher = address(0xB0B);
+        uint64 deadline = uint64(block.timestamp + 14 days);
+
+        vm.startPrank(escrow.owner());
+        escrow.setFee(issue, 1200); // the Open tier's rate
+        escrow.setCeiling(issue, 500e6, publisher, deadline);
+        vm.stopPrank();
+
+        usdc.mint(publisher, 500e6);
+        vm.startPrank(publisher);
+        usdc.approve(address(escrow), 500e6);
+        escrow.commit(issue, 500e6, deadline);
+        vm.stopPrank();
+
+        vm.prank(ATTESTOR);
+        escrow.release(issue, address(0xC0DE), 500e6);
+        assertEq(usdc.balanceOf(FEES), 60e6);
+        assertEq(usdc.balanceOf(address(0xC0DE)), 440e6);
     }
 
     /// @dev The real record for this chain as it stands, or "" when there is none.

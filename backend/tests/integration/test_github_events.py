@@ -21,6 +21,7 @@ from misthos.domain.review import CHECKS_WAIT, ChangedFile
 from misthos.domain.signals import IssueFacts, TreeCounts
 from misthos.main import app
 from misthos.models.records import IssueRecord
+from misthos.services.chain import ChainRevert, ChainUnavailable
 from misthos.services.github import SimulatedGitHub
 from misthos.services.github.events import closed_issues
 from misthos.store import store
@@ -296,6 +297,66 @@ class TestMergeIsAcceptance:
             client, "pull_request", pull_request(repo, pr, "jonas_k", action="closed", merged=True)
         )
         assert get(issue_id).state is IssueState.PAID
+
+    def test_a_merge_the_chain_will_not_pay_yet_is_still_acceptance(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A release that reverted escaped before anything was saved: the webhook
+        answered 500, the issue showed no merge, and the publisher could then decline
+        work they had merged (#125). The merge stands and the payout is held."""
+        issue_id, repo, pr = IN_REVIEW
+        store.advance(issue_id)  # the verdict passes
+        release = store.chain.release
+
+        def refused(*_: object) -> str:
+            raise ChainRevert("FeeRecipientNotSet")
+
+        monkeypatch.setattr(store.chain, "release", refused)
+        out = deliver(
+            client, "pull_request", pull_request(repo, pr, "jonas_k", action="closed", merged=True)
+        )
+
+        assert out["handled"] and out["issue_ids"] == [issue_id]
+        rec = get(issue_id)
+        assert rec.state is IssueState.ACCEPTED
+        assert rec.accepted_by == "merge"
+        assert "merged" in [d.action for d in rec.decisions]
+        assert rec.payout_hold == "release_failed"
+        assert "FeeRecipientNotSet" in rec.decisions[-1].outcome
+
+        declined = client.post(f"{API}/issues/{issue_id}/decline", json={"reason": "No."})
+        assert declined.status_code == 409
+        assert "merged" in declined.json()["detail"]
+
+        # The next pass tries again, and once the chain takes it the contributor is paid.
+        monkeypatch.setattr(store.chain, "release", release)
+        assert rec.payout_checked_at is not None
+        sweep_once(store, now=rec.payout_checked_at + timedelta(minutes=1))
+        paid = get(issue_id)
+        assert paid.state is IssueState.PAID and paid.accepted_by == "merge"
+
+    def test_a_merge_while_the_chain_is_unreachable_is_kept_and_says_nothing_private(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The merge before the verdict is acceptance too, and an RPC that is down holds
+        the payout without putting the RPC's address in the public decision log."""
+        issue_id, repo, pr = IN_REVIEW
+
+        def down(*_: object) -> str:
+            raise ChainUnavailable("the Arc RPC could not be read: https://rpc.example/key-123")
+
+        monkeypatch.setattr(store.chain, "release", down)
+        deliver(
+            client, "pull_request", pull_request(repo, pr, "jonas_k", action="closed", merged=True)
+        )
+
+        rec = get(issue_id)
+        assert (rec.state, rec.accepted_by, rec.payout_hold) == (
+            IssueState.ACCEPTED,
+            "merge",
+            "release_failed",
+        )
+        assert all("key-123" not in d.outcome for d in rec.decisions)
 
     def test_merging_during_rework_accepts_what_was_merged(self, client: TestClient) -> None:
         issue_id, repo, pr, author = REWORK

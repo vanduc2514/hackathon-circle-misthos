@@ -50,6 +50,11 @@ class Publisher(BaseModel):
     kind: Literal["company", "maintainer"]
     tier: Tier
     wallet: Wallet
+    """The wallet the publisher signs in with and funds from. The escrow takes their
+    commitment from it alone and refunds to it, so nothing replaces it (#123)."""
+    circle_wallet: Wallet | None = None
+    """The publisher's own Circle wallet, when they set one up. Kept beside the funding
+    wallet, never in its place."""
     budget_remaining_usdc: str
     # The organisation's own spending policy (domain/policy.py).
     approval_threshold_usdc: str | None = None
@@ -189,7 +194,15 @@ class CommitmentPlan(BaseModel):
     usdc: str
     amount: dict[str, str | int]
     deadline: int = Field(
-        description="Unix seconds. Commit within the hour: the escrow term starts at approval"
+        description="Unix seconds: the escrow deadline the approval fixed. The escrow "
+        "refuses a later one, and booking refuses one more than an hour earlier"
+    )
+    fee_bps: int = Field(
+        description="The take rate the approval fixed on the escrow, in basis points"
+    )
+    wallet: str = Field(
+        description="The only wallet the escrow accepts this commitment from: the one "
+        "the publisher funds from"
     )
     calls: list[WalletCall]
 

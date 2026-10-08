@@ -125,11 +125,12 @@ class TestNothingIsStrandedPastTheDeadline:
         every_store.submit_pull_request(CLAIMED, every_store.demo_pull_request(CLAIMED))
         assert sweep_once(every_store, now=late).reviewed[CLAIMED] == "accept"
         assert stranded(every_store, late) == []
-        # The silent-publisher grace stops at the deadline, so the release is due now.
+        # The escrow pays only before its deadline (#121), and this acceptance came a
+        # month after it, so the next pass refunds the publisher, as the contract would.
         sweep_once(every_store, now=late)
 
         rec = get(every_store, CLAIMED)
-        assert rec.state is IssueState.PAID
+        assert rec.state is IssueState.REFUNDED
         held = ledger.position(rec.money_events)
         assert held is not None and held.held == Usdc(0)
 
@@ -165,7 +166,8 @@ class TestNothingIsStrandedPastTheDeadline:
         """Work under review is never timed out (domain/timers.py): the contributor's
         work is still being judged, and IN_REVIEW has no road to a refund. The sweeper
         stops paying for a review that keeps failing, and the commit stays one a review
-        can take, so the person it alerts settles the money with the review path."""
+        can take, so the person it alerts settles the money with the review path. Past
+        the escrow deadline the contract only refunds (#121), so that is where it goes."""
         accepted_then_declined(every_store)
         every_store.submit_pull_request(CLAIMED, every_store.demo_pull_request(CLAIMED))
         deadline = get(every_store, CLAIMED).deadline
@@ -190,7 +192,10 @@ class TestNothingIsStrandedPastTheDeadline:
         reviewed = every_store.review(CLAIMED, late)  # "Review it now"
         assert reviewed is not None and reviewed.state is IssueState.ACCEPTED
         sweep_once(every_store, now=late)
-        assert get(every_store, CLAIMED).state is IssueState.PAID
+        rec = get(every_store, CLAIMED)
+        assert rec.state is IssueState.REFUNDED
+        held = ledger.position(rec.money_events)
+        assert held is not None and held.held == Usdc(0)
 
 
 class TestTheStepsInTheIssue:

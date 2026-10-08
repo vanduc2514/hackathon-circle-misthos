@@ -21,7 +21,8 @@ from misthos.domain.money import Usdc
 from misthos.models import tables
 from misthos.repositories import AppendOnlyViolation, MemoryRepository, StaleIssue
 from misthos.repositories.sql import SqlRepository
-from misthos.schemas import Account, RepoConnection
+from misthos.schemas import Account, RepoConnection, Wallet
+from misthos.services.chain import ChainRevert
 from misthos.store import Store
 
 
@@ -100,6 +101,33 @@ class TestRestart:
         assert again is not None
         assert again.money_events == paid.money_events
         assert second.reconcile() == []
+
+    def test_the_approved_terms_the_circle_wallet_and_the_escrow_deadline_survive(
+        self, database_url: str
+    ) -> None:
+        """Booking checks the approved terms (#126), the simulated escrow judges release
+        and refund by its deadline (#121), and a publisher's Circle wallet sits beside
+        the wallet they fund from (#123). A restart must lose none of the three."""
+        first = fresh(database_url)
+        funded = first.advance("ISS-1006")
+        circle = Wallet(address="0x" + "c1" * 20, chain="arc-testnet")
+        first.link_wallet("publisher", funded.publisher_id, circle)
+
+        second = Store(SqlRepository(database_url))
+        again = second.get("ISS-1006")
+        assert again is not None and funded.funding is not None
+        assert again.funding == funded.funding
+        held = second.chain.commitment("ISS-1006")
+        assert held is not None and held.deadline == funded.deadline
+        publisher = second.get_publisher(funded.publisher_id)
+        assert publisher is not None and publisher.circle_wallet == circle
+        assert publisher.wallet.address == funded.funding.wallet
+
+        assert funded.deadline is not None and funded.contributor_id is None
+        with pytest.raises(ChainRevert, match="DeadlinePassed"):
+            second.chain.release(
+                "ISS-1006", "0xC0FE", funded.funding.amount, funded.deadline + timedelta(seconds=1)
+            )
 
     def test_a_database_that_holds_issues_is_not_reseeded(self, database_url: str) -> None:
         first = fresh(database_url)

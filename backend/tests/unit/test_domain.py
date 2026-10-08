@@ -15,8 +15,11 @@ import pytest
 from misthos.domain import comparables
 from misthos.domain.comparables import SettledWork
 from misthos.domain.issue import (
+    COMMIT_WINDOW,
     ESCROW_TERM,
+    RELEASE_MARGIN,
     SILENT_PUBLISHER_GRACE,
+    FundingTerms,
     IllegalTransition,
     IssueState,
     can_transition,
@@ -119,6 +122,41 @@ class TestLifecycle:
     def test_priced_issue_can_be_sent_back_for_repricing(self) -> None:
         assert can_transition(IssueState.AWAITING_APPROVAL, IssueState.DRAFT)
 
+    def test_accepted_work_the_deadline_overtook_can_follow_the_chain_to_a_refund(
+        self,
+    ) -> None:
+        """Past the deadline `release` reverts and anyone may refund, so ACCEPTED needs a
+        way to REFUNDED or the record is stranded behind the chain (#121, #84)."""
+        assert can_transition(IssueState.ACCEPTED, IssueState.REFUNDED)
+
+    def test_a_commitment_that_was_never_booked_can_go_back(self) -> None:
+        """One commitment per issue on the escrow: one the platform could not book goes
+        back at its deadline and the listing ends (#126). Never straight to PAID."""
+        assert can_transition(IssueState.AWAITING_APPROVAL, IssueState.REFUNDED)
+        assert not can_transition(IssueState.AWAITING_APPROVAL, IssueState.PAID)
+
+
+class TestFundingTerms:
+    """What the publisher approved is what the commitment is booked against (#126)."""
+
+    APPROVED = datetime(2026, 10, 1, 12, tzinfo=UTC)
+
+    def terms(self) -> FundingTerms:
+        return FundingTerms(
+            amount=Usdc.from_decimal("180"),
+            fee_bps=1200,
+            wallet="0x" + "b0" * 20,
+            deadline=self.APPROVED + ESCROW_TERM,
+            approved_at=self.APPROVED,
+        )
+
+    def test_the_terms_stand_for_the_commit_window(self) -> None:
+        assert self.terms().stand(self.APPROVED + timedelta(minutes=90))
+        assert self.terms().stand(self.APPROVED + COMMIT_WINDOW - timedelta(seconds=1))
+
+    def test_after_the_window_an_approval_sets_new_terms(self) -> None:
+        assert not self.terms().stand(self.APPROVED + COMMIT_WINDOW)
+
 
 class TestGraceAgainstTheEscrowDeadline:
     """The grace and the escrow deadline are one window, not two timers.
@@ -135,22 +173,35 @@ class TestGraceAgainstTheEscrowDeadline:
         deadline = decided_at + ESCROW_TERM
         assert silent_release_at(decided_at, deadline) == decided_at + SILENT_PUBLISHER_GRACE
 
-    def test_a_verdict_inside_the_last_week_releases_at_the_deadline(self) -> None:
+    def test_a_verdict_inside_the_last_week_releases_a_margin_before_the_deadline(
+        self,
+    ) -> None:
         """Day ten of a fourteen-day funding window: six days of grace remain, not
-        seven, so the release is the deadline rather than a day the contract has
-        already closed."""
+        seven, so the release comes a margin before the deadline. At the deadline
+        itself it would reach the contract just as `release` starts reverting (#121)."""
         decided_at = datetime(2026, 10, 1, tzinfo=UTC)
         deadline = decided_at + timedelta(days=4)
-        assert silent_release_at(decided_at, deadline) == deadline
+        assert silent_release_at(decided_at, deadline) == deadline - RELEASE_MARGIN
+
+    def test_the_margin_is_a_few_sweeper_passes(self) -> None:
+        """Enough passes to survive a failed one and a slow RPC, at the default minute."""
+        assert RELEASE_MARGIN >= timedelta(minutes=5)
+        assert RELEASE_MARGIN < SILENT_PUBLISHER_GRACE / 100
+
+    def test_a_verdict_inside_the_margin_is_due_at_once(self) -> None:
+        deadline = datetime(2026, 10, 15, tzinfo=UTC)
+        decided_at = deadline - RELEASE_MARGIN / 2
+        assert silent_release_at(decided_at, deadline) <= decided_at
 
     def test_every_passing_verdict_before_the_deadline_has_a_reachable_release(self) -> None:
-        """Whatever the verdict time, the release lands inside the escrow window."""
+        """Whatever the verdict time, the release is due before the margin closes, so
+        it lands inside the escrow window rather than at its edge."""
         funded_at = datetime(2026, 10, 1, tzinfo=UTC)
         deadline = funded_at + ESCROW_TERM
         for hours in range(0, 14 * 24, 7):
             decided_at = funded_at + timedelta(hours=hours)
             release_at = silent_release_at(decided_at, deadline)
-            assert decided_at <= release_at <= deadline
+            assert decided_at <= release_at <= deadline - RELEASE_MARGIN
 
 
 class TestPricing:

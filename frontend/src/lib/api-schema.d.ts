@@ -219,8 +219,11 @@ export interface paths {
          * @description The two transactions the publisher's own wallet sends to fund the issue.
          *
          *     The platform never signs a commitment: it moves the publisher's USDC. Approving
-         *     the price records it as the escrow's ceiling; the publisher's wallet then lets the
-         *     escrow take that amount and commits it, and approving again books it.
+         *     the price fixes its terms and records them on the escrow (the ceiling, the wallet
+         *     that may commit, the latest deadline and the take rate); the publisher's wallet
+         *     then lets the escrow take that amount and commits it, and approving again books it
+         *     against those same terms. The plan is those terms, never a deadline worked out
+         *     from now, so a booking an hour or a day later still matches it (#126).
          */
         get: operations["commitment_plan_api_v1_issues__issue_id__commitment_get"];
         put?: never;
@@ -1114,9 +1117,19 @@ export interface components {
             };
             /**
              * Deadline
-             * @description Unix seconds. Commit within the hour: the escrow term starts at approval
+             * @description Unix seconds: the escrow deadline the approval fixed. The escrow refuses a later one, and booking refuses one more than an hour earlier
              */
             deadline: number;
+            /**
+             * Fee Bps
+             * @description The take rate the approval fixed on the escrow, in basis points
+             */
+            fee_bps: number;
+            /**
+             * Wallet
+             * @description The only wallet the escrow accepts this commitment from: the one the publisher funds from
+             */
+            wallet: string;
             /** Calls */
             calls: components["schemas"]["WalletCall"][];
         };
@@ -1752,6 +1765,7 @@ export interface components {
              */
             tier: "open" | "team" | "enterprise";
             wallet: components["schemas"]["Wallet"];
+            circle_wallet?: components["schemas"]["Wallet"] | null;
             /** Budget Remaining Usdc */
             budget_remaining_usdc: string;
             /** Approval Threshold Usdc */

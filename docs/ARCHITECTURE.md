@@ -241,7 +241,7 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 | `Memo` (predeployed) | Attaches the issue and PR reference to every money movement, so reconciliation is on-chain |
 | `Multicall3From` (predeployed) | Batches payouts while preserving the original sender as `msg.sender` |
 
-`MisthosEscrow` is the only contract we write. Its job is to make five things true:
+`MisthosEscrow` is the only contract we write. Its job is to make six things true:
 
 1. Money for an issue is visibly committed before a contributor starts.
 2. Release requires an acceptance attestation from a key the contributor cannot obtain.
@@ -250,11 +250,39 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 5. The platform's take rate is carved out of the release in the same call, so the
    commission is a transfer rather than a reporting number, and a per-issue rate
    above the published 15 percent ceiling cannot be set at all.
+6. Only the publisher the approval named can commit, and only to a deadline no later
+   than the approved one (`setCeiling` names both with the price). An issue id is the
+   keccak of a public platform id, so without this anyone could commit dust first and
+   the issue could never be funded or refunded (#122).
 
-Those four are checked by the fuzz and invariant tests in
+These are checked by the fuzz and invariant tests in
 [contracts/test/](contracts/test/): the campaign drives random sequences of commit,
-release, refund, ceiling updates and attestor rotations, and asserts the properties after
-every step. They run on every pull request with the rest of the Foundry suite.
+release, refund, ceiling updates, squatting attempts and attestor rotations, and asserts
+the properties after every step. They run on every pull request with the rest of the
+Foundry suite.
+
+The platform's side of the same rules, in the store and the chain gateway:
+
+- **Booking checks the approved terms.** Approving the price fixes the amount, the take
+  rate, the funding wallet and the escrow deadline, records them on the escrow and keeps
+  them with the issue. The publisher's wallet commits exactly those, and booking checks
+  the commitment against them, never against terms recomputed later, so a booking hours
+  later or after a plan change still matches (#126). A commitment that can never be
+  booked goes back to the publisher once the approved deadline passes.
+- **Every release lands before the deadline.** `release` reverts once the deadline has
+  passed, so the silent-publisher release, and any retry of a held payout, is due by
+  `RELEASE_MARGIN` (ten minutes) before it. Accepted work whose release still had not
+  landed by the deadline is refunded, as the contract allows anyone to, and the record
+  follows the chain (#121). The simulated escrow enforces the same deadlines.
+- **A merge stands whatever the chain says.** A release that reverts or cannot reach the
+  RPC holds the payout (`release_failed`) and is tried again on the sweeper's next pass;
+  the merge is saved as acceptance first, so it can no longer be declined (#125).
+- **A publisher funds from the wallet they sign in with.** Their Circle wallet is kept
+  beside it, never in its place; a contributor's Circle wallet is where they are paid
+  (#123).
+- **No escrow without a fee recipient.** The deploy script refuses one, approval refuses
+  an escrow that has none before any money is committed, and the API reports it at
+  startup (#127).
 
 ### Circle primitives
 
@@ -498,8 +526,8 @@ erDiagram
 
 | Entity | Key fields | Notes |
 | --- | --- | --- |
-| Publisher | GitHub org or user id, wallet address, tier, budget rules | Identity is the GitHub account |
-| Issue | Repo, number, acceptance criteria, state, deadline | State owned by the lifecycle service |
+| Publisher | GitHub org or user id, funding wallet, Circle wallet, tier, budget rules | Identity is the GitHub account. The funding wallet is the one they sign in with; the escrow takes their commitment from it alone |
+| Issue | Repo, number, acceptance criteria, state, deadline, approved funding terms | State owned by the lifecycle service. The terms are what booking checks the commitment against |
 | PriceProposal | Band low, band high, recommended, signals, justification, confidence | Immutable once approved. An override is a new proposal |
 | EscrowCommitment | Issue id, amount, chain, tx hash, deadline | Mirrors on-chain state. The chain is the source of truth |
 | Claim | Contributor, issued at, expires at | At most one active claim per issue |

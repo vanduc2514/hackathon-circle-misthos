@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -11,11 +12,14 @@ from eth_account import Account
 
 from misthos.domain.escrow import (
     ERRORS,
+    approved_publisher_call,
     ceiling_call,
     commit_call,
     commitments_call,
     fee_call,
+    fee_recipient_call,
     issue_key,
+    latest_deadline_call,
     refund_call,
     release_call,
     revert_name,
@@ -24,7 +28,14 @@ from misthos.domain.escrow import (
     set_fee_call,
 )
 from misthos.domain.money import Usdc
-from misthos.services.chain import ArcEscrow, ChainRevert, ChainUnavailable, EscrowDeployment
+from misthos.services.chain import (
+    ArcEscrow,
+    ChainRevert,
+    ChainUnavailable,
+    EscrowDeployment,
+    NotCommitted,
+)
+from misthos.services.chain.arc import NO_FEE_RECIPIENT
 from misthos.services.chain.deployment import DEPLOYMENTS_DIR
 from misthos.services.chain.rpc import JsonRpc, Sender
 
@@ -60,7 +71,18 @@ def _rpc(answers: dict, seen: list[dict] | None = None) -> httpx.MockTransport:
 class TestEncoding:
     def test_calls_are_encoded_as_the_contract_declares_them(self) -> None:
         # Selectors from `forge inspect MisthosEscrow methodIdentifiers`.
-        assert set_ceiling_call("ISS-1", Usdc(5)).startswith("0x3c48db7a")
+        assert set_ceiling_call("ISS-1", Usdc(5), PUBLISHER, 1).startswith("0x42fae350")
+        assert approved_publisher_call("ISS-1").startswith("0xcdac873f")
+        assert latest_deadline_call("ISS-1").startswith("0xdd1cb20e")
+        assert fee_recipient_call() == "0x46904840"
+        # The approval names the price, the publisher and the latest deadline (#122).
+        assert set_ceiling_call("ISS-1", Usdc(5), PUBLISHER, 1_800_000_000) == (
+            "0x42fae350"
+            + issue_key("ISS-1")[2:]
+            + f"{5:064x}"
+            + PUBLISHER[2:].rjust(64, "0")
+            + f"{1_800_000_000:064x}"
+        )
         assert release_call("ISS-1", PUBLISHER, Usdc(5)).startswith("0xf5b16b84")
         assert refund_call("ISS-1").startswith("0x7249fbb6")
         assert commit_call("ISS-1", Usdc(5), 1).startswith("0x71ad6fd3")
@@ -81,6 +103,10 @@ class TestEncoding:
         assert revert_name(selector("NoCeiling()")) == "NoCeiling"
         data = selector("ExceedsCeiling(uint256,uint256)") + f"{150:064x}" + f"{100:064x}"
         assert revert_name(data) == "ExceedsCeiling(150, 100)"
+        squat = selector("NotApprovedPublisher(address)") + "0" * 24 + "bad".rjust(40, "0")
+        assert revert_name(squat) == "NotApprovedPublisher(0x" + "bad".rjust(40, "0") + ")"
+        late = selector("DeadlineTooLate(uint64,uint64)") + f"{9:064x}" + f"{8:064x}"
+        assert revert_name(late) == "DeadlineTooLate(9, 8)"
         assert revert_name("0xdeadbeef") == "reverted with 0xdeadbeef"
         # What anvil returned when a publisher committed more USDC than they held.
         assert revert_name(selector("Panic(uint256)") + f"{0x11:064x}") == "Panic(0x11)"
@@ -91,7 +117,8 @@ class TestEncoding:
 
 
 class TestCommit:
-    """The platform never signs a commitment; it checks the publisher's."""
+    """The platform never signs a commitment; it checks the publisher's against the terms
+    the approval fixed (#126)."""
 
     def escrow(self, answers: dict) -> ArcEscrow:
         return ArcEscrow(
@@ -99,7 +126,7 @@ class TestCommit:
         )
 
     def test_refused_until_the_publisher_has_committed(self) -> None:
-        with pytest.raises(ChainRevert, match="NotCommitted"):
+        with pytest.raises(NotCommitted, match="NotCommitted"):
             self.escrow({}).commit("ISS-1", PUBLISHER, Usdc(180_000_000), DEADLINE, DEADLINE)
 
     def test_a_commitment_from_another_wallet_is_refused(self) -> None:
@@ -118,31 +145,26 @@ class TestCommit:
         with pytest.raises(ChainRevert, match="DeadlineTooEarly"):
             escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), later, DEADLINE)
 
-    def test_the_take_rate_is_fixed_on_chain_before_the_publisher_commits(self) -> None:
-        # The contract refuses to move the rate once the money is in, so the owner
-        # sets it on the first approval, while the escrow still waits for the wallet.
-        owner = FakeSender()
-        escrow = ArcEscrow(
-            "http://rpc",
-            DEPLOYED,
-            owner=owner,  # type: ignore[arg-type]
-            transport=_rpc({"eth_getCode": "0x6080"}),
-        )
-        with pytest.raises(ChainRevert, match="NotCommitted"):
-            escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), DEADLINE, DEADLINE, 1000)
-        assert owner.sent == [(DEPLOYED.address, set_fee_call("ISS-1", 1000))]
+    def test_a_deadline_past_the_approved_one_is_refused(self) -> None:
+        """The contract refuses it too; this is the booking's own bound (#122)."""
+        escrow = self.escrow({commitments_call("ISS-1"): HELD_180})
+        earlier = DEADLINE - timedelta(seconds=1)
+        with pytest.raises(ChainRevert, match="DeadlineTooLate"):
+            escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), earlier, DEADLINE)
 
-    def test_a_rate_already_in_force_is_not_sent_again(self) -> None:
-        owner = FakeSender()
-        escrow = ArcEscrow(
-            "http://rpc",
-            DEPLOYED,
-            owner=owner,  # type: ignore[arg-type]
-            transport=_rpc({"eth_getCode": "0x6080", fee_call("ISS-1"): f"0x{1000:064x}"}),
+    def test_a_booking_long_after_the_approval_books_the_approved_deadline(self) -> None:
+        """The booking used to compare the committed deadline with one it computed from
+        its own now, so booking more than an hour after the plan refused for good with
+        the money already committed (#126). It now checks the approved deadline."""
+        escrow = self.escrow(
+            {
+                commitments_call("ISS-1"): HELD_180,
+                "eth_getLogs": [{"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}],
+            }
         )
-        with pytest.raises(ChainRevert, match="NotCommitted"):
-            escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), DEADLINE, DEADLINE, 1000)
-        assert owner.sent == []
+        three_days_on = DEADLINE - timedelta(days=11)
+        tx = escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), DEADLINE, three_days_on)
+        assert tx == "0xC0"
 
     def test_a_commitment_at_another_rate_is_refused(self) -> None:
         escrow = self.escrow(
@@ -158,8 +180,8 @@ class TestCommit:
                 "eth_getLogs": [{"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}],
             }
         )
-        # The wallet sent it minutes after approval, which is within the tolerance;
-        # and an address compares the same whatever its case.
+        # A wallet that rounded the approved deadline down is within the tolerance; and
+        # an address compares the same whatever its case.
         expected = DEADLINE + timedelta(minutes=20)
         shouting = "0x" + PUBLISHER[2:].upper()
         tx = escrow.commit("ISS-1", shouting, Usdc(180_000_000), expected, DEADLINE)
@@ -175,9 +197,81 @@ class FakeSender:
         return "0x" + "ab" * 32
 
 
-def _escrow(**signers: FakeSender) -> ArcEscrow:
-    answers = {"eth_getCode": "0x6080"}
+def _escrow(answers: dict | None = None, **signers: FakeSender) -> ArcEscrow:
+    answers = {"eth_getCode": "0x6080", **(answers or {})}
     return ArcEscrow("http://rpc", DEPLOYED, transport=_rpc(answers), **signers)  # type: ignore[arg-type]
+
+
+FEES = "0x" + "0" * 36 + "fee5"
+WITH_A_RECIPIENT = {fee_recipient_call(): "0x" + FEES[2:].rjust(64, "0")}
+
+
+class TestApproving:
+    """The owner records what a human approved: the price, who may commit it, until
+    when, and the rate it settles at (#122)."""
+
+    def approve(self, escrow: ArcEscrow, fee_bps: int = 0) -> str:
+        return escrow.set_ceiling(
+            "ISS-1",
+            Usdc(55),
+            DEADLINE,
+            publisher=PUBLISHER,
+            latest_deadline=DEADLINE,
+            fee_bps=fee_bps,
+        )
+
+    def test_the_approval_names_the_publisher_and_the_latest_deadline(self) -> None:
+        owner = FakeSender()
+        self.approve(_escrow(owner=owner))
+        assert owner.sent == [
+            (DEPLOYED.address, set_ceiling_call("ISS-1", Usdc(55), PUBLISHER, 1_800_000_000))
+        ]
+
+    def test_an_approval_already_in_force_is_not_sent_again(self) -> None:
+        owner = FakeSender()
+        held = {
+            ceiling_call("ISS-1"): f"0x{55:064x}",
+            approved_publisher_call("ISS-1"): "0x" + PUBLISHER[2:].rjust(64, "0"),
+            latest_deadline_call("ISS-1"): f"0x{1_800_000_000:064x}",
+        }
+        assert self.approve(_escrow(held, owner=owner)) == ""
+        assert owner.sent == []
+
+    def test_the_rate_is_set_before_the_ceiling_lets_money_in(self) -> None:
+        """A ceiling in force before the rate would let the wallet commit at a rate
+        nobody approved, and the contract refuses to move it once the money is in."""
+        owner = FakeSender()
+        self.approve(_escrow(WITH_A_RECIPIENT, owner=owner), fee_bps=1000)
+        assert [data[:10] for _, data in owner.sent] == [
+            set_fee_call("ISS-1", 1000)[:10],
+            set_ceiling_call("ISS-1", Usdc(55), PUBLISHER, 1)[:10],
+        ]
+
+    def test_a_rate_already_in_force_is_not_sent_again(self) -> None:
+        owner = FakeSender()
+        answers = {**WITH_A_RECIPIENT, fee_call("ISS-1"): f"0x{1000:064x}"}
+        self.approve(_escrow(answers, owner=owner), fee_bps=1000)
+        assert [data[:10] for _, data in owner.sent] == [
+            set_ceiling_call("ISS-1", Usdc(55), PUBLISHER, 1)[:10]
+        ]
+
+    def test_an_escrow_with_no_fee_recipient_is_refused_before_anything_is_sent(
+        self,
+    ) -> None:
+        """Every release at a rate would revert FeeRecipientNotSet, after the publisher's
+        money was in. Refused at the approval instead, before the wallet commits (#127)."""
+        owner = FakeSender()
+        with pytest.raises(ChainRevert, match="FeeRecipientNotSet"):
+            self.approve(_escrow(owner=owner), fee_bps=1200)
+        assert owner.sent == []
+
+    def test_an_operator_hears_of_a_missing_fee_recipient(self) -> None:
+        assert _escrow().settlement_problems() == [NO_FEE_RECIPIENT]
+        assert _escrow(WITH_A_RECIPIENT).settlement_problems() == []
+
+    def test_without_an_owner_key_no_price_can_be_recorded(self) -> None:
+        with pytest.raises(ChainUnavailable, match="no owner key"):
+            self.approve(_escrow())
 
 
 class TestSignedCalls:
@@ -190,24 +284,6 @@ class TestSignedCalls:
         attestor = FakeSender()
         _escrow(attestor=attestor).refund("ISS-1", DEADLINE)
         assert attestor.sent == [(DEPLOYED.address, refund_call("ISS-1"))]
-
-    def test_a_ceiling_is_recorded_by_the_owner_once(self) -> None:
-        owner = FakeSender()
-        _escrow(owner=owner).set_ceiling("ISS-1", Usdc(55), DEADLINE)
-        assert owner.sent == [(DEPLOYED.address, set_ceiling_call("ISS-1", Usdc(55)))]
-
-        already = ArcEscrow(
-            "http://rpc",
-            DEPLOYED,
-            owner=owner,  # type: ignore[arg-type]
-            transport=_rpc({"eth_getCode": "0x6080", ceiling_call("ISS-1"): f"0x{55:064x}"}),
-        )
-        assert already.set_ceiling("ISS-1", Usdc(55), DEADLINE) == ""
-        assert len(owner.sent) == 1
-
-    def test_without_an_owner_key_no_price_can_be_recorded(self) -> None:
-        with pytest.raises(ChainUnavailable, match="no owner key"):
-            _escrow().set_ceiling("ISS-1", Usdc(55), DEADLINE)
 
 
 KEY = "0x" + bytes(Account.create().key).hex()
@@ -257,3 +333,25 @@ class TestSender:
         with pytest.raises(RuntimeError, match="holds nothing"):
             Sender(rpc, 5042002, no_key).send("0x" + "e5" * 20, "0x1234")
         assert seen == []
+
+
+class TestStartup:
+    async def test_the_api_reports_an_escrow_with_no_fee_recipient_when_it_starts(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An operator hears of it before a publisher commits money, not at the first
+        release (#127)."""
+        from misthos import main
+
+        monkeypatch.setattr(main.settings, "simulated", False)
+        monkeypatch.setattr(main.store, "chain", _escrow())
+        with caplog.at_level(logging.ERROR, logger="misthos.main"):
+            problems = await main.report_settlement_problems()
+
+        assert problems == [NO_FEE_RECIPIENT]
+        assert NO_FEE_RECIPIENT in caplog.text
+
+    async def test_the_simulation_has_nothing_to_report(self) -> None:
+        from misthos import main
+
+        assert await main.report_settlement_problems() == []

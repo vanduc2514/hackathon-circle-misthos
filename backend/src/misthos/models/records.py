@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from misthos.domain.issue import IssueState
+from misthos.domain.issue import FundingTerms, IssueState
 from misthos.domain.ledger import MoneyEvent
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import PriceProposal
@@ -66,6 +66,9 @@ class IssueRecord:
     """When the publisher approved the acceptance criteria. No funding before it (#21)."""
     relisted_from: str | None = None
     """The issue this one re-lists at a higher band after nobody claimed it."""
+    funding: FundingTerms | None = None
+    """The terms the publisher approved at the price checkpoint: what the escrow was
+    told and what booking checks the commitment against (#126)."""
     decisions: list[Decision] = field(default_factory=list)
     money_events: list[MoneyEvent] = field(default_factory=list)
     """Every movement of this issue's money, in order. Appended, never edited."""

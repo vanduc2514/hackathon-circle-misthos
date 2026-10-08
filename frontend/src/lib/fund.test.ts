@@ -58,6 +58,19 @@ describe('sendFromWallet', () => {
     ])
   })
 
+  it('sends nothing from a wallet the escrow would refuse, and says which to use', async () => {
+    const { wallet, calls } = fakeWallet()
+    const plan = { ...PLAN, wallet: '0xFUNDING' }
+    await expect(sendFromWallet(wallet, plan, () => {}, 0)).rejects.toThrow(/0xFUNDING/)
+    expect(calls.filter((c) => c.method === 'eth_sendTransaction')).toHaveLength(0)
+  })
+
+  it('sends from the wallet the plan names, whatever its case', async () => {
+    const { wallet } = fakeWallet()
+    const plan = { ...PLAN, wallet: '0xpublisher' }
+    await expect(sendFromWallet(wallet, plan, () => {}, 0)).resolves.toHaveLength(2)
+  })
+
   it('stops at a call that fails on chain rather than sending the next', async () => {
     const { wallet, calls } = fakeWallet('0x0')
     await expect(sendFromWallet(wallet, PLAN, () => {}, 0)).rejects.toThrow(/failed on chain/)

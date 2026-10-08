@@ -57,8 +57,14 @@ publishers = Table(
     Column("name", String(200), nullable=False),
     Column("kind", String(16), nullable=False),
     Column("tier", String(16), nullable=False),
+    # The wallet the publisher signs in with and funds from: the escrow takes a
+    # commitment from it alone, and refunds go back to it.
     Column("wallet_address", String(64), nullable=False),
     Column("chain", String(32), nullable=False),
+    # The publisher's own Circle wallet, kept beside the funding wallet and never in its
+    # place: a commitment from the browser wallet would otherwise be refused (#123).
+    Column("circle_wallet_address", String(64)),
+    Column("circle_wallet_chain", String(32)),
     Column("budget_remaining_base_units", BigInteger, nullable=False),
     Column("approval_threshold_base_units", BigInteger),
     Column("approvers", Json, nullable=False),
@@ -107,6 +113,13 @@ issues = Table(
     Column("payout_checked_at", Timestamp),
     Column("criteria_approved_at", Timestamp),
     Column("relisted_from", Id, ForeignKey("issues.id")),
+    # The terms the publisher approved at the price checkpoint, which booking checks
+    # the commitment against (#126). Null until the price is approved.
+    Column("funding_amount_base_units", BigInteger),
+    Column("funding_fee_bps", Integer),
+    Column("funding_wallet", String(64)),
+    Column("funding_deadline", Timestamp),
+    Column("funding_approved_at", Timestamp),
     Column("version", Integer, nullable=False),
 )
 
@@ -257,6 +270,10 @@ simulated_escrow = Table(
     # The take rate the simulated escrow holds, so the fee a settlement records is the
     # rate the escrow enforced (#32).
     Column("fee_bps", Integer, nullable=False, server_default="0"),
+    # The commitment's deadline, which the simulation enforces as the contract does:
+    # no release after it, no refund before it (#121). Null on books kept before it was.
+    Column("deadline", Timestamp),
+    Column("commit_tx_hash", String(80)),
 )
 
 # The simulated escrow's per-issue ceilings: the price a human approved, which the
@@ -267,6 +284,9 @@ simulated_escrow_ceilings = Table(
     metadata,
     Column("issue_id", Id, primary_key=True),
     Column("ceiling_base_units", BigInteger, nullable=False),
+    # Who may commit and until when, named with the ceiling (#122).
+    Column("publisher_wallet", String(64)),
+    Column("latest_deadline", Timestamp),
 )
 
 # A signed-in wallet and the role it chose (#70). One role per wallet.

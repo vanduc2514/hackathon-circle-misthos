@@ -89,6 +89,8 @@ cd contracts
 mise run setup:contracts
 cast wallet import misthos-deployer --interactive
 export ARC_TESTNET_RPC_URL=https://rpc.testnet.arc.io
+# Required: where the platform's take rate is paid on every release.
+export MISTHOS_FEE_RECIPIENT_ADDRESS=0x...
 # Optional: the attestor that may release funds; the deployer by default.
 export MISTHOS_ATTESTOR_ADDRESS=0x...
 forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast \
@@ -99,8 +101,19 @@ or `mise run contracts:deploy`, which runs the same command. Fund the deployer
 with testnet USDC from faucet.circle.com first: USDC is the gas token on Arc. Arc's
 explorer runs Blockscout, so verifying needs no API key.
 
+`MISTHOS_FEE_RECIPIENT_ADDRESS` is required, and the script refuses to deploy without
+it (`FeeRecipientRequired`). The platform sets a take rate on every issue from the
+publisher's tier, eight percent at the least, and the escrow refuses a release with a
+rate and nowhere to send it, so an escrow without a recipient would take commitments it
+could never pay out. Name a platform treasury address you control; the owner can rotate
+it later with `setFeeRecipient`, which moves only later fees. An escrow deployed before
+this rule may have none: check with
+`cast call <escrow> "feeRecipient()(address)" --rpc-url arc_testnet`. The API reports
+a missing recipient at startup, and refuses to approve a price on that escrow until the
+owner sets one, so no publisher commits money before it can be released.
+
 A broadcast writes `contracts/deployments/5042002.json`: the escrow's address, its
-owner, attestor and USDC, and the block to scan logs from. Commit it; the API reads
+owner, attestor, fee recipient and USDC, and the block to scan logs from. Commit it; the API reads
 the address from it, so there is nothing to copy by hand. A dry run (without
 `--broadcast`) writes no record, and outside the simulation the API refuses a
 record whose address holds no code. `MISTHOS_ESCROW_CONTRACT` still pins an
@@ -119,7 +132,7 @@ publisher:
 
 | Step | Signed by | Key |
 | --- | --- | --- |
-| Approving a price records it as the escrow's ceiling | the escrow owner | `MISTHOS_OWNER_SECRET_REF` |
+| Approving a price records its terms on the escrow: the take rate, then the ceiling with the only wallet that may commit and the latest deadline | the escrow owner | `MISTHOS_OWNER_SECRET_REF` |
 | The commitment itself | the publisher's own wallet, in the browser | never the platform's |
 | Release on acceptance | the attestor | `MISTHOS_ATTESTOR_SECRET_REF` |
 | Refund once the deadline passed | the attestor (anyone may) | `MISTHOS_ATTESTOR_SECRET_REF` |
@@ -131,12 +144,32 @@ store behind the same `SecretStore` interface. Fund both signers with a little U
 which is Arc's gas. The owner is the deployer unless ownership was transferred; the
 attestor is the address passed as `MISTHOS_ATTESTOR_ADDRESS` at deploy.
 
-Funding takes two approvals. The first records the ceiling and is refused with
-`NotCommitted`; the web app then has the publisher's wallet send the two calls from
-`GET /api/v1/issues/{id}/commitment` (the USDC allowance, then the commitment) and
-approves again, which books the publisher's own transaction after checking the
-amount, the wallet and the deadline against what was approved. The demo seed is not
-written outside the simulation: it would fund made-up issues from made-up wallets.
+Funding takes two approvals. The first fixes the terms (the amount, the take rate,
+the publisher's funding wallet and the escrow deadline), records them on the escrow,
+keeps them with the issue, and is refused with `NotCommitted`; the web app then has the
+publisher's wallet send the two calls from `GET /api/v1/issues/{id}/commitment` (the
+USDC allowance, then the commitment, to exactly those terms) and approves again, which
+books the publisher's own transaction after checking it against the same terms. They
+stand for a day while nothing is committed, and once money is committed they are the
+only ones it is booked against, whatever the clock or the publisher's plan say by then.
+The escrow refuses a commitment from any other wallet or to a later deadline. A
+commitment the platform cannot book (another amount, or a deadline more than an hour
+early) goes back to the publisher once the approved deadline has passed. The funding
+wallet is the one the publisher signs in with; a Circle wallet they set up on the
+account page is kept beside it, never in its place. The demo seed is not written
+outside the simulation: it would fund made-up issues from made-up wallets.
+
+Every release must land before the escrow deadline, because `release` reverts after it.
+The silent-publisher release and any retry of a held payout are due ten minutes
+(`RELEASE_MARGIN`) before the deadline at the latest, so keep
+`MISTHOS_SWEEP_INTERVAL_SECONDS` well under that. A release the chain refuses (a revert,
+or the RPC unreachable) holds the payout and is tried again on every pass; accepted work
+still unpaid when the deadline passes is refunded to the publisher, as the contract
+allows anyone to do.
+
+An escrow deployed before the approval named its publisher has the old
+`setCeiling(bytes32,uint256)`, which this API no longer calls: redeploy, and point the
+API at the new record.
 
 After any change to the contract, run `mise run abi:contracts` and commit
 `contracts/deployments/MisthosEscrow.abi.json`; `mise run lint` fails while it is
