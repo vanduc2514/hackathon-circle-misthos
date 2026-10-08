@@ -16,7 +16,6 @@ simulation until sign-in exists) and exported by an operator:
 from __future__ import annotations
 
 import argparse
-import csv
 import io
 import sys
 from datetime import UTC, datetime
@@ -24,6 +23,7 @@ from datetime import UTC, datetime
 from misthos.config import settings
 from misthos.domain.ledger import MoneyEventKind
 from misthos.schemas import AuditExport, AuditIssue, AuditMoneyEvent, money
+from misthos.services import spreadsheet
 from misthos.store import Store
 
 CSV_COLUMNS = [
@@ -96,9 +96,12 @@ def to_csv(audit: AuditExport) -> str:
     the columns are. The simulation caveat goes in the last row instead: a reader that
     takes the first line for the header would otherwise misalign every column, and a
     comment before it is what the round trip cannot survive.
+
+    Repositories, reasons and logins are other people's words, so every cell is
+    written as text a spreadsheet will not run (services/spreadsheet.py).
     """
     out = io.StringIO()
-    writer = csv.writer(out, lineterminator="\n")
+    writer = spreadsheet.Writer(out)
     writer.writerow(CSV_COLUMNS)
     for issue in audit.issues:
         rows: list[tuple[datetime, list[object]]] = []

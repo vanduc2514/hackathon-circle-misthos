@@ -18,16 +18,15 @@ the command line for an operator:
 from __future__ import annotations
 
 import argparse
-import csv
 import io
 import sys
 from datetime import UTC, datetime
 
 from misthos.config import settings
-from misthos.domain.issue import IssueState
 from misthos.domain.ledger import MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.schemas import AnnualStatement, StatementLine, money
+from misthos.services import spreadsheet
 from misthos.store import Store
 
 CSV_COLUMNS = [
@@ -46,7 +45,11 @@ CSV_COLUMNS = [
 
 
 def annual_statement(store: Store, contributor_id: str, year: int) -> AnnualStatement | None:
-    """Every payout to one contributor in one UTC calendar year, or None if unknown."""
+    """Every payout to one contributor in one UTC calendar year, or None if unknown.
+
+    A payout is a release in the ledger, whatever state the issue's record shows: the
+    ledger is what is reported, so an issue's state cannot drop a payout from it.
+    """
     contributor = store.get_contributor(contributor_id)
     if contributor is None:
         return None
@@ -54,7 +57,7 @@ def annual_statement(store: Store, contributor_id: str, year: int) -> AnnualStat
     releases = sorted(
         (
             (event, rec)
-            for rec in store.list_issues({IssueState.PAID})
+            for rec in store.list_issues()
             for event in rec.money_events
             if event.kind is MoneyEventKind.RELEASED
             and event.counterparty_id == contributor_id
@@ -92,9 +95,11 @@ def annual_statement(store: Store, contributor_id: str, year: int) -> AnnualStat
 
 
 def to_csv(statement: AnnualStatement) -> str:
-    """One row per payout, then a total row, in the columns an accountant expects."""
+    """One row per payout, then a total row, in the columns an accountant expects.
+    The title, repository and counterparty are other people's words, so they are
+    written as text a spreadsheet will not run (services/spreadsheet.py)."""
     out = io.StringIO()
-    writer = csv.writer(out, lineterminator="\n")
+    writer = spreadsheet.Writer(out)
     if statement.simulated:
         # A simulated statement must never be mistaken for a tax record.
         writer.writerow(["# SIMULATED: no chain was contacted; not a tax record"])

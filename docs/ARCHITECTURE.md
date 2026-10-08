@@ -526,8 +526,11 @@ An organisation sets its own spending policy, and the store enforces it at the t
 
 - **Category limits.** A monthly cap per issue label. A commitment that would pass it is refused at funding, with the limit and the month's total in the reason.
 - **A release threshold with named approvers.** A payout above it is held as `await_approver` until one of them approves, whether the merge or the grace period triggered it. The approval is required, not requested.
+- **Approvers are GitHub logins, and the approval is the session's.** A login is what a session proves: the wallet signs in, and GitHub's OAuth links the login to it. So `POST /issues/{id}/approve-release` takes the approver from the signed-in account's linked login, never from the request, and the organisation must have named it. Holding the organisation's wallet confers nothing: its own account approves only if its own login is named. The contributor being paid never approves their own payout. A policy naming something that cannot be a login, such as an e-mail address, is refused, because no session could ever satisfy it. Only the simulation, for a visitor who is not signed in, accepts a name in the request, as it does for a claim.
 
-`/publishers/{id}/spend` reports what was budgeted, committed, released and refunded, by category against those limits, and the settled compliance and security fixes a security review can file (#50). `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are the organisation's alone: a signed-in publisher sees and sets its own, and only the simulation serves any.
+`/publishers/{id}/spend` reports what was budgeted, committed, released and refunded in the year, by category, and beside each limit what was committed this calendar month, counted by the same function funding checks the limit with (#50). It also lists the settled compliance and security fixes a security review can file. `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are the organisation's alone: a signed-in publisher sees and sets its own, and only the simulation serves any.
+
+Every CSV the platform serves, the audit export and a contributor's statement alike, carries other people's words: issue titles, repository and organisation names, reasons. A cell a spreadsheet would run as a formula, one starting with `=`, `+`, `-`, `@`, a tab or a carriage return, is written as text with a leading apostrophe. A plain number keeps its sign (`services/spreadsheet.py`).
 
 **Plans** (`domain/plans.py`, `api/v1/plans.py`, #53) follow the tier table in 06. Open costs nothing and charges 12 percent. Team costs $249 a month and charges 10 percent, and adds budget rules, approval thresholds and spend reporting. Enterprise starts at $2,000 a month and charges 8 percent, and adds the audit export, SSO and a support commitment.
 
@@ -597,8 +600,8 @@ Key material rules:
 | --- | --- | --- |
 | Sanctions screening before submission | Circle wallet and Facilitator Service | Blocked transfers never reach the chain |
 | Contributor identity verification | At first payout, in the store's payout gate | Progressive. Verifying at signup is the main contributor drop-off cause. Documents stay with the provider |
-| Publisher screening | Before the first commitment, when the price is approved | A listed publisher's commitment is refused |
-| Contributor screening | At every payout, not only the first | Someone listed after verification is caught before money moves |
+| Publisher screening | Before every commitment, when the price is approved | A listed publisher's commitment is refused. Money it committed before the listing is not held: it is released on acceptance or refunded at the deadline, and the flag on its open issues says so |
+| Contributor screening | At every payout, not only the first | Someone listed after verification is caught before money moves. The held payout is screened again every hour and released on its own once the wallet is no longer listed |
 | Continuous re-screening | The sweeper, daily for every live counterparty; risk events to come | Point-in-time screening is the industry's mistake and the hackathon's fifth brief is about it |
 | Recipient allowlist | Wallet policy, enforced on-chain | Reduces the blast radius of a compromised key |
 | Blocklist awareness | Arc runtime plus our pre-checks | A blocklist revert still burns gas, so we check before sending |

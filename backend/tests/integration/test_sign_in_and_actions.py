@@ -434,31 +434,11 @@ class TestTheSimulatedGitHubFromTheBrowser:
         assert contributor.post(f"{API}/demo/issues/{iid}/merge").status_code == 403
 
     def test_a_release_over_the_threshold_says_it_awaits_an_approver(self) -> None:
-        publisher, contributor = TestClient(app), TestClient(app)
-        account = onboard(publisher, Wallet(66), "publisher", "Acme", "acme-66")
-        onboard(contributor, Wallet(67), "contributor", "hal", "hal-dev")
-        # Approval thresholds are in the Team plan, bought here without a conversation.
-        pid = account["party_id"]
-        assert publisher.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
-        assert publisher.post(f"{API}/demo/publishers/{pid}/subscription/pay").json()["plan"] == (
-            "team"
-        )
-        policy = publisher.put(
-            f"{API}/publishers/{account['party_id']}/policy",
-            json={"approval_threshold_usdc": "1", "approvers": ["cfo@acme.example"]},
-        )
-        assert policy.status_code == 200, policy.text
-        iid = self._funded(publisher)
-        contributor.post(f"{API}/issues/{iid}/claim")
-        number = contributor.post(f"{API}/demo/issues/{iid}/pull-request").json()["pr_number"]
-        contributor.post(f"{API}/issues/{iid}/submit", json={"pr_number": number})
-        contributor.post(f"{API}/issues/{iid}/review")
-
-        held = publisher.post(f"{API}/demo/issues/{iid}/merge").json()
+        publisher, contributor, cfo = TestClient(app), TestClient(app), TestClient(app)
+        held = held_release(publisher, contributor, seed=66, approvers=["cfo-acme"])
         assert held["state"] == "ACCEPTED" and held["awaiting_approver"] is True
-        released = publisher.post(
-            f"{API}/issues/{iid}/approve-release", json={"approver": "cfo@acme.example"}
-        ).json()
+        approver(cfo, Wallet(68), "cfo-acme")
+        released = cfo.post(f"{API}/issues/{held['id']}/approve-release").json()
         assert released["state"] == "PAID" and released["awaiting_approver"] is False
 
     def test_outside_the_simulation_github_is_real(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -466,6 +446,109 @@ class TestTheSimulatedGitHubFromTheBrowser:
         client = TestClient(app)
         assert client.post(f"{API}/demo/issues/ISS-1003/pull-request").status_code == 403
         assert client.post(f"{API}/demo/issues/ISS-1004/merge").status_code == 403
+
+
+def held_release(
+    publisher: TestClient, contributor: TestClient, *, seed: int, approvers: list[str]
+) -> dict:
+    """Onboard a Team publisher whose policy holds every release for `approvers`, and
+    a contributor, and run one issue of theirs to the merge, where the payout waits."""
+    account = onboard(publisher, Wallet(seed), "publisher", "Acme", f"acme-{seed}")
+    onboard(contributor, Wallet(seed + 1), "contributor", "hal", f"hal-{seed}")
+    # Approval thresholds are in the Team plan, bought here without a conversation.
+    pid = account["party_id"]
+    assert publisher.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
+    paid = publisher.post(f"{API}/demo/publishers/{pid}/subscription/pay").json()
+    assert paid["plan"] == "team"
+    policy = publisher.put(
+        f"{API}/publishers/{pid}/policy",
+        json={"approval_threshold_usdc": "1", "approvers": approvers},
+    )
+    assert policy.status_code == 200, policy.text
+    iid = TestTheSimulatedGitHubFromTheBrowser()._funded(publisher)
+    contributor.post(f"{API}/issues/{iid}/claim")
+    number = contributor.post(f"{API}/demo/issues/{iid}/pull-request").json()["pr_number"]
+    contributor.post(f"{API}/issues/{iid}/submit", json={"pr_number": number})
+    contributor.post(f"{API}/issues/{iid}/review")
+    held = publisher.post(f"{API}/demo/issues/{iid}/merge").json()
+    assert held["awaiting_approver"] is True, held
+    return held
+
+
+def approver(client: TestClient, wallet: Wallet, login: str) -> dict:
+    """A named approver signs in with their own wallet and links their GitHub login.
+    An account has one role and linking needs one, so they take the contributor's."""
+    return onboard(client, wallet, "contributor", login, login)
+
+
+class TestTheApproverIsWhoTheSessionProves:
+    """A release over the threshold is approved by the signed-in account whose linked
+    GitHub login the organisation named, never by a name the request supplies."""
+
+    def test_a_named_approver_approves_signed_in_as_themselves(self) -> None:
+        publisher, contributor, dana = TestClient(app), TestClient(app), TestClient(app)
+        held = held_release(publisher, contributor, seed=71, approvers=["@Dana-Acme"])
+        approver(dana, Wallet(73), "dana-acme")
+
+        r = dana.post(f"{API}/issues/{held['id']}/approve-release")
+
+        assert r.status_code == 200, r.text
+        assert r.json()["state"] == "PAID"
+        rec = store.get(held["id"])
+        assert rec is not None
+        [approved] = [d for d in rec.decisions if d.action == "release_approved"]
+        assert approved.outcome.startswith("dana-acme approved the release of")
+
+    def test_naming_an_approver_in_the_request_approves_nothing(self) -> None:
+        """The finding on #92: the publisher's own session sends a named approver's
+        name, and the payout must stay where it is."""
+        publisher, contributor = TestClient(app), TestClient(app)
+        held = held_release(publisher, contributor, seed=74, approvers=["dana-acme"])
+
+        r = publisher.post(
+            f"{API}/issues/{held['id']}/approve-release", json={"approver": "dana-acme"}
+        )
+
+        assert r.status_code == 403
+        assert "acme-74 is not one of" in r.json()["detail"]
+        rec = store.get(held["id"])
+        assert rec is not None and rec.state is IssueState.ACCEPTED and rec.paid is None
+
+    def test_the_organisations_own_account_approves_only_if_its_login_is_named(self) -> None:
+        publisher, contributor = TestClient(app), TestClient(app)
+        held = held_release(publisher, contributor, seed=76, approvers=["acme-76"])
+        r = publisher.post(f"{API}/issues/{held['id']}/approve-release")
+        assert r.status_code == 200 and r.json()["state"] == "PAID"
+
+    def test_an_account_nobody_named_cannot_approve(self) -> None:
+        publisher, contributor, mallory = TestClient(app), TestClient(app), TestClient(app)
+        held = held_release(publisher, contributor, seed=78, approvers=["dana-acme"])
+        approver(mallory, Wallet(80), "mallory")
+        assert mallory.post(f"{API}/issues/{held['id']}/approve-release").status_code == 403
+
+    def test_the_contributor_being_paid_cannot_approve_their_own_payout(self) -> None:
+        publisher, contributor = TestClient(app), TestClient(app)
+        held = held_release(publisher, contributor, seed=81, approvers=["dana-acme", "hal-81"])
+        r = contributor.post(f"{API}/issues/{held['id']}/approve-release")
+        assert r.status_code == 403
+        assert "their own payout" in r.json()["detail"]
+
+    def test_an_account_without_a_linked_login_is_told_to_link_one(self) -> None:
+        publisher, contributor, unlinked = TestClient(app), TestClient(app), TestClient(app)
+        held = held_release(publisher, contributor, seed=83, approvers=["dana-acme"])
+        sign_in(unlinked, Wallet(85))
+        assert unlinked.post(f"{API}/auth/role", json={"role": "contributor", "name": "x"})
+        r = unlinked.post(f"{API}/issues/{held['id']}/approve-release")
+        assert r.status_code == 403 and "link your GitHub account" in r.json()["detail"]
+
+    def test_outside_the_simulation_an_anonymous_request_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "simulated", False)
+        r = TestClient(app).post(
+            f"{API}/issues/ISS-1006/approve-release", json={"approver": "dana-acme"}
+        )
+        assert r.status_code == 401
 
 
 class TestCriteriaAReviewerCanJudge:

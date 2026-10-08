@@ -19,7 +19,7 @@ export type Act =
   | { kind: 'merge' }
   | { kind: 'decline'; reason: string }
   | { kind: 'dispute'; reason: string }
-  | { kind: 'approve-release'; approver: string }
+  | { kind: 'approve-release' }
   | { kind: 'step' }
   | { kind: 'complete' }
 
@@ -63,12 +63,9 @@ export async function perform(issueId: string, act: Act): Promise<IssueOut> {
         }),
       )
     case 'approve-release':
-      return unwrap(
-        await api.POST('/api/v1/issues/{issue_id}/approve-release', {
-          ...path,
-          body: { approver: act.approver },
-        }),
-      )
+      // No name in the body: the approver is whoever is signed in, by their linked
+      // GitHub login, and the server checks the organisation named it.
+      return unwrap(await api.POST('/api/v1/issues/{issue_id}/approve-release', path))
     case 'step':
       return unwrap(await api.POST('/api/v1/issues/{issue_id}/advance', path))
     case 'complete':
@@ -172,15 +169,34 @@ export default function IssueActions({
         )
       break
     case 'ACCEPTED':
-      body = who.publisher ? (
-        <Accepted issue={issue} simulated={simulated} busy={busy} run={run} />
-      ) : (
-        <Wait>
-          {issue.awaiting_approver
-            ? `The review passed and the release waits for one of ${issue.publisher_name}'s approvers.`
-            : 'The review passed. Merging is acceptance and releases the payment; seven silent days release it too.'}
-        </Wait>
-      )
+      if (issue.awaiting_approver) {
+        // Anyone the organisation named approves, signed in as themselves; the
+        // contributor being paid never does.
+        body =
+          who.linked && !who.claimant ? (
+            <ApproveRelease
+              issue={issue}
+              login={who.account?.github_login ?? ''}
+              own={who.publisher}
+              busy={busy}
+              run={run}
+            />
+          ) : (
+            <SignInTo signedIn={who.signedIn} what="approve it if you are one of them">
+              The review passed and the release waits for one of {issue.publisher_name}'s named
+              approvers.
+            </SignInTo>
+          )
+      } else {
+        body = who.publisher ? (
+          <Accepted issue={issue} simulated={simulated} busy={busy} run={run} />
+        ) : (
+          <Wait>
+            The review passed. Merging is acceptance and releases the payment; seven silent days
+            release it too.
+          </Wait>
+        )
+      }
       break
     case 'REJECTED':
       body = who.claimant ? (
@@ -370,50 +386,46 @@ function Submit({ issue, simulated, busy, run }: Step & { simulated: boolean }) 
   )
 }
 
-function Accepted({ issue, simulated, busy, run }: Step & { simulated: boolean }) {
+function ApproveRelease({
+  issue,
+  login,
+  own,
+  busy,
+  run,
+}: Step & { login: string; own: boolean }) {
+  // The policy is the organisation's to see, so only its own account lists the names.
   const publishers = useQuery({
     queryKey: ['publishers'],
-    enabled: issue.awaiting_approver,
+    enabled: own,
     queryFn: async () => unwrap(await api.GET('/api/v1/publishers')) as Publisher[],
   })
   const approvers = publishers.data?.find((p) => p.id === issue.publisher_id)?.approvers ?? []
-  const [approver, setApprover] = useState('')
-  const pr = issue.submission?.pr_number
 
-  if (issue.awaiting_approver) {
-    return (
-      <div className="form">
-        <p className="dim action-hint">
-          Merged. The payout is over your release threshold, so it waits for one of your named
-          approvers.
-        </p>
-        <div className="field-row">
-          <label className="field grow">
-            <span>Approver</span>
-            <select
-              className="input"
-              value={approver}
-              onChange={(e) => setApprover(e.target.value)}
-            >
-              <option value="">Choose…</option>
-              {approvers.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            className="btn primary align-end"
-            disabled={busy || !approver}
-            onClick={() => run({ kind: 'approve-release', approver })}
-          >
-            Approve the release
-          </button>
-        </div>
+  return (
+    <div className="form">
+      <p className="dim action-hint">
+        The work is accepted, and the payout is over{' '}
+        {own ? 'your' : `${issue.publisher_name}'s`} release threshold, so it waits for one of
+        the named approvers
+        {own && approvers.length ? `: ${approvers.map((a) => `@${a}`).join(', ')}` : ''}. Approving
+        signs as @{login}, the GitHub login linked to your account, and counts only if that
+        login is named.
+      </p>
+      <div className="btn-row">
+        <button
+          className="btn primary"
+          disabled={busy || !login}
+          onClick={() => run({ kind: 'approve-release' })}
+        >
+          Approve the release as @{login}
+        </button>
       </div>
-    )
-  }
+    </div>
+  )
+}
+
+function Accepted({ issue, simulated, busy, run }: Step & { simulated: boolean }) {
+  const pr = issue.submission?.pr_number
 
   return (
     <div className="form">

@@ -245,22 +245,37 @@ async def decline(
     response_model=IssueOut,
     dependencies=[limit_actions],
     responses={
-        403: {"description": "Not one of the organisation's named approvers"},
+        403: {
+            "description": "Not signed in with a GitHub login the organisation named, "
+            "or the contributor being paid"
+        },
         409: {"description": "No release is waiting for approval"},
     },
 )
 async def approve_release(
     issue_id: str,
-    payload: ApproveReleaseRequest,
     request: Request,
+    payload: ApproveReleaseRequest | None = None,
     idempotency_key: str | None = IDEMPOTENCY_KEY,
     account: Account | None = SIGNED_IN,
 ) -> Any:
-    """A named approver approves a release held over the organisation's threshold."""
-    rec = await _require(issue_id)
-    require_owner_or_simulation(account, rec.publisher_id, "approve this release")
+    """A named approver approves a release held over the organisation's threshold.
+
+    The approver is whoever is signed in, by the GitHub login linked to their account,
+    and the organisation must have named that login. A name in the request would let
+    anyone who knew an approver's name release the money, so it counts only in the
+    simulation, for a visitor who is not signed in, as the claim's does.
+    """
+    await _require(issue_id)
+    if account is not None:
+        require_github(account, "approve a release")
+        approver = account.github_login
+    elif settings.simulated and payload is not None and payload.approver:
+        approver = payload.approver
+    else:
+        raise HTTPException(status_code=401, detail="sign in as a named approver to approve")
     return await idempotent(
-        request, idempotency_key, lambda: _act(store.approve_release, issue_id, payload.approver)
+        request, idempotency_key, lambda: _act(store.approve_release, issue_id, approver)
     )
 
 

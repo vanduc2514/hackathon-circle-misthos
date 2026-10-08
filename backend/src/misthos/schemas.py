@@ -390,18 +390,29 @@ class DemoPullRequestOut(BaseModel):
 class PolicyRequest(BaseModel):
     approval_threshold_usdc: str | None = None
     approvers: list[str] = Field(default_factory=list, max_length=20)
+    """GitHub logins. A release over the threshold waits for one of them to approve
+    it, signed in with an account that login is linked to."""
     category_limits: dict[str, str] = Field(default_factory=dict)
 
 
 class ApproveReleaseRequest(BaseModel):
-    approver: str = Field(min_length=1, max_length=200)
+    approver: str | None = Field(default=None, min_length=1, max_length=200)
+    """The simulation's only, for a visitor who is not signed in: the approver the demo
+    acts as. Signed in, the approver is the account's linked GitHub login, and this is
+    ignored."""
 
 
 class SpendCategory(BaseModel):
     label: str
     committed: dict[str, str | int]
+    """Committed during the year."""
     released: dict[str, str | int]
+    """Released during the year."""
+    committed_this_month: dict[str, str | int]
+    """Committed since this calendar month began: what the monthly limit is checked
+    against when the next commitment is funded."""
     limit: dict[str, str | int] | None = None
+    """The most that may be committed under the label in one calendar month."""
 
 
 class FileableItem(BaseModel):
@@ -425,6 +436,8 @@ class SpendOut(BaseModel):
     publisher_id: str
     name: str
     year: int
+    month: str
+    """The calendar month the `committed_this_month` figures count, as YYYY-MM (UTC)."""
     budget_remaining: dict[str, str | int]
     committed_held: dict[str, str | int]
     """In escrow now, across every open issue."""
