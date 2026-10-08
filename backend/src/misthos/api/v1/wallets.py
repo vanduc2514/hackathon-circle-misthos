@@ -49,6 +49,10 @@ async def _require_known(party: PartyPath, party_id: str) -> None:
 def _kept(address: str) -> Wallet:
     """The wallet as it is stored: the address and the chain.
 
+    The chain is the API's own. Live, `Wallets` has already refused a reply on any
+    other chain, or one the edge may have made up, so neither reaches the store and
+    the route answers 502 instead.
+
     Those are the two columns both repositories hold, and the in-memory one is the
     test double for the SQL one, so it must not keep more. The Circle user id is
     derived from the party (`services.wallets.circle_user_id`), and the session

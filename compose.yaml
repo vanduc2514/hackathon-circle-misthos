@@ -120,9 +120,12 @@ services:
     environment:
       EDGE_PORT: "8080"
       CORE_API_URL: http://api:8000
-      # Simulated by default, like the API. Settling x402 payments for real needs
-      # MISTHOS_SIMULATED=false and a seller address; see edge/.env.example for the
-      # facilitator, the networks and the mainnet confirmation.
+      # Simulated by default, like the API, and read the way the API reads it: true or
+      # false, 1/0, yes/no, on/off, t/f or y/n; anything else stops the edge. Live, the
+      # one flag makes both the x402 gate and the Circle wallet routes real, so the edge
+      # refuses to start without a seller address, CIRCLE_API_KEY, CIRCLE_APP_ID and
+      # EDGE_CORE_TOKEN; this file does not pass the last three through yet. See
+      # edge/.env.example for the facilitator, the networks and the mainnet confirmation.
       MISTHOS_SIMULATED: ${MISTHOS_SIMULATED:-true}
       MISTHOS_SELLER_ADDRESS: ${MISTHOS_SELLER_ADDRESS:-}
       GATEWAY_FACILITATOR_URL: ${GATEWAY_FACILITATOR_URL:-}
