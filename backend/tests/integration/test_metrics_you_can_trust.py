@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from misthos.config import settings
-from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.issue import ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
 from misthos.domain.ledger import MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.main import app
@@ -141,7 +141,16 @@ class TestPublisherDecline:
 
     def test_a_decline_inside_the_grace_period_still_counts(self) -> None:
         issue_id = self.accepted()
-        verdict_at = store.get(issue_id).review.decided_at  # type: ignore[union-attr]
+        rec = store.get(issue_id)
+        assert rec is not None and rec.review is not None and rec.escrow is not None
+        verdict_at = rec.review.decided_at
+        # The seeded verdict lands inside the last week of the escrow term, where the
+        # grace is capped at the deadline and the release is already owed. Give it room,
+        # so "inside the grace" means the grace.
+        rec.deadline = verdict_at + ESCROW_TERM
+        rec.escrow.deadline = rec.deadline
+        store.save(rec)
+
         in_time = verdict_at + SILENT_PUBLISHER_GRACE - timedelta(minutes=1)
         assert store.decline(issue_id, "Not yet.", now=in_time).state is IssueState.REWORK
 

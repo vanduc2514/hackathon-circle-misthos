@@ -7,7 +7,7 @@ from datetime import timedelta
 
 import pytest
 
-from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.issue import ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
 from misthos.models.records import IssueRecord
 from misthos.services.review import ReviewFailed
 from misthos.store import store
@@ -109,12 +109,39 @@ class TestSilentPublisher:
         assert after.paid is not None
         assert after.decisions[-1].rule == "silent_publisher_grace_period"
 
-    def test_the_grace_period_is_not_cut_short(self) -> None:
+    def test_the_grace_runs_in_full_while_the_escrow_has_room(self) -> None:
+        """A verdict with a whole grace on the clock is not paid early. The seeded
+        issue decides inside the last week of its term, so give it room first: that is
+        the case this property is about."""
         store.advance("ISS-1002")
-        accepted = get("ISS-1002")
-        assert accepted.review is not None
-        sweep_once(store, now=accepted.review.decided_at + SILENT_PUBLISHER_GRACE - A_MINUTE)
+        rec = get("ISS-1002")
+        assert rec.review is not None and rec.escrow is not None
+        decided = rec.review.decided_at
+        rec.deadline = decided + ESCROW_TERM
+        rec.escrow.deadline = rec.deadline
+        store.save(rec)
+
+        sweep_once(store, now=decided + SILENT_PUBLISHER_GRACE - A_MINUTE)
         assert get("ISS-1002").state is IssueState.ACCEPTED
+
+        sweep_once(store, now=decided + SILENT_PUBLISHER_GRACE + A_MINUTE)
+        assert get("ISS-1002").state is IssueState.PAID
+
+    def test_a_verdict_inside_the_last_week_releases_at_the_deadline(self) -> None:
+        """Five days of grace left on a fourteen-day term: the release window ends at
+        the deadline, because `release` reverts after it. Uncapped it would fire two days
+        later, and the work the verdict passed would be stranded instead of paid (#33)."""
+        store.advance("ISS-1002")
+        rec = get("ISS-1002")
+        assert rec.review is not None and rec.deadline is not None
+        decided = rec.review.decided_at
+        assert decided + SILENT_PUBLISHER_GRACE > rec.deadline
+
+        sweep_once(store, now=rec.deadline - A_MINUTE)
+        assert get("ISS-1002").state is IssueState.ACCEPTED
+
+        sweep_once(store, now=rec.deadline + A_MINUTE)
+        assert get("ISS-1002").state is IssueState.PAID
 
 
 class TestSweeping:

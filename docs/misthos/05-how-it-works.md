@@ -120,7 +120,7 @@ sequenceDiagram
     end
 ```
 
-Note the ordering around acceptance. The agent issues the verdict and Priya merges. Neither the agent nor the contributor can release money, and the release needs a verdict on record. The one exception is a publisher who goes quiet for seven days after a passing verdict, which releases anyway rather than strand finished work.
+Note the ordering around acceptance. The agent issues the verdict and Priya merges. Neither the agent nor the contributor can release money, and the release needs a verdict on record. The one exception is a publisher who goes quiet for seven days after a passing verdict, which releases anyway rather than strand finished work. That grace is bounded by the escrow's own funding window, because a release after the escrow deadline is refused: a verdict that lands late releases at the deadline rather than seven days into a window that has already closed.
 
 ## Who decides what
 
@@ -194,7 +194,7 @@ The refund path is automatic and boring. If no acceptable work arrives by the de
 | Claim expires with no pull request | Issue returns to the pool, claim score affected | Prevents squatting on desirable work |
 | Submission is close but not acceptable | Rework loop with specific findings, then a bounded number of rounds | Unbounded review loops cost more than the fix is worth |
 | Contributor disputes the verdict | Platform re-reviews against the published criteria, then the publisher decides | The criteria are on record, so the argument is about them rather than about taste |
-| Publisher disappears after a passing verdict | Funds release to the contributor seven days later | Otherwise a finished patch is held hostage by someone who stopped paying attention |
+| Publisher disappears after a passing verdict | Funds release to the contributor seven days later, or at the escrow deadline when that comes first | Otherwise a finished patch is held hostage by someone who stopped paying attention |
 | The pull request is good but the buyer merges it without accepting | Payment is triggered by the merge event, not by a separate click | Removes the incentive to take free work |
 
 That last row is worth flagging to any enterprise buyer, because it is the one place where the platform takes a decision out of a human's hands for a good reason. Merging is acceptance. If a publisher merges the patch, the patch was accepted.

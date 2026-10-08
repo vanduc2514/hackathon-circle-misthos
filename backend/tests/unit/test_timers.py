@@ -56,6 +56,21 @@ class TestSilentPublisher:
         clocks = Clocks(IssueState.ACCEPTED, deadline=T0, verdict_passed_at=None)
         assert due(clocks, T0 + ESCROW_TERM) is None
 
+    def test_the_grace_is_capped_at_the_escrow_deadline(self) -> None:
+        """A verdict that leaves less than a full grace on the clock releases at the
+        deadline. Uncapped it would release after `release` has started reverting, and
+        the work the verdict passed would be refunded instead. See #33."""
+        clocks = Clocks(
+            IssueState.ACCEPTED,
+            deadline=T0 + timedelta(days=4),
+            verdict_passed_at=T0,
+        )
+
+        assert due(clocks, T0 + timedelta(days=4)) is None
+        assert due(clocks, T0 + timedelta(days=4) + A_MOMENT) is TimedAction.RELEASE_AFTER_GRACE
+        # Not a day later, which is where the uncapped grace would have put it.
+        assert T0 + SILENT_PUBLISHER_GRACE > clocks.deadline
+
 
 @pytest.mark.parametrize("state", sorted(set(IssueState) - TIMED_STATES))
 def test_no_timer_moves_an_issue_out_of_a_state_it_does_not_own(state: IssueState) -> None:

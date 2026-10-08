@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from siwe_wallet import Wallet
@@ -221,6 +223,30 @@ class TestLifecycleThroughTheApi:
 
         assert rec.state is IssueState.PAID
         assert rec.decisions[-1].rule == "silent_publisher_grace_period"
+
+    def test_a_late_verdict_releases_at_the_deadline_not_after_it(self) -> None:
+        """The grace is capped at the escrow deadline, so a late verdict is not stranded
+        waiting on a window the contract has already closed (#33)."""
+        store.advance("ISS-1002")
+        rec = store.get("ISS-1002")
+        assert rec is not None and rec.escrow is not None and rec.review is not None
+        assert rec.state is IssueState.ACCEPTED
+
+        # A verdict six days ago, with the deadline already behind us: a full seven-day
+        # grace would end a day after the contract stopped paying, so the window ends
+        # at the deadline instead.
+        now = datetime.now(UTC)
+        rec.review.decided_at = now - timedelta(days=6)
+        rec.deadline = now - timedelta(hours=1)
+        rec.escrow.deadline = rec.deadline
+        store.save(rec)
+
+        store.run_timers("ISS-1002", now=now)
+
+        paid = store.get("ISS-1002")
+        assert paid is not None
+        assert paid.state is IssueState.PAID
+        assert paid.decisions[-1].rule == "silent_publisher_grace_period"
 
     def test_an_issue_awaiting_merge_still_counts_as_open(self, client: TestClient) -> None:
         """ACCEPTED holds committed money until the publisher merges."""
