@@ -26,6 +26,7 @@ the step.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import logging
 import random
@@ -83,6 +84,7 @@ from misthos.repositories import (
     MemoryRepository,
     PaymentAlreadyUsed,
     Repository,
+    Seed,
     StaleIssue,
     build_repository,
 )
@@ -225,8 +227,15 @@ class NotSimulated(Exception):
 
 
 class DeclineRefused(Exception):
-    """A publisher declines a passing verdict once; after that the merge or the grace
-    period settles it."""
+    """A publisher declines a passing verdict once, and only inside the grace period;
+    after that the merge or the grace period settles it."""
+
+
+# How long a process that lost the race to seed an empty database waits for the one
+# that won. Seeding takes well under a second, so a holder still busy after this is
+# stuck or gone, and the loser carries on unready and asks again on its next call.
+SEED_WAIT = timedelta(seconds=10)
+_SEED_POLL_SECONDS = 0.05
 
 
 def _now() -> datetime:
@@ -309,20 +318,44 @@ class Store:
 
         A database that already holds issues is left exactly as it is: that is the
         point of having one.
+
+        An API process and a worker starting together against an empty database race
+        for the seed lock. The one that loses waits until it can take the lock itself,
+        which is once the winner has seeded or died, and then looks again: marking
+        itself ready on losing would have it serve the database as it found it, empty,
+        for as long as it runs. If the wait runs out it stays unready, so its next call
+        looks again.
         """
         if self._ready:
             return
         with self._ready_guard:
             if self._ready:
                 return
-            with self.repo.try_lock("seed") as held:
-                if held and self.repo.is_empty():
-                    self._seed()
-            self._ready = True
+            give_up = time.monotonic() + SEED_WAIT.total_seconds()
+            while True:
+                with self.repo.try_lock("seed") as held:
+                    if held:
+                        if self.repo.is_empty():
+                            self._seed()
+                        self._ready = True
+                        return
+                if time.monotonic() >= give_up:
+                    log.warning("another process still holds the seed lock; looking again later")
+                    return
+                time.sleep(_SEED_POLL_SECONDS)
 
     def reset(self) -> None:
+        """Put the simulation back to its seed, as one step for anyone reading it.
+
+        The seed is built first, against a repository of its own, and the repository
+        then swaps its contents for it whole. Someone stepping the demo meanwhile sees
+        the old issues or the new ones, never an empty table, and a copy they loaded
+        before is refused as stale after.
+        """
         with self._ready_guard:
-            self.repo.reset()
+            migrate = getattr(self.repo, "migrate", None)
+            if migrate is not None:
+                migrate()  # the simulated chain keeps its books in the same database
             self.chain.reset()
             self.coordinator.reset()
             if isinstance(self.rail, SimulatedRail):
@@ -330,8 +363,21 @@ class Store:
             reset_github = getattr(self.github, "reset", None)
             if reset_github is not None:
                 reset_github()  # the simulation's fixtures and sent posts
-            self._seed()
+            self.repo.reset(self._built_seed())
             self._ready = True
+
+    def _built_seed(self) -> Seed:
+        """The seed, built by this store pointed at an empty repository of its own.
+
+        The chain and the simulated GitHub are this store's own, so the seed's
+        commitments and pull requests are the ones the reset store will see.
+        """
+        staging = MemoryRepository()
+        builder = copy.copy(self)
+        builder.repo = staging
+        builder._ready = True  # it writes the seed; it must never go looking for one
+        builder._seed()
+        return staging.as_seed()
 
     def _seed(self) -> None:
         random.seed(7)
@@ -1991,21 +2037,31 @@ class Store:
 
         Distinct from going silent, which releases the payment after the grace
         period. The work goes back for rework with the publisher's reason as its
-        finding, and counts as a rework round. A publisher declines once per issue:
-        after that the merge or the grace period settles it, so declining cannot be
-        a way to keep finished work without paying for it.
+        finding, and counts as a rework round. A publisher declines once per issue,
+        and before the grace period ends: after that the merge or the grace period
+        settles it, so declining cannot be a way to keep finished work without paying
+        for it.
         """
         self.ensure_ready()
         with self._exclusive(issue_id), self._posting():
             rec = self.repo.get_issue(issue_id)
             if rec is None:
                 raise KeyError(issue_id)
-            if rec.state is not IssueState.ACCEPTED or rec.accepted_by is not None:
-                raise lifecycle.IllegalTransition(rec.state, IssueState.REWORK)
+            # Before the state check, so a retried decline, which finds the issue in
+            # REWORK, is told why rather than that REWORK cannot move to REWORK.
             if any(d.action == "publisher_declined" for d in rec.decisions):
                 raise DeclineRefused(
                     f"the publisher already declined {rec.id} once; merging it or the grace "
                     "period settles it now"
+                )
+            if rec.state is not IssueState.ACCEPTED or rec.accepted_by is not None:
+                raise lifecycle.IllegalTransition(rec.state, IssueState.REWORK)
+            if timers.due(self._clocks(rec), now or _now()) is TimedAction.RELEASE_AFTER_GRACE:
+                # The silence already accepted the work and the release is owed; the
+                # sweeper's next pass pays it. Declining now would drop that payout.
+                raise DeclineRefused(
+                    f"the grace period on {rec.id} has ended, so the publisher's silence "
+                    "accepted the work and the payment is released on the next sweep"
                 )
             self._move(rec, IssueState.REWORK)
             reason = reason.strip()[:500]
@@ -3183,7 +3239,9 @@ _ISSUE_SPECS: list[dict] = [
             "A test asserts the jittered spread is non-zero.",
         ],
         "publisher_id": "PUB-2",
-        "age_days": 21,
+        # Paid four days before the seed, so a fresh demo has a settlement this week:
+        # the dashboard leads with that number.
+        "age_days": 6,
         "contributor_id": "CON-3",
         "pr": {
             "pr_number": 611,

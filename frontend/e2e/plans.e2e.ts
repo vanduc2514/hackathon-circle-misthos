@@ -6,7 +6,7 @@ import { expect, test } from '@playwright/test'
  * on the simulation's rail, and has spend reporting.
  */
 test('a publisher buys Team from the web app', async ({ page, request }) => {
-  await request.post('/api/v1/demo/reset')
+  expect((await request.post('/api/v1/demo/reset')).ok()).toBe(true)
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
 

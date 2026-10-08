@@ -102,6 +102,10 @@ MISTHOS_DATABASE_URL=postgresql://user:pass@localhost/misthos mise run dev:api
 MISTHOS_DATABASE_URL=sqlite:///misthos.db mise run dev:api
 ```
 
+With a database configured, `mise run reset` and the dashboard's Reset button are
+refused, because a reset deletes every row in it. Where the database is a demo you
+mean to throw away, start the API with `MISTHOS_ALLOW_DEMO_RESET=true` as well.
+
 To run more than one API process, add Redis as well. It holds the per-issue lock, the
 `Idempotency-Key` answers and the rate-limit counters, which otherwise live in each
 process:

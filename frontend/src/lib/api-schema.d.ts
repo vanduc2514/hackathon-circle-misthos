@@ -545,7 +545,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reset */
+        /**
+         * Reset
+         * @description Put the simulation back to its seed. With a database configured this deletes
+         *     every row in it, so it is refused there unless MISTHOS_ALLOW_DEMO_RESET is set.
+         */
         post: operations["reset_api_v1_demo_reset_post"];
         delete?: never;
         options?: never;
@@ -2874,6 +2878,13 @@ export interface operations {
                         [key: string]: number;
                     };
                 };
+            };
+            /** @description Outside the simulation, or a database is configured and its operator has not allowed reset */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

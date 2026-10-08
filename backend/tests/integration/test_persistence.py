@@ -122,12 +122,16 @@ class TestRestart:
             repo.save_publisher(publisher)
         for contributor in built.list_contributors():
             repo.save_contributor(contributor)
-        originals = built.list_issues()
-        for rec in originals:
-            repo.save_issues(replace(rec, version=0))
+        # Saved as new rows. The version is the repository's to number: it carries on
+        # from every version this database handed out before, so compare the copies
+        # it numbered.
+        saved = [replace(rec, version=0) for rec in built.list_issues()]
+        for rec in saved:
+            repo.save_issues(rec)
 
-        for rec in originals:
-            assert repo.get_issue(rec.id) == replace(rec, version=1), rec.id
+        for rec in saved:
+            assert rec.version > 0
+            assert repo.get_issue(rec.id) == rec, rec.id
         assert repo.list_publishers() == sorted(built.list_publishers(), key=lambda p: p.id)
         assert repo.list_contributors() == sorted(built.list_contributors(), key=lambda c: c.id)
 

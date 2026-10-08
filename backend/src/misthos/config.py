@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # Empty keeps state in memory: the zero-config demo, reset on every restart. A
     # Postgres URL makes it durable, and sqlite:///path does the same in a local file.
     database_url: str = ""
+    # The simulation's reset deletes every row of that database, and anyone who can
+    # reach the API can ask for it, so it is refused while a database is configured
+    # unless this is set. Set it only where the database is a throwaway demo.
+    allow_demo_reset: bool = False
     # The sweeper applies claim expiry, deadline refunds and the silent-publisher
     # release on a timer. It runs inside the API by default; turn this off where a
     # dedicated `python -m misthos.workers` process runs it instead.

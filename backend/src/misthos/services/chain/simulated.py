@@ -8,6 +8,8 @@ this one to prove a divergence is caught.
 
 With a database configured the books live in their own table, so a restart does not
 make every issue look divergent; without one they are memory, like everything else.
+Each call reads and writes its books as one step, so a reset that lands in the middle
+of a release cannot have the release write the forgotten commitment back.
 """
 
 from __future__ import annotations
@@ -34,7 +36,8 @@ class SimulatedChain:
 
     def __init__(self, engine: Engine | None = None) -> None:
         self._engine = engine
-        self._guard = threading.Lock()
+        # Re-entrant, because a call holds it across its own read and write.
+        self._guard = threading.RLock()
         self._books: dict[str, tuple[str, Usdc, EscrowStatus]] = {}
 
     # ------------------------------------------------------------ the escrow
@@ -44,20 +47,22 @@ class SimulatedChain:
     ) -> str:
         if amount.base_units <= 0:
             raise ChainRevert("ZeroAmount")
-        if self._get(issue_id) is not None:
-            raise ChainRevert("AlreadyExists")
-        tx = _tx()
-        self._put(issue_id, publisher, amount, EscrowStatus.HELD, tx, insert_new=True)
-        return tx
+        with self._guard:
+            if self._get(issue_id) is not None:
+                raise ChainRevert("AlreadyExists")
+            tx = _tx()
+            self._put(issue_id, publisher, amount, EscrowStatus.HELD, tx, insert_new=True)
+            return tx
 
     def release(self, issue_id: str, contributor: str, amount: Usdc, at: datetime) -> str:
         return self._settle(issue_id, amount, EscrowStatus.RELEASED, at)
 
     def refund(self, issue_id: str, at: datetime) -> str:
-        found = self._get(issue_id)
-        if found is None:
-            raise ChainRevert("NotHeld")
-        return self._settle(issue_id, found[1], EscrowStatus.REFUNDED, at)
+        with self._guard:
+            found = self._get(issue_id)
+            if found is None:
+                raise ChainRevert("NotHeld")
+            return self._settle(issue_id, found[1], EscrowStatus.REFUNDED, at)
 
     def commitments(self) -> dict[str, OnChain]:
         if self._engine is None:
@@ -73,12 +78,12 @@ class SimulatedChain:
             }
 
     def reset(self) -> None:
-        if self._engine is None:
-            with self._guard:
+        with self._guard:
+            if self._engine is None:
                 self._books = {}
-            return
-        with self._engine.begin() as conn:
-            conn.execute(delete(t.simulated_escrow))
+                return
+            with self._engine.begin() as conn:
+                conn.execute(delete(t.simulated_escrow))
 
     def tamper(self, issue_id: str, status: EscrowStatus) -> None:
         """Move a commitment without the platform, as a compromised key would. Tests only."""
@@ -89,14 +94,15 @@ class SimulatedChain:
     # ---------------------------------------------------------------- books
 
     def _settle(self, issue_id: str, amount: Usdc, status: EscrowStatus, at: datetime) -> str:
-        found = self._get(issue_id)
-        if found is None or found[2] is not EscrowStatus.HELD:
-            raise ChainRevert("NotHeld")
-        if amount != found[1]:
-            raise ChainRevert("AmountMismatch")
-        tx = _tx()
-        self._put(issue_id, found[0], found[1], status, tx, insert_new=False)
-        return tx
+        with self._guard:
+            found = self._get(issue_id)
+            if found is None or found[2] is not EscrowStatus.HELD:
+                raise ChainRevert("NotHeld")
+            if amount != found[1]:
+                raise ChainRevert("AmountMismatch")
+            tx = _tx()
+            self._put(issue_id, found[0], found[1], status, tx, insert_new=False)
+            return tx
 
     def _get(self, issue_id: str) -> tuple[str, Usdc, EscrowStatus] | None:
         if self._engine is None:

@@ -529,11 +529,25 @@ async def demo_merge(
     return await idempotent(request, idempotency_key, lambda: _act(store.demo_merge, issue_id))
 
 
-@router.post("/demo/reset")
+@router.post(
+    "/demo/reset",
+    responses={
+        403: {
+            "description": "Outside the simulation, or a database is configured and its "
+            "operator has not allowed reset"
+        }
+    },
+)
 async def reset() -> dict[str, int]:
-    # Reset wipes every table when a database is configured. That is a simulation
-    # tool, so it is refused anywhere the simulation is switched off.
+    """Put the simulation back to its seed. With a database configured this deletes
+    every row in it, so it is refused there unless MISTHOS_ALLOW_DEMO_RESET is set."""
     if not settings.simulated:
         raise HTTPException(status_code=403, detail="reset is only available in simulation")
+    if settings.database_url and not settings.allow_demo_reset:
+        raise HTTPException(
+            status_code=403,
+            detail="reset would delete every row of the configured database; set "
+            "MISTHOS_ALLOW_DEMO_RESET=true only if that database is a throwaway demo",
+        )
     await run_in_threadpool(store.reset)
     return {"issues": await run_in_threadpool(store.count_issues)}
