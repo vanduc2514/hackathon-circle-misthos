@@ -179,7 +179,21 @@ contract EscrowHandler is Test {
         uint64 deadline =
             uint64(bound(deadlineSeed, block.timestamp + MIN_LEAD, block.timestamp + MAX_LEAD));
 
-        if (ceilingInForce != 0 && amount > ceilingInForce) {
+        if (ceilingInForce == 0) {
+            // No approved price: the escrow must refuse. The campaign proves that on a
+            // quarter of the attempts, and on the rest plays the approval checkpoint,
+            // recording the price as the ceiling before the publisher commits it.
+            if (amountSeed % 4 == 0) {
+                vm.expectRevert(MisthosEscrow.NoCeiling.selector);
+                vm.prank(publisher);
+                escrow.commit(issueId, amount, deadline);
+                return;
+            }
+            escrow.setCeiling(issueId, amount);
+            ceilingInForce = amount;
+        }
+
+        if (amount > ceilingInForce) {
             vm.expectRevert(
                 abi.encodeWithSelector(
                     MisthosEscrow.ExceedsCeiling.selector, amount, ceilingInForce
@@ -200,9 +214,10 @@ contract EscrowHandler is Test {
     }
 
     /**
-     * @notice The owner caps what an issue may commit, or lifts the cap with
-     *         zero. The ceiling is the guardrail an agent cannot talk its way
-     *         past, so the campaign has to move it around.
+     * @notice The owner caps what an issue may commit, or clears the cap with
+     *         zero, which makes the issue unfundable again. The ceiling is the
+     *         guardrail an agent cannot talk its way past, so the campaign has
+     *         to move it around.
      */
     function setCeiling(uint256 issueSeed, uint256 ceilingSeed) external {
         bytes32 issueId = issues[issueSeed % ISSUE_COUNT];

@@ -372,3 +372,20 @@ class TestMigrations:
         statuses = {c.id: c.identity_status for c in repo.list_contributors()}
         assert statuses == {"CON-A": "verified", "CON-B": "unverified"}
         repo.reset()
+
+
+class TestEscrowCeilings:
+    def test_an_approved_ceiling_survives_a_restart(self, database_url: str) -> None:
+        # The simulated escrow refuses a commitment without a ceiling, so a restart
+        # that forgot the ceilings would make every approved issue unfundable.
+        from misthos.domain.money import Usdc
+
+        first = fresh(database_url)
+        funded = next(r for r in first.repo.list_issues() if r.state is IssueState.FUNDED)
+        ceiling = first.chain.escrow_ceiling(funded.id)
+        assert ceiling is not None and ceiling == funded.proposal.recommended
+
+        again = Store(SqlRepository(database_url))
+        assert again.chain.escrow_ceiling(funded.id) == ceiling
+        assert again.chain.escrow_ceiling("ISS-NEVER") is None
+        assert isinstance(ceiling, Usdc)

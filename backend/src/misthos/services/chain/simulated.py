@@ -1,7 +1,8 @@
 """A simulated escrow that keeps its own books.
 
-It refuses what `MisthosEscrow` refuses (a second commitment, a settlement of
-something not held, an amount that is not the whole commitment), so the store meets
+It refuses what `MisthosEscrow` refuses (a commitment with no ceiling or above it,
+a second commitment, a settlement of something not held, an amount that is not the
+whole commitment), so the store meets
 the same failures in the simulation as on chain. Its books are separate from the
 ledger on purpose: reconciliation compares two records, and a test can tamper with
 this one to prove a divergence is caught.
@@ -39,8 +40,26 @@ class SimulatedChain:
         # Re-entrant, because a call holds it across its own read and write.
         self._guard = threading.RLock()
         self._books: dict[str, tuple[str, Usdc, EscrowStatus, int]] = {}
+        self._ceilings: dict[str, Usdc] = {}
 
     # ------------------------------------------------------------ the escrow
+
+    def set_ceiling(self, issue_id: str, ceiling: Usdc, at: datetime) -> str:
+        with self._guard:
+            self._put_ceiling(issue_id, ceiling)
+            return _tx()
+
+    def escrow_ceiling(self, issue_id: str) -> Usdc | None:
+        if self._engine is None:
+            with self._guard:
+                return self._ceilings.get(issue_id)
+        with self._engine.connect() as conn:
+            value = conn.execute(
+                select(t.simulated_escrow_ceilings.c.ceiling_base_units).where(
+                    t.simulated_escrow_ceilings.c.issue_id == issue_id
+                )
+            ).scalar()
+        return Usdc(value) if value else None
 
     def commit(
         self,
@@ -51,13 +70,20 @@ class SimulatedChain:
         at: datetime,
         fee_bps: int = 0,
     ) -> str:
-        if amount.base_units <= 0:
-            raise ChainRevert("ZeroAmount")
         if fee_bps < 0:
             raise ChainRevert("FeeTooHigh")
         with self._guard:
+            # The contract's order: an existing commitment, then the amount, then
+            # the ceiling, so the same call fails the same way in both places.
             if self._get(issue_id) is not None:
                 raise ChainRevert("AlreadyExists")
+            if amount.base_units <= 0:
+                raise ChainRevert("ZeroAmount")
+            cap = self.escrow_ceiling(issue_id)
+            if cap is None:
+                raise ChainRevert("NoCeiling")
+            if amount.base_units > cap.base_units:
+                raise ChainRevert(f"ExceedsCeiling({amount.base_units}, {cap.base_units})")
             tx = _tx()
             self._put(issue_id, publisher, amount, EscrowStatus.HELD, tx, fee_bps, insert_new=True)
             return tx
@@ -101,9 +127,11 @@ class SimulatedChain:
         with self._guard:
             if self._engine is None:
                 self._books = {}
+                self._ceilings = {}
                 return
             with self._engine.begin() as conn:
                 conn.execute(delete(t.simulated_escrow))
+                conn.execute(delete(t.simulated_escrow_ceilings))
 
     def tamper(self, issue_id: str, status: EscrowStatus) -> None:
         """Move a commitment without the platform, as a compromised key would. Tests only."""
@@ -123,6 +151,22 @@ class SimulatedChain:
             tx = _tx()
             self._put(issue_id, found[0], found[1], status, tx, found[3], insert_new=False)
             return tx
+
+    def _put_ceiling(self, issue_id: str, ceiling: Usdc) -> None:
+        # Zero clears the ceiling, as `setCeiling(id, 0)` does: unfundable, not uncapped.
+        if self._engine is None:
+            if ceiling.base_units:
+                self._ceilings[issue_id] = ceiling
+            else:
+                self._ceilings.pop(issue_id, None)
+            return
+        table = t.simulated_escrow_ceilings
+        with self._engine.begin() as conn:
+            conn.execute(delete(table).where(table.c.issue_id == issue_id))
+            if ceiling.base_units:
+                conn.execute(
+                    insert(table).values(issue_id=issue_id, ceiling_base_units=ceiling.base_units)
+                )
 
     def _get(self, issue_id: str) -> tuple[str, Usdc, EscrowStatus, int] | None:
         if self._engine is None:

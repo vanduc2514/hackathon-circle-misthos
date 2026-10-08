@@ -1218,6 +1218,13 @@ export interface components {
             amount: {
                 [key: string]: string | number;
             };
+            /**
+             * Escrow Ceiling
+             * @description The most the escrow will take for this issue: the price a human approved, as the escrow holds it. None means the issue cannot be funded. Not the affordability ceiling, which is the platform's estimate from the budget.
+             */
+            escrow_ceiling: {
+                [key: string]: string | number;
+            } | null;
             /** Deadline */
             deadline: string | null;
             /** Explorer Url */

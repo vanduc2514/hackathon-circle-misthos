@@ -16,8 +16,10 @@ import httpx
 
 from misthos.domain.escrow import (
     COMMITTED_TOPIC,
+    ceiling_call,
     commitments_call,
     commitments_call_by_key,
+    decode_ceiling,
     decode_commitment,
     issue_key,
 )
@@ -68,6 +70,10 @@ class ArcEscrow:
         self.verify()
         return self._read(commitments_call(issue_id))
 
+    def escrow_ceiling(self, issue_id: str) -> Usdc | None:
+        self.verify()
+        return decode_ceiling(self._call(ceiling_call(issue_id)))
+
     def commitments(self) -> dict[str, OnChain]:
         """Every commitment the escrow has emitted, keyed by issue id.
 
@@ -100,6 +106,9 @@ class ArcEscrow:
 
     # ------------------------------------------------------------- writing
 
+    def set_ceiling(self, issue_id: str, ceiling: Usdc, at: datetime) -> str:
+        raise NotImplementedError("setting a ceiling on Arc is the settlement orchestrator (#69)")
+
     def commit(
         self, issue_id: str, publisher: str, amount: Usdc, deadline: datetime, at: datetime
     ) -> str:
@@ -117,8 +126,10 @@ class ArcEscrow:
     # ------------------------------------------------------------- the RPC
 
     def _read(self, data: str) -> OnChain | None:
-        result = self._rpc("eth_call", [{"to": self.address, "data": data}, "latest"])
-        return decode_commitment(str(result))
+        return decode_commitment(self._call(data))
+
+    def _call(self, data: str) -> str:
+        return str(self._rpc("eth_call", [{"to": self.address, "data": data}, "latest"]))
 
     def _rpc(self, method: str, params: list) -> object:
         body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}

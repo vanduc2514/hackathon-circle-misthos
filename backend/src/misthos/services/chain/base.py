@@ -16,6 +16,13 @@ class ChainRevert(Exception):
 class ChainGateway(Protocol):
     name: str
 
+    def set_ceiling(self, issue_id: str, ceiling: Usdc, at: datetime) -> str:
+        """Record the price a human approved as the most the escrow will take for the
+        issue. Without one a commitment is refused. Returns the transaction reference."""
+
+    def escrow_ceiling(self, issue_id: str) -> Usdc | None:
+        """The escrow's ceiling for the issue, or None if it has none."""
+
     def commit(
         self,
         issue_id: str,
@@ -25,7 +32,8 @@ class ChainGateway(Protocol):
         at: datetime,
         fee_bps: int = 0,
     ) -> str:
-        """Hold `amount` for this issue at the platform's `fee_bps` rate.
+        """Hold `amount` for this issue, at most its ceiling, at the platform's `fee_bps`
+        rate.
 
         The rate is fixed here, with the money, and the escrow enforces it on release.
         Reading it from the publisher's plan at release time instead would let a plan
