@@ -1,11 +1,15 @@
 """A simulated escrow that keeps its own books.
 
-It refuses what `MisthosEscrow` refuses (a commitment with no ceiling or above it,
-a second commitment, a settlement of something not held, an amount that is not the
-whole commitment), so the store meets
-the same failures in the simulation as on chain. Its books are separate from the
-ledger on purpose: reconciliation compares two records, and a test can tamper with
-this one to prove a divergence is caught.
+It refuses what `MisthosEscrow` refuses (a commitment with no ceiling or above it, from
+a wallet the approval did not name or to a deadline past the approved one, a second
+commitment, a settlement of something not held, an amount that is not the whole
+commitment, a release after the deadline and a refund before it), so the store meets
+the same failures in the simulation as on chain. The deadlines matter most: a
+simulation that paid after the deadline is how the release that #121 found could not
+land went unnoticed. The block's clock is the `at` each call is given.
+
+Its books are separate from the ledger on purpose: reconciliation compares two
+records, and a test can tamper with this one to prove a divergence is caught.
 
 With a database configured the books live in their own table, so a restart does not
 make every issue look divergent; without one they are memory, like everything else.
@@ -17,7 +21,8 @@ from __future__ import annotations
 
 import secrets
 import threading
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.engine import Engine
@@ -32,6 +37,44 @@ def _tx() -> str:
     return "0x" + secrets.token_hex(32)
 
 
+def _seconds(moment: datetime) -> int:
+    """A moment as the contract holds it: whole Unix seconds."""
+    return int(moment.timestamp())
+
+
+def _utc(moment: datetime | None) -> datetime | None:
+    # SQLite hands timestamps back without a zone; everything here is stored in UTC.
+    if moment is None or moment.tzinfo is not None:
+        return moment
+    return moment.replace(tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class _Held:
+    publisher: str
+    amount: Usdc
+    status: EscrowStatus
+    fee_bps: int
+    deadline: datetime | None
+    commit_tx: str
+
+    def on_chain(self) -> OnChain:
+        return OnChain(
+            status=self.status,
+            amount=self.amount,
+            fee_bps=self.fee_bps,
+            publisher=self.publisher,
+            deadline=self.deadline,
+        )
+
+
+@dataclass(frozen=True)
+class _Approval:
+    ceiling: Usdc
+    publisher: str | None
+    latest: datetime | None
+
+
 class SimulatedChain:
     name = "simulated"
 
@@ -39,27 +82,35 @@ class SimulatedChain:
         self._engine = engine
         # Re-entrant, because a call holds it across its own read and write.
         self._guard = threading.RLock()
-        self._books: dict[str, tuple[str, Usdc, EscrowStatus, int]] = {}
-        self._ceilings: dict[str, Usdc] = {}
+        self._books: dict[str, _Held] = {}
+        self._approvals: dict[str, _Approval] = {}
 
     # ------------------------------------------------------------ the escrow
 
-    def set_ceiling(self, issue_id: str, ceiling: Usdc, at: datetime) -> str:
+    def set_ceiling(
+        self,
+        issue_id: str,
+        ceiling: Usdc,
+        at: datetime,
+        *,
+        publisher: str,
+        latest_deadline: datetime,
+        fee_bps: int = 0,
+    ) -> str:
+        # The simulated commitment carries its own rate (the platform sends it), so the
+        # rate is not kept here; the approval's other two terms are, as on chain.
+        if ceiling.base_units:
+            if not publisher:
+                raise ChainRevert("ZeroAddress")
+            if _seconds(latest_deadline) <= _seconds(at):
+                raise ChainRevert("DeadlinePassed")
         with self._guard:
-            self._put_ceiling(issue_id, ceiling)
+            self._put_approval(issue_id, _Approval(ceiling, publisher, latest_deadline))
             return _tx()
 
     def escrow_ceiling(self, issue_id: str) -> Usdc | None:
-        if self._engine is None:
-            with self._guard:
-                return self._ceilings.get(issue_id)
-        with self._engine.connect() as conn:
-            value = conn.execute(
-                select(t.simulated_escrow_ceilings.c.ceiling_base_units).where(
-                    t.simulated_escrow_ceilings.c.issue_id == issue_id
-                )
-            ).scalar()
-        return Usdc(value) if value else None
+        approval = self._approval(issue_id)
+        return approval.ceiling if approval is not None else None
 
     def commit(
         self,
@@ -73,61 +124,71 @@ class SimulatedChain:
         if fee_bps < 0:
             raise ChainRevert("FeeTooHigh")
         with self._guard:
-            # The contract's order: an existing commitment, then the amount, then
-            # the ceiling, so the same call fails the same way in both places.
+            # The contract's order, so the same call fails the same way in both places.
             if self._get(issue_id) is not None:
                 raise ChainRevert("AlreadyExists")
             if amount.base_units <= 0:
                 raise ChainRevert("ZeroAmount")
-            cap = self.escrow_ceiling(issue_id)
-            if cap is None:
+            if _seconds(deadline) <= _seconds(at):
+                raise ChainRevert("DeadlinePassed")
+            approval = self._approval(issue_id)
+            if approval is None:
                 raise ChainRevert("NoCeiling")
-            if amount.base_units > cap.base_units:
-                raise ChainRevert(f"ExceedsCeiling({amount.base_units}, {cap.base_units})")
+            if (approval.publisher or "").lower() != publisher.lower():
+                raise ChainRevert(f"NotApprovedPublisher({publisher})")
+            if amount.base_units > approval.ceiling.base_units:
+                raise ChainRevert(
+                    f"ExceedsCeiling({amount.base_units}, {approval.ceiling.base_units})"
+                )
+            if approval.latest is not None and _seconds(deadline) > _seconds(approval.latest):
+                raise ChainRevert(
+                    f"DeadlineTooLate({_seconds(deadline)}, {_seconds(approval.latest)})"
+                )
             tx = _tx()
-            self._put(issue_id, publisher, amount, EscrowStatus.HELD, tx, fee_bps, insert_new=True)
+            held = _Held(publisher, amount, EscrowStatus.HELD, fee_bps, deadline, tx)
+            self._put(issue_id, held, tx, insert_new=True)
             return tx
 
+    def commit_tx(self, issue_id: str) -> str:
+        found = self._get(issue_id)
+        if found is None:
+            raise ChainRevert("NotHeld")
+        return found.commit_tx
+
     def release(self, issue_id: str, contributor: str, amount: Usdc, at: datetime) -> str:
-        return self._settle(issue_id, amount, EscrowStatus.RELEASED, at)
+        with self._guard:
+            found = self._held(issue_id)
+            if found.deadline is not None and _seconds(at) > _seconds(found.deadline):
+                raise ChainRevert("DeadlinePassed")
+            return self._settle(issue_id, found, amount, EscrowStatus.RELEASED)
 
     def refund(self, issue_id: str, at: datetime) -> str:
         with self._guard:
-            found = self._get(issue_id)
-            if found is None:
-                raise ChainRevert("NotHeld")
-            return self._settle(issue_id, found[1], EscrowStatus.REFUNDED, at)
+            found = self._held(issue_id)
+            if found.deadline is not None and _seconds(at) < _seconds(found.deadline):
+                raise ChainRevert("DeadlineNotReached")
+            return self._settle(issue_id, found, found.amount, EscrowStatus.REFUNDED)
 
     def commitment(self, issue_id: str) -> OnChain | None:
         found = self._get(issue_id)
-        if found is None:
-            return None
-        return OnChain(status=found[2], amount=found[1], fee_bps=found[3], publisher=found[0])
+        return found.on_chain() if found is not None else None
 
     def commitments(self) -> dict[str, OnChain]:
         if self._engine is None:
             with self._guard:
-                return {
-                    k: OnChain(status=v[2], amount=v[1], fee_bps=v[3], publisher=v[0])
-                    for k, v in self._books.items()
-                }
+                return {k: v.on_chain() for k, v in self._books.items()}
         with self._engine.connect() as conn:
             rows = conn.execute(select(t.simulated_escrow)).mappings()
-            return {
-                r["issue_id"]: OnChain(
-                    status=EscrowStatus(r["status"]),
-                    amount=Usdc(r["amount_base_units"]),
-                    fee_bps=r["fee_bps"],
-                    publisher=r["publisher_wallet"],
-                )
-                for r in rows
-            }
+            return {r["issue_id"]: _held_from(r).on_chain() for r in rows}
+
+    def settlement_problems(self) -> list[str]:
+        return []
 
     def reset(self) -> None:
         with self._guard:
             if self._engine is None:
                 self._books = {}
-                self._ceilings = {}
+                self._approvals = {}
                 return
             with self._engine.begin() as conn:
                 conn.execute(delete(t.simulated_escrow))
@@ -137,38 +198,59 @@ class SimulatedChain:
         """Move a commitment without the platform, as a compromised key would. Tests only."""
         found = self._get(issue_id)
         assert found is not None, issue_id
-        self._put(issue_id, found[0], found[1], status, _tx(), found[3], insert_new=False)
+        self._put(issue_id, replace(found, status=status), _tx(), insert_new=False)
 
     # ---------------------------------------------------------------- books
 
-    def _settle(self, issue_id: str, amount: Usdc, status: EscrowStatus, at: datetime) -> str:
-        with self._guard:
-            found = self._get(issue_id)
-            if found is None or found[2] is not EscrowStatus.HELD:
-                raise ChainRevert("NotHeld")
-            if amount != found[1]:
-                raise ChainRevert("AmountMismatch")
-            tx = _tx()
-            self._put(issue_id, found[0], found[1], status, tx, found[3], insert_new=False)
-            return tx
+    def _held(self, issue_id: str) -> _Held:
+        found = self._get(issue_id)
+        if found is None or found.status is not EscrowStatus.HELD:
+            raise ChainRevert("NotHeld")
+        return found
 
-    def _put_ceiling(self, issue_id: str, ceiling: Usdc) -> None:
-        # Zero clears the ceiling, as `setCeiling(id, 0)` does: unfundable, not uncapped.
+    def _settle(self, issue_id: str, found: _Held, amount: Usdc, status: EscrowStatus) -> str:
+        if amount != found.amount:
+            raise ChainRevert("AmountMismatch")
+        tx = _tx()
+        self._put(issue_id, replace(found, status=status), tx, insert_new=False)
+        return tx
+
+    def _approval(self, issue_id: str) -> _Approval | None:
         if self._engine is None:
-            if ceiling.base_units:
-                self._ceilings[issue_id] = ceiling
+            with self._guard:
+                return self._approvals.get(issue_id)
+        table = t.simulated_escrow_ceilings
+        with self._engine.connect() as conn:
+            row = conn.execute(select(table).where(table.c.issue_id == issue_id)).mappings().first()
+        if row is None or not row["ceiling_base_units"]:
+            return None
+        return _Approval(
+            Usdc(row["ceiling_base_units"]), row["publisher_wallet"], _utc(row["latest_deadline"])
+        )
+
+    def _put_approval(self, issue_id: str, approval: _Approval) -> None:
+        # Zero clears the approval, as `setCeiling(id, 0, ...)` does: unfundable, not
+        # uncapped, and nobody named to commit.
+        if self._engine is None:
+            if approval.ceiling.base_units:
+                self._approvals[issue_id] = approval
             else:
-                self._ceilings.pop(issue_id, None)
+                self._approvals.pop(issue_id, None)
             return
         table = t.simulated_escrow_ceilings
         with self._engine.begin() as conn:
             conn.execute(delete(table).where(table.c.issue_id == issue_id))
-            if ceiling.base_units:
+            if approval.ceiling.base_units:
                 conn.execute(
-                    insert(table).values(issue_id=issue_id, ceiling_base_units=ceiling.base_units)
+                    insert(table).values(
+                        issue_id=issue_id,
+                        ceiling_base_units=approval.ceiling.base_units,
+                        publisher_wallet=approval.publisher,
+                        latest_deadline=approval.latest,
+                    )
                 )
 
-    def _get(self, issue_id: str) -> tuple[str, Usdc, EscrowStatus, int] | None:
+    def _get(self, issue_id: str) -> _Held | None:
         if self._engine is None:
             with self._guard:
                 return self._books.get(issue_id)
@@ -180,39 +262,24 @@ class SimulatedChain:
                 .mappings()
                 .first()
             )
-        if row is None:
-            return None
-        return (
-            row["publisher_wallet"],
-            Usdc(row["amount_base_units"]),
-            EscrowStatus(row["status"]),
-            row["fee_bps"],
-        )
+        return _held_from(row) if row is not None else None
 
-    def _put(
-        self,
-        issue_id: str,
-        party: str,
-        amount: Usdc,
-        status: EscrowStatus,
-        tx: str,
-        fee_bps: int,
-        *,
-        insert_new: bool,
-    ) -> None:
+    def _put(self, issue_id: str, held: _Held, tx: str, *, insert_new: bool) -> None:
         if self._engine is None:
             with self._guard:
-                self._books[issue_id] = (party, amount, status, fee_bps)
+                self._books[issue_id] = held
             return
-        values = {"status": status.value, "last_tx_hash": tx}
+        values = {"status": held.status.value, "last_tx_hash": tx}
         with self._engine.begin() as conn:
             if insert_new:
                 conn.execute(
                     insert(t.simulated_escrow).values(
                         issue_id=issue_id,
-                        publisher_wallet=party,
-                        amount_base_units=amount.base_units,
-                        fee_bps=fee_bps,
+                        publisher_wallet=held.publisher,
+                        amount_base_units=held.amount.base_units,
+                        fee_bps=held.fee_bps,
+                        deadline=held.deadline,
+                        commit_tx_hash=held.commit_tx,
                         **values,
                     )
                 )
@@ -222,3 +289,14 @@ class SimulatedChain:
                     .where(t.simulated_escrow.c.issue_id == issue_id)
                     .values(**values)
                 )
+
+
+def _held_from(row) -> _Held:  # type: ignore[no-untyped-def]
+    return _Held(
+        publisher=row["publisher_wallet"],
+        amount=Usdc(row["amount_base_units"]),
+        status=EscrowStatus(row["status"]),
+        fee_bps=row["fee_bps"],
+        deadline=_utc(row["deadline"]),
+        commit_tx=row["commit_tx_hash"] or row["last_tx_hash"],
+    )

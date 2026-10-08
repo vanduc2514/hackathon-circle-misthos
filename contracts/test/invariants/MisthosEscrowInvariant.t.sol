@@ -181,6 +181,34 @@ contract MisthosEscrowInvariant is Test {
         }
     }
 
+    /// Every commitment came from the publisher its approval named, and is held in
+    /// that publisher's name. The issue id is public, so a commitment from anyone else
+    /// would take the issue's only slot and could never be booked (#122).
+    function invariant_a_commitment_comes_from_the_publisher_the_owner_named() public view {
+        for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
+            bytes32 issueId = handler.issues(i);
+            if (handler.committedAmount(issueId) == 0) continue;
+            (address publisher,,,) = escrow.commitments(issueId);
+
+            assertTrue(handler.approvedAtCommit(issueId) != address(0), "committed unnamed");
+            assertEq(publisher, handler.approvedAtCommit(issueId), "committed by a stranger");
+        }
+    }
+
+    /// No commitment's deadline is later than the one its approval allowed, so the
+    /// refund of a commitment nobody can book is never further off than the approval
+    /// said, whatever the sender asked for.
+    function invariant_a_commitment_never_outlives_its_approval() public view {
+        for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
+            bytes32 issueId = handler.issues(i);
+            if (handler.committedAmount(issueId) == 0) continue;
+            (,, uint64 deadline,) = escrow.commitments(issueId);
+
+            assertEq(deadline, handler.committedDeadline(issueId));
+            assertLe(deadline, handler.latestAtCommit(issueId), "committed past the approval");
+        }
+    }
+
     /// The attestor always has exactly one live key: it is never the zero
     /// address, it is always the last key the owner set, and the owner never
     /// changes. The handler challenges each retired key on every rotation, so a

@@ -101,8 +101,20 @@ contract MisthosEscrowTest is Test {
         eurc.approve(address(escrow), type(uint256).max);
     }
 
+    address constant STRANGER = address(0xBAD);
+
+    /// @dev The approval checkpoint as the owner records it: the price, the publisher
+    ///      who may commit it, and the latest deadline they may commit it to.
+    function _approve(uint256 cap) internal {
+        escrow.setCeiling(ISSUE, cap, PUBLISHER, _latest());
+    }
+
+    function _latest() internal view returns (uint64) {
+        return uint64(block.timestamp + 14 days);
+    }
+
     function _commit() internal returns (uint64 deadline) {
-        escrow.setCeiling(ISSUE, FIX);
+        _approve(FIX);
         deadline = uint64(block.timestamp + 14 days);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, FIX, deadline);
@@ -132,21 +144,21 @@ contract MisthosEscrowTest is Test {
     }
 
     function test_commit_with_a_zero_amount_is_rejected() public {
-        escrow.setCeiling(ISSUE, FIX);
+        _approve(FIX);
         vm.expectRevert(MisthosEscrow.ZeroAmount.selector);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, 0, uint64(block.timestamp + 1 days));
     }
 
     function test_commit_with_a_past_deadline_is_rejected() public {
-        escrow.setCeiling(ISSUE, FIX);
+        _approve(FIX);
         vm.expectRevert(MisthosEscrow.DeadlinePassed.selector);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, FIX, uint64(block.timestamp - 1));
     }
 
     function test_ceiling_caps_what_an_agent_can_commit() public {
-        escrow.setCeiling(ISSUE, 100_000_000);
+        _approve(100_000_000);
         vm.expectRevert(
             abi.encodeWithSelector(MisthosEscrow.ExceedsCeiling.selector, FIX, 100_000_000)
         );
@@ -165,7 +177,7 @@ contract MisthosEscrowTest is Test {
 
     // The approved price itself must be committable; the ceiling is inclusive.
     function test_committing_exactly_the_approved_price_succeeds() public {
-        escrow.setCeiling(ISSUE, FIX);
+        _approve(FIX);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, FIX, uint64(block.timestamp + 1 days));
         assertTrue(escrow.isHeld(ISSUE));
@@ -173,8 +185,8 @@ contract MisthosEscrowTest is Test {
 
     // Withdrawing an approval puts the issue back to unfundable, not uncapped.
     function test_clearing_the_ceiling_makes_the_issue_unfundable_again() public {
-        escrow.setCeiling(ISSUE, FIX);
-        escrow.setCeiling(ISSUE, 0);
+        _approve(FIX);
+        _approve(0);
         vm.expectRevert(MisthosEscrow.NoCeiling.selector);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, FIX, uint64(block.timestamp + 1 days));
@@ -185,7 +197,90 @@ contract MisthosEscrowTest is Test {
     function test_the_publisher_cannot_raise_its_own_ceiling() public {
         vm.expectRevert(MisthosEscrow.NotOwner.selector);
         vm.prank(PUBLISHER);
-        escrow.setCeiling(ISSUE, type(uint256).max);
+        _approve(type(uint256).max);
+    }
+
+    // ------------------------------------------------- who may commit, until when
+
+    // The issue id is the keccak of a public platform id. Before the approval named
+    // its publisher, a stranger could commit one base unit first with a deadline in
+    // 2100, and the issue could then never be funded, booked or refunded (#122).
+    function test_a_stranger_cannot_squat_an_issue_with_dust() public {
+        _approve(FIX);
+        usdc.mint(STRANGER, 1);
+        vm.startPrank(STRANGER);
+        usdc.approve(address(escrow), 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(MisthosEscrow.NotApprovedPublisher.selector, STRANGER)
+        );
+        escrow.commit(ISSUE, 1, 4_102_444_800);
+        vm.stopPrank();
+
+        vm.prank(PUBLISHER);
+        escrow.commit(ISSUE, FIX, _latest());
+        (address publisher, uint96 amount,,) = escrow.commitments(ISSUE);
+        assertEq(publisher, PUBLISHER);
+        assertEq(amount, FIX);
+    }
+
+    // A deadline the sender chooses would push the refund wherever they like, past
+    // the platform's own deadline sweep. The approval bounds it.
+    function test_a_deadline_past_the_approved_one_is_refused() public {
+        _approve(FIX);
+        uint64 latest = _latest();
+        vm.expectRevert(
+            abi.encodeWithSelector(MisthosEscrow.DeadlineTooLate.selector, latest + 1, latest)
+        );
+        vm.prank(PUBLISHER);
+        escrow.commit(ISSUE, FIX, latest + 1);
+        assertEq(usdc.balanceOf(address(escrow)), 0);
+    }
+
+    // The approved deadline itself is committable; the bound is inclusive.
+    function test_the_approved_deadline_itself_is_committable() public {
+        _approve(FIX);
+        vm.prank(PUBLISHER);
+        escrow.commit(ISSUE, FIX, _latest());
+        (,, uint64 deadline,) = escrow.commitments(ISSUE);
+        assertEq(deadline, _latest());
+    }
+
+    // A ceiling with nobody allowed to commit it would let nobody fund the issue
+    // while looking approved; one with no time left could never be committed.
+    function test_a_ceiling_names_its_publisher_and_leaves_time_to_commit() public {
+        vm.expectRevert(MisthosEscrow.ZeroAddress.selector);
+        escrow.setCeiling(ISSUE, FIX, address(0), _latest());
+
+        vm.expectRevert(MisthosEscrow.DeadlinePassed.selector);
+        escrow.setCeiling(ISSUE, FIX, PUBLISHER, uint64(block.timestamp));
+    }
+
+    // Clearing the approval forgets who could commit and until when, so a later
+    // approval for someone else starts clean.
+    function test_clearing_the_ceiling_forgets_the_publisher_and_the_deadline() public {
+        _approve(FIX);
+        escrow.setCeiling(ISSUE, 0, PUBLISHER, _latest());
+        assertEq(escrow.ceiling(ISSUE), 0);
+        assertEq(escrow.approvedPublisher(ISSUE), address(0));
+        assertEq(escrow.latestDeadline(ISSUE), 0);
+    }
+
+    // The approval is readable on chain and announced, so a publisher can check who
+    // the platform named before sending money.
+    function test_an_approval_reports_who_may_commit_and_until_when() public {
+        uint64 latest = _latest();
+        vm.expectEmit(true, true, false, true, address(escrow));
+        emit MisthosEscrow.CeilingUpdated(ISSUE, FIX, PUBLISHER, latest);
+        _approve(FIX);
+        assertEq(escrow.approvedPublisher(ISSUE), PUBLISHER);
+        assertEq(escrow.latestDeadline(ISSUE), latest);
+    }
+
+    // Naming the publisher is the owner's decision, like the ceiling it comes with.
+    function test_only_the_owner_can_name_who_may_commit() public {
+        vm.expectRevert(MisthosEscrow.NotOwner.selector);
+        vm.prank(STRANGER);
+        escrow.setCeiling(ISSUE, FIX, STRANGER, _latest());
     }
 
     // For any approved price and any attempted amount, the contract takes the
@@ -196,7 +291,7 @@ contract MisthosEscrowTest is Test {
     ) public {
         cap = uint96(bound(cap, 1, 1_000_000_000));
         amount = uint96(bound(amount, 1, 1_000_000_000));
-        escrow.setCeiling(ISSUE, cap);
+        _approve(cap);
 
         if (amount > cap) {
             vm.expectRevert(
@@ -296,7 +391,7 @@ contract MisthosEscrowTest is Test {
         uint256 odd = 55_555_555; // 55.555555 USDC
         escrow.setFeeRecipient(FEE_RECIPIENT);
         escrow.setFee(ISSUE, 1200);
-        escrow.setCeiling(ISSUE, odd);
+        _approve(odd);
 
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, odd, uint64(block.timestamp + 14 days));
@@ -488,7 +583,7 @@ contract MisthosEscrowTest is Test {
         escrow.setIssueToken(ISSUE, address(eurc));
 
         uint64 deadline = uint64(block.timestamp + 14 days);
-        escrow.setCeiling(ISSUE, EUR_FIX);
+        _approve(EUR_FIX);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, EUR_FIX, deadline);
 
@@ -513,7 +608,7 @@ contract MisthosEscrowTest is Test {
         escrow.setFee(ISSUE, 1200);
 
         uint64 deadline = uint64(block.timestamp + 14 days);
-        escrow.setCeiling(ISSUE, EUR_FIX);
+        _approve(EUR_FIX);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, EUR_FIX, deadline);
 
@@ -547,7 +642,7 @@ contract MisthosEscrowTest is Test {
         escrow.setIssueToken(ISSUE, address(eurc));
 
         uint64 deadline = uint64(block.timestamp + 14 days);
-        escrow.setCeiling(ISSUE, EUR_FIX);
+        _approve(EUR_FIX);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, EUR_FIX, deadline);
         uint256 before = eurc.balanceOf(PUBLISHER);
@@ -563,7 +658,7 @@ contract MisthosEscrowTest is Test {
     /// over-ceiling EURC commitment is refused exactly as a USDC one is.
     function test_the_ceiling_applies_to_the_issue_currency() public {
         escrow.setIssueToken(ISSUE, address(eurc));
-        escrow.setCeiling(ISSUE, 100_000_000);
+        _approve(100_000_000);
 
         vm.expectRevert(
             abi.encodeWithSelector(MisthosEscrow.ExceedsCeiling.selector, EUR_FIX, 100_000_000)

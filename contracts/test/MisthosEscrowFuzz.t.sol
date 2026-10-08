@@ -24,6 +24,7 @@ contract MisthosEscrowFuzz is Test {
     address internal constant CONTRIBUTOR = address(0xC0FE);
 
     bytes32 internal constant ISSUE = keccak256("ISS-1001");
+    uint256 internal constant FIX = 180_000_000;
 
     /// @dev Enough for any single commitment the fuzzer can pick.
     uint256 internal constant GRANT = type(uint96).max;
@@ -61,7 +62,7 @@ contract MisthosEscrowFuzz is Test {
         uint256 amountSeed
     ) public {
         uint256 ceiling = bound(ceilingSeed, 1, type(uint96).max - 1);
-        escrow.setCeiling(ISSUE, ceiling);
+        _approve(ceiling, uint64(block.timestamp + 14 days));
         uint256 amount = bound(amountSeed, ceiling + 1, type(uint96).max);
 
         vm.expectRevert(
@@ -78,7 +79,7 @@ contract MisthosEscrowFuzz is Test {
         uint256 amountSeed
     ) public {
         uint256 ceiling = bound(ceilingSeed, 1, type(uint96).max);
-        escrow.setCeiling(ISSUE, ceiling);
+        _approve(ceiling, uint64(block.timestamp + 14 days));
         uint256 amount = bound(amountSeed, 1, ceiling);
 
         _commit(amount, uint64(block.timestamp + 14 days));
@@ -171,6 +172,62 @@ contract MisthosEscrowFuzz is Test {
 
         vm.expectRevert(MisthosEscrow.DeadlineNotReached.selector);
         escrow.refund(ISSUE);
+    }
+
+    // ------------------------------------------------- who may commit, until when
+
+    /// Only the publisher the owner named can commit, whoever else tries and for any
+    /// amount: the issue id is public, and one stray commitment would take its only
+    /// slot for good (#122).
+    function testFuzz_only_the_approved_publisher_can_commit(
+        address caller,
+        uint96 amountSeed
+    ) public {
+        vm.assume(caller != PUBLISHER);
+        uint256 amount = _amount(amountSeed);
+        _approve(amount, uint64(block.timestamp + 14 days));
+
+        vm.expectRevert(abi.encodeWithSelector(MisthosEscrow.NotApprovedPublisher.selector, caller));
+        vm.prank(caller);
+        escrow.commit(ISSUE, amount, uint64(block.timestamp + 1 days));
+
+        assertEq(usdc.balanceOf(address(escrow)), 0);
+        assertFalse(escrow.isHeld(ISSUE));
+    }
+
+    /// No commitment outlives its approval: any deadline past the one the owner named
+    /// is refused, so the refund of a commitment nobody can book is never far off.
+    function testFuzz_a_deadline_past_the_approval_is_refused(
+        uint256 latestSeed,
+        uint256 overSeed
+    ) public {
+        uint64 latest = _deadline(latestSeed);
+        uint64 deadline = uint64(bound(overSeed, uint256(latest) + 1, type(uint64).max));
+        _approve(FIX, latest);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(MisthosEscrow.DeadlineTooLate.selector, deadline, latest)
+        );
+        vm.prank(PUBLISHER);
+        escrow.commit(ISSUE, FIX, deadline);
+    }
+
+    /// Any deadline from now up to the approved one is held as committed: the bound
+    /// refuses an overrun without narrowing the window the platform asked for.
+    function testFuzz_a_deadline_within_the_approval_is_held(
+        uint256 latestSeed,
+        uint256 deadlineSeed
+    ) public {
+        uint64 latest = _deadline(latestSeed);
+        uint64 deadline = uint64(bound(deadlineSeed, block.timestamp + 1, latest));
+        _approve(FIX, latest);
+
+        vm.prank(PUBLISHER);
+        escrow.commit(ISSUE, FIX, deadline);
+
+        (address publisher,, uint64 held,) = escrow.commitments(ISSUE);
+        assertEq(publisher, PUBLISHER);
+        assertEq(held, deadline);
     }
 
     // ------------------------------------------------- double settlement
@@ -272,10 +329,15 @@ contract MisthosEscrowFuzz is Test {
     }
 
     /// @dev The approved price becomes the ceiling first, as at the approval
-    ///      checkpoint: without one the escrow refuses every commitment.
+    ///      checkpoint: without one the escrow refuses every commitment. The approval
+    ///      names the publisher and lets the deadline the test chose stand.
     function _commit(uint256 amount, uint64 deadline) private {
-        if (escrow.ceiling(ISSUE) == 0) escrow.setCeiling(ISSUE, amount);
+        if (escrow.ceiling(ISSUE) == 0) _approve(amount, deadline);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, amount, deadline);
+    }
+
+    function _approve(uint256 ceiling, uint64 latest) private {
+        escrow.setCeiling(ISSUE, ceiling, PUBLISHER, latest);
     }
 }

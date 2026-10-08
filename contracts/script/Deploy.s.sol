@@ -25,6 +25,11 @@ import {MisthosEscrow} from "../src/MisthosEscrow.sol";
  * MISTHOS_CONFIRM_MAINNET=5042 is set. A confirmation that names the chain is
  * harder to leave on by accident than a boolean.
  *
+ * MISTHOS_FEE_RECIPIENT_ADDRESS is required. The platform sets every issue's take
+ * rate from the publisher's tier, eight percent at the least, and the escrow refuses
+ * a release with a rate and nowhere to send it, so an escrow deployed without a
+ * recipient would take commitments it could never pay out.
+ *
  * USDC is a fixed predeploy on every Arc network, so the same address works on
  * testnet and mainnet.
  */
@@ -33,6 +38,7 @@ contract Deploy is Script {
     uint256 constant ARC_MAINNET = 5042;
 
     error MainnetNotConfirmed();
+    error FeeRecipientRequired();
 
     function run() external returns (MisthosEscrow) {
         bool broadcasting = vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)
@@ -40,8 +46,7 @@ contract Deploy is Script {
         return deploy(
             vm.envOr("MISTHOS_ATTESTOR_ADDRESS", msg.sender),
             vm.envOr("MISTHOS_USDC_ADDRESS", ARC_USDC),
-            // Where the take rate goes. Left unset, the escrow still works for issues
-            // with no fee, but a release with a rate set would have nowhere to pay it.
+            // Where the take rate goes. Unset reads as zero, which `deploy` refuses.
             vm.envOr("MISTHOS_FEE_RECIPIENT_ADDRESS", address(0)),
             vm.envOr("MISTHOS_CONFIRM_MAINNET", uint256(0)),
             broadcasting ? recordPath(block.chainid) : ""
@@ -67,12 +72,13 @@ contract Deploy is Script {
         if (block.chainid == ARC_MAINNET && mainnetConfirmation != ARC_MAINNET) {
             revert MainnetNotConfirmed();
         }
+        // Every release carries the tier's rate, so without a recipient every release
+        // would revert FeeRecipientNotSet, after the publishers' money was already in.
+        if (feeRecipient == address(0)) revert FeeRecipientRequired();
 
         vm.startBroadcast();
         escrow = new MisthosEscrow(attestor, usdc);
-        if (feeRecipient != address(0)) {
-            escrow.setFeeRecipient(feeRecipient);
-        }
+        escrow.setFeeRecipient(feeRecipient);
         vm.stopBroadcast();
 
         console.log("MisthosEscrow deployed at", address(escrow));

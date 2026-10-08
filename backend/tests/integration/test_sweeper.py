@@ -7,8 +7,10 @@ from datetime import timedelta
 
 import pytest
 
-from misthos.domain.issue import ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.issue import RELEASE_MARGIN, SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.money import Usdc
 from misthos.models.records import IssueRecord
+from misthos.services.chain import ChainRevert
 from misthos.services.review import ReviewFailed
 from misthos.store import store
 from misthos.workers.sweeper import (
@@ -96,52 +98,122 @@ class TestClaims:
 
 
 class TestSilentPublisher:
+    def _accepted(self, decided_before_deadline: timedelta | None = None) -> IssueRecord:
+        """The seeded submission with a passing verdict, decided this long before its
+        escrow deadline when given. The seed decides inside the term's last week."""
+        store.advance(IN_REVIEW)  # the verdict passes
+        rec = get(IN_REVIEW)
+        assert rec.state is IssueState.ACCEPTED
+        assert rec.review is not None and rec.deadline is not None
+        if decided_before_deadline is not None:
+            rec.review.decided_at = rec.deadline - decided_before_deadline
+            store.save(rec)
+        return get(IN_REVIEW)
+
     def test_a_backdated_passing_verdict_releases_without_any_api_call(self) -> None:
-        store.advance("ISS-1002")  # seeded IN_REVIEW, the verdict passes
-        accepted = get("ISS-1002")
-        assert accepted.state is IssueState.ACCEPTED and accepted.review is not None
+        accepted = self._accepted(decided_before_deadline=timedelta(days=10))
+        assert accepted.review is not None
 
         later = accepted.review.decided_at + SILENT_PUBLISHER_GRACE + timedelta(hours=1)
         sweep_once(store, now=later)
 
-        after = get("ISS-1002")
+        after = get(IN_REVIEW)
         assert after.state is IssueState.PAID
         assert after.paid is not None
         assert after.decisions[-1].rule == "silent_publisher_grace_period"
 
     def test_the_grace_runs_in_full_while_the_escrow_has_room(self) -> None:
-        """A verdict with a whole grace on the clock is not paid early. The seeded
-        issue decides inside the last week of its term, so give it room first: that is
-        the case this property is about."""
-        store.advance("ISS-1002")
-        rec = get("ISS-1002")
-        assert rec.review is not None and rec.escrow is not None
+        """A verdict with a whole grace on the clock is not paid early."""
+        rec = self._accepted(decided_before_deadline=timedelta(days=10))
+        assert rec.review is not None
         decided = rec.review.decided_at
-        rec.deadline = decided + ESCROW_TERM
-        rec.escrow.deadline = rec.deadline
-        store.save(rec)
 
         sweep_once(store, now=decided + SILENT_PUBLISHER_GRACE - A_MINUTE)
-        assert get("ISS-1002").state is IssueState.ACCEPTED
+        assert get(IN_REVIEW).state is IssueState.ACCEPTED
 
         sweep_once(store, now=decided + SILENT_PUBLISHER_GRACE + A_MINUTE)
-        assert get("ISS-1002").state is IssueState.PAID
+        assert get(IN_REVIEW).state is IssueState.PAID
 
-    def test_a_verdict_inside_the_last_week_releases_at_the_deadline(self) -> None:
-        """Five days of grace left on a fourteen-day term: the release window ends at
-        the deadline, because `release` reverts after it. Uncapped it would fire two days
-        later, and the work the verdict passed would be stranded instead of paid (#33)."""
-        store.advance("ISS-1002")
-        rec = get("ISS-1002")
+    def test_a_verdict_inside_the_last_week_releases_a_margin_before_the_deadline(
+        self,
+    ) -> None:
+        """Five days of grace left on a fourteen-day term: the release fires a margin
+        before the deadline, while `release` still pays. Capped at the deadline itself
+        it fired once the deadline had passed, exactly when the contract reverts, and the
+        simulation hid it by paying anyway (#121)."""
+        rec = self._accepted()
         assert rec.review is not None and rec.deadline is not None
-        decided = rec.review.decided_at
-        assert decided + SILENT_PUBLISHER_GRACE > rec.deadline
+        assert rec.review.decided_at + SILENT_PUBLISHER_GRACE > rec.deadline
+        release_at = rec.deadline - RELEASE_MARGIN
 
+        sweep_once(store, now=release_at - A_MINUTE)
+        assert get(IN_REVIEW).state is IssueState.ACCEPTED
+
+        sweep_once(store, now=release_at + A_MINUTE)
+        paid = get(IN_REVIEW)
+        assert paid.state is IssueState.PAID
+        assert paid.paid_at is not None and paid.paid_at < rec.deadline
+
+    def test_the_simulated_escrow_refuses_a_release_after_the_deadline(self) -> None:
+        """The demo must fail where the contract fails, or it hides what #121 found."""
+        rec = self._accepted()
+        assert rec.deadline is not None and rec.contributor_id is not None
+        contributor = store.get_contributor(rec.contributor_id)
+        assert contributor is not None
+        amount = Usdc(int(rec.escrow.amount["base_units"]))  # type: ignore[union-attr]
+
+        with pytest.raises(ChainRevert, match="DeadlinePassed"):
+            store.chain.release(
+                IN_REVIEW, contributor.wallet.address, amount, rec.deadline + A_MINUTE
+            )
+        with pytest.raises(ChainRevert, match="DeadlineNotReached"):
+            store.chain.refund(IN_REVIEW, rec.deadline - A_MINUTE)
+
+    def test_a_release_the_chain_refused_is_paid_on_the_next_pass(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rec = self._accepted()
+        assert rec.deadline is not None
+        release_at = rec.deadline - RELEASE_MARGIN
+        release = store.chain.release
+
+        def refused(*_: object) -> str:
+            raise ChainRevert("NotAttestor")
+
+        monkeypatch.setattr(store.chain, "release", refused)
+        report = sweep_once(store, now=release_at + A_MINUTE)
+        assert report.failed == []
+        held = get(IN_REVIEW)
+        assert held.state is IssueState.ACCEPTED and held.accepted_by == "grace"
+        assert held.payout_hold == "release_failed"
+
+        monkeypatch.setattr(store.chain, "release", release)
+        sweep_once(store, now=release_at + 2 * A_MINUTE)
+        assert get(IN_REVIEW).state is IssueState.PAID
+
+    def test_accepted_work_whose_release_never_landed_is_refunded_at_the_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ACCEPTED had no road out: past the deadline the release reverts on every
+        pass, while anyone may refund on chain. The record now follows the chain."""
+        rec = self._accepted()
+        assert rec.deadline is not None
+
+        def refused(*_: object) -> str:
+            raise ChainRevert("NotAttestor")
+
+        monkeypatch.setattr(store.chain, "release", refused)
+        sweep_once(store, now=rec.deadline - RELEASE_MARGIN + A_MINUTE)
         sweep_once(store, now=rec.deadline - A_MINUTE)
-        assert get("ISS-1002").state is IssueState.ACCEPTED
+        assert get(IN_REVIEW).state is IssueState.ACCEPTED
 
-        sweep_once(store, now=rec.deadline + A_MINUTE)
-        assert get("ISS-1002").state is IssueState.PAID
+        report = sweep_once(store, now=rec.deadline + A_MINUTE)
+        assert report.applied[IN_REVIEW] == ["refund"]
+        after = get(IN_REVIEW)
+        assert after.state is IssueState.REFUNDED
+        assert after.decisions[-1].rule == "release_window_closed"
+        assert store.chain.commitment(IN_REVIEW).status.value == "refunded"  # type: ignore[union-attr]
+        assert report.divergences == 0
 
 
 class TestSweeping:

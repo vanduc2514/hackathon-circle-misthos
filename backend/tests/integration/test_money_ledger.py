@@ -186,13 +186,21 @@ class TestDivergence:
         assert [d.issue_id for d in store.reconcile()] == ["ISS-1001"]
 
 
+def _commit_elsewhere(rec: IssueRecord) -> None:
+    """Another wallet's commitment already sits on the escrow for this issue."""
+    term = rec.created_at + timedelta(days=14)
+    store.chain.set_ceiling(
+        rec.id, Usdc(1), rec.created_at, publisher="0xelse", latest_deadline=term
+    )
+    store.chain.commit(rec.id, "0xelse", Usdc(1), term, rec.created_at)
+
+
 class TestRefusals:
     def test_a_commitment_the_escrow_refuses_saves_nothing(self) -> None:
         rec = get("ISS-1006")
         assert rec.state is IssueState.AWAITING_APPROVAL
         # Something already holds money for this issue on chain.
-        store.chain.set_ceiling("ISS-1006", Usdc(1), rec.created_at)
-        store.chain.commit("ISS-1006", "0xelse", Usdc(1), rec.created_at, rec.created_at)
+        _commit_elsewhere(rec)
 
         with pytest.raises(ChainRevert, match="AlreadyExists"):
             store.advance("ISS-1006")
@@ -203,8 +211,7 @@ class TestRefusals:
 
     def test_the_api_turns_a_refusal_into_a_conflict(self) -> None:
         rec = get("ISS-1006")
-        store.chain.set_ceiling("ISS-1006", Usdc(1), rec.created_at)
-        store.chain.commit("ISS-1006", "0xelse", Usdc(1), rec.created_at, rec.created_at)
+        _commit_elsewhere(rec)
         r = TestClient(app).post(f"{API}/issues/ISS-1006/advance")
         assert r.status_code == 409
         assert "escrow refused" in r.json()["detail"]

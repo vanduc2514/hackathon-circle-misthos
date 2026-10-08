@@ -158,8 +158,8 @@ export default function Plans() {
         <Panel title="Pay for the plan">
           <p className="dim action-hint">
             Send <strong>{money(sub.pending.amount_usdc)} USDC</strong> on {sub.pending.chain}{' '}
-            (chain {sub.pending.chain_id}) from your wallet{' '}
-            <span className="mono-num">{shortHash(sub.pending.payer)}</span> to{' '}
+            (chain {sub.pending.chain_id}) from the wallet you signed in with and fund issues
+            from, <span className="mono-num">{shortHash(sub.pending.payer)}</span>, to{' '}
             <span className="mono-num" title={sub.pending.pay_to}>
               {sub.pending.pay_to}
             </span>

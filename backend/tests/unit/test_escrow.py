@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -208,46 +208,95 @@ class TestEscrowCeiling:
 
 
 class TestSimulatedChain:
+    """The simulation refuses what MisthosEscrow refuses, so the demo cannot pay where
+    the contract would not (#121) or book what the contract would refuse (#122)."""
+
     NOW = datetime(2026, 10, 8, tzinfo=UTC)
+    TERM = NOW + timedelta(days=14)
+    PUB = "0xB0B"
+
+    def approved(self, ceiling: int = 100) -> SimulatedChain:
+        chain = SimulatedChain()
+        chain.set_ceiling(
+            "ISS-1", Usdc(ceiling), self.NOW, publisher=self.PUB, latest_deadline=self.TERM
+        )
+        return chain
 
     def test_a_commitment_without_a_ceiling_is_refused(self) -> None:
         chain = SimulatedChain()
         with pytest.raises(ChainRevert, match="NoCeiling"):
-            chain.commit("ISS-1", "0xB0B", Usdc(1), self.NOW, self.NOW)
+            chain.commit("ISS-1", self.PUB, Usdc(1), self.TERM, self.NOW)
         assert chain.commitment("ISS-1") is None
 
     def test_a_commitment_above_the_ceiling_is_refused(self) -> None:
-        chain = SimulatedChain()
-        chain.set_ceiling("ISS-1", Usdc(100), self.NOW)
         with pytest.raises(ChainRevert, match="ExceedsCeiling"):
-            chain.commit("ISS-1", "0xB0B", Usdc(101), self.NOW, self.NOW)
+            self.approved().commit("ISS-1", self.PUB, Usdc(101), self.TERM, self.NOW)
 
     def test_the_ceiling_itself_is_committable(self) -> None:
-        chain = SimulatedChain()
-        chain.set_ceiling("ISS-1", Usdc(100), self.NOW)
-        chain.commit("ISS-1", "0xB0B", Usdc(100), self.NOW, self.NOW)
+        chain = self.approved()
+        chain.commit("ISS-1", self.PUB, Usdc(100), self.TERM, self.NOW)
         assert chain.commitment("ISS-1") is not None
 
     def test_clearing_the_ceiling_makes_the_issue_unfundable_again(self) -> None:
-        chain = SimulatedChain()
-        chain.set_ceiling("ISS-1", Usdc(100), self.NOW)
-        chain.set_ceiling("ISS-1", Usdc(0), self.NOW)
+        chain = self.approved()
+        chain.set_ceiling("ISS-1", Usdc(0), self.NOW, publisher=self.PUB, latest_deadline=self.TERM)
         assert chain.escrow_ceiling("ISS-1") is None
         with pytest.raises(ChainRevert, match="NoCeiling"):
-            chain.commit("ISS-1", "0xB0B", Usdc(1), self.NOW, self.NOW)
+            chain.commit("ISS-1", self.PUB, Usdc(1), self.TERM, self.NOW)
 
     def test_a_reset_forgets_ceilings_with_the_books(self) -> None:
-        chain = SimulatedChain()
-        chain.set_ceiling("ISS-1", Usdc(100), self.NOW)
+        chain = self.approved()
         chain.reset()
         assert chain.escrow_ceiling("ISS-1") is None
 
-    def test_one_commitment_reads_back_with_its_publisher(self) -> None:
-        chain = SimulatedChain()
-        now = datetime.now(UTC)
-        chain.set_ceiling("ISS-1", Usdc.from_decimal("55"), now)
-        chain.commit("ISS-1", "0xB0B", Usdc.from_decimal("55"), now, now)
+    def test_one_commitment_reads_back_with_its_publisher_and_deadline(self) -> None:
+        chain = self.approved()
+        chain.commit("ISS-1", self.PUB, Usdc(55), self.TERM, self.NOW)
         held = chain.commitment("ISS-1")
         assert held is not None
-        assert (held.status, held.publisher) == (EscrowStatus.HELD, "0xB0B")
+        assert (held.status, held.publisher, held.deadline) == (
+            EscrowStatus.HELD,
+            self.PUB,
+            self.TERM,
+        )
         assert chain.commitment("ISS-2") is None
+
+    def test_only_the_approved_publisher_can_commit(self) -> None:
+        with pytest.raises(ChainRevert, match="NotApprovedPublisher"):
+            self.approved().commit("ISS-1", "0xBAD", Usdc(1), self.TERM, self.NOW)
+
+    def test_a_deadline_past_the_approved_one_is_refused(self) -> None:
+        later = self.TERM + timedelta(seconds=1)
+        with pytest.raises(ChainRevert, match="DeadlineTooLate"):
+            self.approved().commit("ISS-1", self.PUB, Usdc(100), later, self.NOW)
+
+    def test_a_deadline_already_passed_is_refused(self) -> None:
+        with pytest.raises(ChainRevert, match="DeadlinePassed"):
+            self.approved().commit("ISS-1", self.PUB, Usdc(100), self.NOW, self.NOW)
+
+    def test_a_ceiling_names_who_may_commit_and_leaves_time_to(self) -> None:
+        with pytest.raises(ChainRevert, match="ZeroAddress"):
+            SimulatedChain().set_ceiling(
+                "ISS-1", Usdc(1), self.NOW, publisher="", latest_deadline=self.TERM
+            )
+        with pytest.raises(ChainRevert, match="DeadlinePassed"):
+            SimulatedChain().set_ceiling(
+                "ISS-1", Usdc(1), self.NOW, publisher=self.PUB, latest_deadline=self.NOW
+            )
+
+    def test_no_release_lands_after_the_deadline(self) -> None:
+        chain = self.approved()
+        chain.commit("ISS-1", self.PUB, Usdc(100), self.TERM, self.NOW)
+        with pytest.raises(ChainRevert, match="DeadlinePassed"):
+            chain.release("ISS-1", "0xC0FE", Usdc(100), self.TERM + timedelta(seconds=1))
+        chain.release("ISS-1", "0xC0FE", Usdc(100), self.TERM)
+        assert chain.commitment("ISS-1").status is EscrowStatus.RELEASED  # type: ignore[union-attr]
+
+    def test_no_refund_comes_before_the_deadline(self) -> None:
+        chain = self.approved()
+        tx = chain.commit("ISS-1", self.PUB, Usdc(100), self.TERM, self.NOW)
+        with pytest.raises(ChainRevert, match="DeadlineNotReached"):
+            chain.refund("ISS-1", self.TERM - timedelta(seconds=1))
+        chain.refund("ISS-1", self.TERM)
+        assert chain.commitment("ISS-1").status is EscrowStatus.REFUNDED  # type: ignore[union-attr]
+        assert chain.commit_tx("ISS-1") == tx

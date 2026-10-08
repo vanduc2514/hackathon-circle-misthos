@@ -22,7 +22,6 @@ import pytest
 from misthos import store as store_module
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.issue import IllegalTransition
-from misthos.domain.ledger import EscrowStatus
 from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.repositories import MemoryRepository, StaleIssue
@@ -168,13 +167,16 @@ class TestTheSimulatedChainAcrossAReset:
         release then wrote this one back, so the seed's own commitment to that issue
         was refused as AlreadyExists and the reset failed."""
         now = datetime.now(UTC)
+        term = now + timedelta(days=14)
         chain = SimulatedChain()
-        chain.set_ceiling("ISS-1007", Usdc(5_000_000), now)
-        chain.commit("ISS-1007", "0xpublisher", Usdc(5_000_000), now, now)
+        chain.set_ceiling(
+            "ISS-1007", Usdc(5_000_000), now, publisher="0xpublisher", latest_deadline=term
+        )
+        chain.commit("ISS-1007", "0xpublisher", Usdc(5_000_000), term, now)
         resetting = threading.Thread(target=chain.reset)
         read = chain._get
 
-        def read_then_let_the_reset_in(issue_id: str) -> tuple[str, Usdc, EscrowStatus] | None:
+        def read_then_let_the_reset_in(issue_id: str) -> object:
             found = read(issue_id)
             resetting.start()
             resetting.join(timeout=0.2)  # it runs here unless the release holds the books
@@ -186,8 +188,10 @@ class TestTheSimulatedChainAcrossAReset:
         resetting.join()
 
         assert chain.commitments() == {}
-        chain.set_ceiling("ISS-1007", Usdc(5_000_000), now)
-        chain.commit("ISS-1007", "0xpublisher", Usdc(5_000_000), now, now)
+        chain.set_ceiling(
+            "ISS-1007", Usdc(5_000_000), now, publisher="0xpublisher", latest_deadline=term
+        )
+        chain.commit("ISS-1007", "0xpublisher", Usdc(5_000_000), term, now)
 
 
 class AnotherProcessHoldsTheSeedLock(MemoryRepository):

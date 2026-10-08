@@ -63,6 +63,33 @@ def decode_ceiling(result: str) -> Usdc | None:
     return Usdc(value) if value else None
 
 
+def approved_publisher_call(issue_id: str) -> str:
+    """Call data for `approvedPublisher(bytes32)`: the only wallet that may commit."""
+    return selector("approvedPublisher(bytes32)") + issue_key(issue_id)[2:]
+
+
+def latest_deadline_call(issue_id: str) -> str:
+    """Call data for `latestDeadline(bytes32)`: the latest deadline a commitment may carry."""
+    return selector("latestDeadline(bytes32)") + issue_key(issue_id)[2:]
+
+
+def fee_recipient_call() -> str:
+    """Call data for `feeRecipient()`: where every release's take rate is paid."""
+    return selector("feeRecipient()")
+
+
+def decode_address(result: str) -> str | None:
+    """An address word. The zero address reads as None: nobody."""
+    (value,) = _words(result, 1)
+    return f"0x{value:040x}" if value else None
+
+
+def decode_moment(result: str) -> datetime | None:
+    """A Unix-seconds word. Zero reads as None: never."""
+    (value,) = _words(result, 1)
+    return datetime.fromtimestamp(value, UTC) if value else None
+
+
 def _words(result: str, count: int) -> list[int]:
     body = result.removeprefix("0x")
     if len(body) != count * WORD_HEX:
@@ -108,6 +135,8 @@ ERRORS = (
     "AmountMismatch()",
     "NoCeiling()",
     "ExceedsCeiling(uint256,uint256)",
+    "NotApprovedPublisher(address)",
+    "DeadlineTooLate(uint64,uint64)",
     "FeeTooHigh(uint256,uint256)",
     "FeeRecipientNotSet()",
     "TransferFailed()",
@@ -128,10 +157,18 @@ def _word(value: int | str) -> str:
     return f"{value:064x}"
 
 
-def set_ceiling_call(issue_id: str, ceiling: Usdc) -> str:
-    """Call data for `setCeiling(bytes32,uint256)`. Owner only."""
-    return selector("setCeiling(bytes32,uint256)") + _word(issue_key(issue_id)) + _word(
-        ceiling.base_units
+def set_ceiling_call(issue_id: str, ceiling: Usdc, publisher: str, latest_deadline: int) -> str:
+    """Call data for `setCeiling(bytes32,uint256,address,uint64)`. Owner only.
+
+    The approval names the price, the only wallet that may commit it and the latest
+    deadline it may be committed to (#122).
+    """
+    return (
+        selector("setCeiling(bytes32,uint256,address,uint64)")
+        + _word(issue_key(issue_id))
+        + _word(ceiling.base_units)
+        + _word(publisher)
+        + _word(latest_deadline)
     )
 
 
@@ -192,7 +229,10 @@ def revert_name(data: str | None) -> str:
     name = _ERROR_NAMES.get(head)
     if name is None:
         return f"reverted with 0x{body[:8]}"
-    if name == "ExceedsCeiling" and len(body) >= 8 + 2 * WORD_HEX:
-        amount, ceiling = _words("0x" + body[8 : 8 + 2 * WORD_HEX], 2)
-        return f"ExceedsCeiling({amount}, {ceiling})"
+    if name in {"ExceedsCeiling", "DeadlineTooLate"} and len(body) >= 8 + 2 * WORD_HEX:
+        first, second = _words("0x" + body[8 : 8 + 2 * WORD_HEX], 2)
+        return f"{name}({first}, {second})"
+    if name == "NotApprovedPublisher" and len(body) >= 8 + WORD_HEX:
+        (sender,) = _words("0x" + body[8 : 8 + WORD_HEX], 1)
+        return f"NotApprovedPublisher(0x{sender:040x})"
     return name

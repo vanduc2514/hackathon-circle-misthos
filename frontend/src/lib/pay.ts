@@ -34,7 +34,10 @@ export async function payFromWallet(ask: PaymentAsk): Promise<string> {
   if (!provider) throw new Error('No wallet extension was found in this browser.')
   const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[]
   if (!accounts.some((a) => a.toLowerCase() === ask.payer.toLowerCase())) {
-    throw new Error(`Switch your wallet to ${ask.payer}, the wallet this plan is paid from.`)
+    throw new Error(
+      `Switch your wallet to ${ask.payer}, the one you signed in with: plans are paid from ` +
+        'the wallet you fund issues from, not from your Circle wallet.',
+    )
   }
   try {
     await provider.request({

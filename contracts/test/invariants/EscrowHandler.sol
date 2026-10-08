@@ -64,6 +64,15 @@ contract EscrowHandler is Test {
     mapping(bytes32 => uint256) public refundedAt;
     mapping(bytes32 => address) public releasedTo;
 
+    /// @dev What the approval said when the commitment landed: who it named and the
+    ///      latest deadline it allowed, so the invariants can hold every commitment to
+    ///      the approval that let it in.
+    mapping(bytes32 => address) public approvedAtCommit;
+    mapping(bytes32 => uint64) public latestAtCommit;
+
+    /// @dev How many squats the campaign tried and saw refused.
+    uint256 public squatsRefused;
+
     /// @dev Totals the handler moved, so the invariants can reconcile the
     ///      escrow against the parties rather than only against itself.
     uint256 public releasedTotal;
@@ -154,9 +163,10 @@ contract EscrowHandler is Test {
 
     /**
      * @notice A publisher commits a price for one issue.
-     * @dev A price above a ceiling that is in force must be refused. The
-     *      campaign proves the refusal here rather than avoiding the input, so
-     *      a contract that quietly accepted it fails the run.
+     * @dev Each refusal the escrow owes is asked for rather than avoided, in the
+     *      contract's own order: no approval, a sender the approval did not name, a
+     *      price above the ceiling, a deadline past the approved one. A contract that
+     *      quietly accepted any of them fails the run.
      */
     function commit(
         uint256 issueSeed,
@@ -182,15 +192,26 @@ contract EscrowHandler is Test {
         if (ceilingInForce == 0) {
             // No approved price: the escrow must refuse. The campaign proves that on a
             // quarter of the attempts, and on the rest plays the approval checkpoint,
-            // recording the price as the ceiling before the publisher commits it.
+            // recording the price, the publisher and the deadline before the publisher
+            // commits it.
             if (amountSeed % 4 == 0) {
                 vm.expectRevert(MisthosEscrow.NoCeiling.selector);
                 vm.prank(publisher);
                 escrow.commit(issueId, amount, deadline);
                 return;
             }
-            escrow.setCeiling(issueId, amount);
+            escrow.setCeiling(issueId, amount, publisher, deadline);
             ceilingInForce = amount;
+        }
+
+        address approved = escrow.approvedPublisher(issueId);
+        if (publisher != approved) {
+            vm.expectRevert(
+                abi.encodeWithSelector(MisthosEscrow.NotApprovedPublisher.selector, publisher)
+            );
+            vm.prank(publisher);
+            escrow.commit(issueId, amount, deadline);
+            return;
         }
 
         if (amount > ceilingInForce) {
@@ -204,6 +225,16 @@ contract EscrowHandler is Test {
             return;
         }
 
+        uint64 latest = escrow.latestDeadline(issueId);
+        if (deadline > latest) {
+            vm.expectRevert(
+                abi.encodeWithSelector(MisthosEscrow.DeadlineTooLate.selector, deadline, latest)
+            );
+            vm.prank(publisher);
+            escrow.commit(issueId, amount, deadline);
+            return;
+        }
+
         vm.prank(publisher);
         escrow.commit(issueId, amount, deadline);
 
@@ -211,6 +242,33 @@ contract EscrowHandler is Test {
         committedAmount[issueId] = amount;
         committedCeiling[issueId] = ceilingInForce;
         committedDeadline[issueId] = deadline;
+        approvedAtCommit[issueId] = approved;
+        latestAtCommit[issueId] = latest;
+    }
+
+    /**
+     * @notice Someone the approval did not name races the publisher to an issue, with
+     *         dust and a deadline decades away. Refused whatever the state: the issue
+     *         id is public, and a stray commitment would take its only slot (#122).
+     */
+    function squat(uint256 issueSeed, uint256 squatterSeed, uint256 deadlineSeed) external {
+        bytes32 issueId = issues[issueSeed % ISSUE_COUNT];
+        if (escrow.statusOf(issueId) != MisthosEscrow.Status.None) return;
+        if (escrow.ceiling(issueId) == 0) return;
+
+        uint256 pick = squatterSeed % PUBLISHER_COUNT;
+        address squatter = publishers[pick];
+        if (squatter == escrow.approvedPublisher(issueId)) {
+            squatter = publishers[(pick + 1) % PUBLISHER_COUNT];
+        }
+        uint64 deadline = uint64(bound(deadlineSeed, block.timestamp + 1, type(uint64).max));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(MisthosEscrow.NotApprovedPublisher.selector, squatter)
+        );
+        vm.prank(squatter);
+        escrow.commit(issueId, 1, deadline);
+        squatsRefused += 1;
     }
 
     /**
@@ -219,9 +277,21 @@ contract EscrowHandler is Test {
      *         guardrail an agent cannot talk its way past, so the campaign has
      *         to move it around.
      */
-    function setCeiling(uint256 issueSeed, uint256 ceilingSeed) external {
+    function setCeiling(
+        uint256 issueSeed,
+        uint256 ceilingSeed,
+        uint256 publisherSeed,
+        uint256 deadlineSeed
+    ) external {
         bytes32 issueId = issues[issueSeed % ISSUE_COUNT];
-        escrow.setCeiling(issueId, bound(ceilingSeed, 0, GRANT));
+        uint64 latest =
+            uint64(bound(deadlineSeed, block.timestamp + MIN_LEAD, block.timestamp + MAX_LEAD));
+        escrow.setCeiling(
+            issueId,
+            bound(ceilingSeed, 0, GRANT),
+            publishers[publisherSeed % PUBLISHER_COUNT],
+            latest
+        );
     }
 
     /// @notice The attestor accepts the work. A commitment that has already

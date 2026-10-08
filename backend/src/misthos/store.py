@@ -126,8 +126,16 @@ from misthos.schemas import (
     money,
 )
 from misthos.services import metrics, reputation
+from misthos.services.attestor import AttestorKeyError
 from misthos.services.billing import PaymentRail, SimulatedRail, build_rail
-from misthos.services.chain import ChainGateway, SimulatedChain, load_deployment
+from misthos.services.chain import (
+    ChainGateway,
+    ChainRevert,
+    ChainUnavailable,
+    NotCommitted,
+    SimulatedChain,
+    load_deployment,
+)
 from misthos.services.chain.factory import build_chain
 from misthos.services.compliance import (
     IdentityProvider,
@@ -689,6 +697,45 @@ class Store:
         assert held is not None, f"{rec.id} has no commitment to settle"
         return held.committed
 
+    def _funding_terms(
+        self, rec: IssueRecord, publisher: Publisher, at: datetime
+    ) -> lifecycle.FundingTerms:
+        """The terms this approval funds the issue on: the ones already approved, or new.
+
+        Once the escrow holds a commitment, the terms it was committed under are the only
+        ones it is booked against, whatever the clock or the publisher's plan say now: a
+        deadline recomputed from now, or a rate read from a plan that changed since,
+        would refuse it for good with the money already in (#126). With nothing committed
+        the approved terms stand for `COMMIT_WINDOW`, while the price and the funding
+        wallet are still the ones they name; after that, approving again sets new ones.
+        """
+        assert rec.proposal is not None
+        current = rec.funding
+        if current is not None and (
+            self.chain.commitment(rec.id) is not None
+            or (
+                current.stand(at)
+                and current.amount == rec.proposal.recommended
+                and current.wallet.lower() == publisher.wallet.address.lower()
+            )
+        ):
+            return current
+        return lifecycle.FundingTerms(
+            amount=rec.proposal.recommended,
+            # The rate is fixed with the money. The escrow enforces the rate it was given
+            # on release, so reading the publisher's plan at settlement time instead
+            # would let a plan that lapses mid-flight move the fee after the price was
+            # approved, and the record would stop matching the transfer (#32).
+            fee_bps=take_rate_bps(publisher.tier),
+            # The wallet the publisher funds from, which signs in and commits in the
+            # browser; a Circle wallet they set up never replaces it (#123).
+            wallet=publisher.wallet.address,
+            # Whole seconds, as the escrow holds it, so the plan, the escrow and the
+            # booking all name the same instant.
+            deadline=(at + lifecycle.ESCROW_TERM).replace(microsecond=0),
+            approved_at=at,
+        )
+
     def _fund(self, rec: IssueRecord, when: datetime | None = None) -> None:
         assert rec.proposal is not None
         if rec.criteria_approved_at is None:
@@ -697,33 +744,43 @@ class Store:
             )
         publisher = self.repo.get_publisher(rec.publisher_id)
         assert publisher is not None
-        # The state moves first so an illegal step never reaches the chain. If the
-        # chain refuses, nothing is saved and the copy in hand is thrown away.
-        self._move(rec, IssueState.FUNDED)
+        # Checked before the chain is asked anything, so an illegal step never reaches
+        # it. The state itself moves only once the commitment is booked: an approval the
+        # escrow still waits on keeps the issue where it is, with its terms kept.
+        lifecycle.transition(rec.state, IssueState.FUNDED)
         at = when or _now()
-        committed = rec.proposal.recommended
-        deadline = at + lifecycle.ESCROW_TERM
-        # The approved price goes to the escrow as its ceiling first: the escrow
-        # refuses any commitment without one or above it, so what an agent can commit
-        # is bounded by what a person approved, on chain and not in this code.
-        self.chain.set_ceiling(rec.id, committed, at)
-        # The rate is fixed here, with the money. The escrow enforces the rate it was
-        # given on release, so reading the publisher's plan at settlement time instead
-        # would let a plan that lapses mid-flight move the fee after the price was
-        # approved, and the record would stop matching the transfer (#32).
-        fee_bps = take_rate_bps(publisher.tier)
-        tx = self.chain.commit(rec.id, publisher.wallet.address, committed, deadline, at, fee_bps)
-        self._book(rec, MoneyEventKind.COMMITTED, committed, publisher.id, tx, at)
+        terms = self._funding_terms(rec, publisher, at)
+        rec.funding = terms
+        # The approved terms go to the escrow first: it refuses a commitment without a
+        # ceiling or above it, from any wallet but the one approved, or to a later
+        # deadline, so what an agent can commit is bounded by what a person approved,
+        # on chain and not in this code.
+        self.chain.set_ceiling(
+            rec.id,
+            terms.amount,
+            at,
+            publisher=terms.wallet,
+            latest_deadline=terms.deadline,
+            fee_bps=terms.fee_bps,
+        )
+        tx = self.chain.commit(
+            rec.id, terms.wallet, terms.amount, terms.deadline, at, terms.fee_bps
+        )
+        # The deadline the escrow holds is the one release and refund are judged by.
+        held = self.chain.commitment(rec.id)
+        deadline = held.deadline if held is not None and held.deadline else terms.deadline
+        self._move(rec, IssueState.FUNDED)
+        self._book(rec, MoneyEventKind.COMMITTED, terms.amount, publisher.id, tx, at)
         rec.escrow = EscrowCommitment(
             issue_id=rec.id,
             contract=ESCROW_CONTRACT,
             chain=settings.chain,
             tx_hash=tx,
-            amount=money(committed),
+            amount=money(terms.amount),
             deadline=deadline,
-            fee_bps=fee_bps,
+            fee_bps=terms.fee_bps,
         )
-        rec.deadline = rec.escrow.deadline
+        rec.deadline = deadline
         criteria = _criteria_comment(rec)
         self._post(
             f"criteria on {rec.repo}#{rec.number}",
@@ -813,17 +870,22 @@ class Store:
         assert rec.escrow is not None and rec.contributor_id is not None
         contributor = self.repo.get_contributor(rec.contributor_id)
         assert contributor is not None
-        self._move(rec, IssueState.PAID)
+        # Checked first and moved last: a release the chain refuses leaves the record as
+        # it was, so `_pay` can hold the payout rather than lose the acceptance (#125).
+        lifecycle.transition(rec.state, IssueState.PAID)
         at = when or _now()
         amount = self._committed(rec)
-        tx = self.chain.release(rec.id, contributor.wallet.address, amount, at)
-        self._book(rec, MoneyEventKind.RELEASED, amount, contributor.id, tx, at)
-        rec.escrow.released = True
         # The fee comes out of the commitment rather than being added to it: the
         # publisher paid the fix price and nothing else. The rate is the one the escrow
-        # holds for this issue, read back so the recorded fee is the transfer.
+        # holds for this issue, read back so the recorded fee is the transfer. Read
+        # before the release, which it cannot change, so nothing can fail between the
+        # transfer and the record of it.
         held = self.chain.commitment(rec.id)
         rate = held.fee_bps if held is not None else rec.escrow.fee_bps
+        tx = self.chain.release(rec.id, contributor.wallet.address, amount, at)
+        self._move(rec, IssueState.PAID)
+        self._book(rec, MoneyEventKind.RELEASED, amount, contributor.id, tx, at)
+        rec.escrow.released = True
         fee = Usdc(amount.base_units * rate // 10_000)
         rec.platform_fee = fee
         rec.paid = amount - fee
@@ -858,16 +920,34 @@ class Store:
 
     def _refund(self, rec: IssueRecord, *, rule: str, when: datetime | None = None) -> None:
         assert rec.escrow is not None
-        self._move(rec, IssueState.REFUNDED)
+        lifecycle.transition(rec.state, IssueState.REFUNDED)
         at = when or _now()
         amount = self._committed(rec)
+        # Accepted work that reached the deadline unpaid: `release` reverts after it,
+        # and the contract refunds anyone who asks, so the record follows the chain.
+        unpaid = rec.state is IssueState.ACCEPTED
         tx = self.chain.refund(rec.id, at)
+        self._move(rec, IssueState.REFUNDED)
         self._book(rec, MoneyEventKind.REFUNDED, amount, rec.publisher_id, tx, at)
         rec.escrow.refunded = True
-        note = (
-            f"The deadline passed without accepted work, so the {amount} USDC "
-            "commitment went back to the publisher."
-        )
+        if unpaid:
+            note = (
+                f"The escrow deadline passed before the payment could be released, and the "
+                f"escrow pays nothing after it, so the {amount} USDC commitment went back "
+                "to the publisher."
+            )
+            outcome = (
+                "the escrow deadline passed before any release landed; the contract pays "
+                "nothing after it, so the funds went back to the publisher"
+            )
+            if rec.accepted_by == "merge":
+                outcome += "; the publisher merged the work, so a person settles it"
+        else:
+            note = (
+                f"The deadline passed without accepted work, so the {amount} USDC "
+                "commitment went back to the publisher."
+            )
+            outcome = "no acceptable work arrived, funds returned"
         self._post(
             f"refund on {rec.repo}#{rec.number}",
             lambda gh: gh.comment(rec.repo, rec.number, note),
@@ -877,8 +957,60 @@ class Store:
             actor="system",
             action="refunded",
             rule=rule,
-            outcome="no acceptable work arrived, funds returned",
+            outcome=outcome,
             when=when,
+        )
+
+    def _lapse_approval(self, rec: IssueRecord, now: datetime) -> None:
+        """The approved terms reached their deadline and nothing was booked under them.
+
+        With nothing on the escrow the terms simply go, and the next approval sets new
+        ones. A commitment the wallet sent that could never be booked, another amount or
+        deadline than the approval named, goes back to the publisher: the escrow bounded
+        its deadline by the approved one (#122), so it is refundable by now. It is booked
+        in and out, so the ledger agrees with the chain, and the listing ends, because
+        the escrow takes one commitment per issue (#126).
+        """
+        terms = rec.funding
+        assert terms is not None
+        held = self.chain.commitment(rec.id)
+        if held is None or held.status is not ledger.EscrowStatus.HELD:
+            rec.funding = None
+            outcome = (
+                "nothing was committed under the approved terms before their deadline, so "
+                "they lapsed; approving the price again sets new ones"
+                if held is None
+                # Anyone may refund once its deadline passed. Reconciliation reports the
+                # money the ledger never booked; this only stops the timer asking again.
+                else f"the escrow reports the commitment it held for this issue {held.status} "
+                "without the platform; reconciliation flags it for a person"
+            )
+            self._log(
+                rec,
+                actor="system",
+                action="approval_lapsed",
+                rule="commit_window",
+                outcome=outcome,
+                when=now,
+            )
+            return
+        lifecycle.transition(rec.state, IssueState.REFUNDED)
+        committed_tx = self.chain.commit_tx(rec.id)
+        tx = self.chain.refund(rec.id, now)
+        self._move(rec, IssueState.REFUNDED)
+        # Booked when the platform found it; the escrow held it from the wallet's
+        # transaction, which is the one recorded.
+        self._book(rec, MoneyEventKind.COMMITTED, held.amount, rec.publisher_id, committed_tx, now)
+        self._book(rec, MoneyEventKind.REFUNDED, held.amount, rec.publisher_id, tx, now)
+        self._log(
+            rec,
+            actor="system",
+            action="refunded",
+            rule="unbooked_commitment",
+            outcome=f"the escrow held {held.amount} that the platform could not book against "
+            f"the approved terms ({terms.amount} until {terms.deadline:%d %B %Y %H:%M} UTC), "
+            "so it went back to the publisher; publish the issue again to fund it",
+            when=now,
         )
 
     def _expire_claim(self, rec: IssueRecord, *, rule: str, when: datetime) -> None:
@@ -1054,17 +1186,31 @@ class Store:
         ):
             gate = PayoutGate.AWAIT_APPROVER
 
+        refused = ""
         if gate is PayoutGate.RELEASE:
             rule = (
                 "silent_publisher_grace_period"
                 if rec.accepted_by == "grace"
                 else "escrow_acceptance_attestation"
             )
-            self._release(rec, rule=rule, when=now)
-            return True
+            try:
+                self._release(rec, rule=rule, when=now)
+                return True
+            except (ChainRevert, ChainUnavailable, AttestorKeyError) as exc:
+                # The acceptance stands whatever the chain says. Raising here used to
+                # throw away the merge with it, so the publisher could decline work they
+                # had merged (#125); the payout is held and tried again instead.
+                log.warning("release of %s failed, holding the payout: %s", rec.id, exc)
+                gate, refused = PayoutGate.RELEASE_FAILED, _release_refusal(exc)
 
         if rec.payout_hold != gate.value:
-            if gate is PayoutGate.AWAIT_APPROVER:
+            if gate is PayoutGate.RELEASE_FAILED:
+                rule = "escrow_release"
+                outcome = (
+                    f"the release did not land ({refused}); the acceptance stands, and "
+                    "the release is tried again on the sweeper's next pass"
+                )
+            elif gate is PayoutGate.AWAIT_APPROVER:
                 rule = "release_threshold"
                 outcome = (
                     f"the release of {self._committed(rec)} is over {publisher.name}'s "
@@ -1363,12 +1509,15 @@ class Store:
         # payout is owed, and what is timed is retrying it when compliance held it.
         passed = rec.review is not None and rec.review.verdict == "accept"
         awaiting_acceptance = passed and rec.accepted_by is None
+        awaiting_booking = rec.state is IssueState.AWAITING_APPROVAL and rec.funding is not None
         return timers.Clocks(
             state=rec.state,
             deadline=rec.deadline,
             claim_expires_at=rec.claim.expires_at if rec.claim else None,
             verdict_passed_at=rec.review.decided_at if awaiting_acceptance and rec.review else None,
             payout_held_since=rec.payout_checked_at if rec.payout_hold else None,
+            payout_hold=rec.payout_hold,
+            approved_until=rec.funding.deadline if awaiting_booking and rec.funding else None,
         )
 
     def _apply_due(
@@ -1394,11 +1543,17 @@ class Store:
                         else "claim_window_elapsed"
                     )
                     self._expire_claim(rec, rule=rule, when=now)
+                case TimedAction.REFUND if rec.state is IssueState.ACCEPTED:
+                    # The deadline passed before any release landed, and the contract
+                    # refuses one after it. The refund is the only move left (#121).
+                    self._refund(rec, rule="release_window_closed", when=now)
                 case TimedAction.REFUND:
                     self._refund(rec, rule="deadline_passed", when=now)
                     relisted = self._relist(rec, when=now)
                     if relisted is not None:
                         created.append(relisted)
+                case TimedAction.LAPSE_APPROVAL:
+                    self._lapse_approval(rec, now)
             applied.append(action)
         return applied, created
 
@@ -1422,16 +1577,22 @@ class Store:
     # ---------------------------------------------------------------- actions
 
     def link_wallet(self, party: str, party_id: str, wallet: Wallet) -> Wallet:
-        """Record the address a party's own Circle wallet reported. Payouts go there.
+        """Record the address a party's own Circle wallet reported.
 
         The party's own wallet, read back from Circle rather than typed into a form,
         so a payout cannot be redirected by whoever can call the route.
+
+        A contributor's becomes where their payouts are released. A publisher's is kept
+        beside the wallet they fund from and never in its place: the escrow takes a
+        commitment only from the wallet the approval names, which is the one they sign
+        in with and commit from in the browser, so replacing it had every commitment
+        they sent refused while the money sat in the escrow (#123).
         """
         if party == "publisher":
             publisher = self.repo.get_publisher(party_id)
             if publisher is None:
                 raise KeyError(party_id)
-            self.repo.save_publisher(publisher.model_copy(update={"wallet": wallet}))
+            self.repo.save_publisher(publisher.model_copy(update={"circle_wallet": wallet}))
         else:
             contributor = self.repo.get_contributor(party_id)
             if contributor is None:
@@ -2268,14 +2429,27 @@ class Store:
                     f"the publisher already declined {rec.id} once; merging it or the grace "
                     "period settles it now"
                 )
+            if rec.state is IssueState.ACCEPTED and rec.accepted_by == "merge":
+                # A merge is acceptance, and it stands even while the release is held,
+                # so the publisher cannot keep the merged work and send it back (#125).
+                raise DeclineRefused(
+                    f"the publisher merged the pull request on {rec.id}, which is "
+                    "acceptance; merged work cannot be declined"
+                )
             if rec.state is not IssueState.ACCEPTED or rec.accepted_by is not None:
                 raise lifecycle.IllegalTransition(rec.state, IssueState.REWORK)
-            if timers.due(self._clocks(rec), now or _now()) is TimedAction.RELEASE_AFTER_GRACE:
+            owed = timers.due(self._clocks(rec), now or _now())
+            if owed is TimedAction.RELEASE_AFTER_GRACE:
                 # The silence already accepted the work and the release is owed; the
                 # sweeper's next pass pays it. Declining now would drop that payout.
                 raise DeclineRefused(
                     f"the grace period on {rec.id} has ended, so the publisher's silence "
                     "accepted the work and the payment is released on the next sweep"
+                )
+            if owed is TimedAction.REFUND:
+                raise DeclineRefused(
+                    f"the escrow deadline on {rec.id} has passed, so no release can land "
+                    "and the commitment goes back to the publisher"
                 )
             self._move(rec, IssueState.REWORK)
             reason = reason.strip()[:500]
@@ -2738,13 +2912,22 @@ class Store:
                 raise KeyError(issue_id)
             if rec.state is not IssueState.AWAITING_APPROVAL:
                 raise lifecycle.IllegalTransition(rec.state, IssueState.FUNDED)
-            self._approve_and_fund(
-                rec, now or _now(), f"{by} approved the price and committed the funds"
-            )
+            try:
+                self._approve_and_fund(
+                    rec, now or _now(), f"{by} approved the price and committed the funds", by
+                )
+            except NotCommitted:
+                # The approval stands: its terms are on the escrow and the publisher's
+                # wallet commits them next. Kept, so the plan hands the wallet these
+                # terms and the next approval books against them, not new ones (#126).
+                self.repo.save_issues(rec)
+                raise
             self.repo.save_issues(rec)
             return rec
 
-    def _approve_and_fund(self, rec: IssueRecord, now: datetime, outcome: str) -> None:
+    def _approve_and_fund(
+        self, rec: IssueRecord, now: datetime, outcome: str, by: str = "the publisher"
+    ) -> None:
         if rec.criteria_approved_at is None:
             raise CriteriaNotApproved(
                 f"{rec.id} cannot be funded until the publisher approves its acceptance criteria"
@@ -2755,7 +2938,23 @@ class Store:
         # concurrent fundings of different issues both pass the check.
         with self._publisher_exclusive(rec.publisher_id):
             self._check_category_limits(rec, now)
-            self._fund(rec)
+            approved = rec.funding
+            try:
+                self._fund(rec, when=now)
+            except NotCommitted:
+                terms = rec.funding
+                if terms is not None and terms is not approved:
+                    self._log(
+                        rec,
+                        actor="publisher",
+                        action="terms_approved",
+                        rule="human_checkpoint",
+                        outcome=f"{by} approved {terms.amount} at {terms.fee_bps} bps, held "
+                        f"until {terms.deadline:%d %B %Y %H:%M} UTC; the escrow takes it from "
+                        "the publisher's funding wallet once that wallet commits it",
+                        when=now,
+                    )
+                raise
         self._log(
             rec,
             actor="publisher",
@@ -3231,6 +3430,16 @@ def _policy(publisher: Publisher) -> SpendingPolicy:
 
 def _display(amount: Usdc) -> str:
     return f"{amount.decimal:,.2f}"
+
+
+def _release_refusal(exc: Exception) -> str:
+    """Why a release did not land, in words fit for the public decision log: the
+    contract's error by name, never an RPC address or a key reference."""
+    if isinstance(exc, ChainRevert):
+        return f"the escrow refused it: {str(exc).split(':', 1)[0]}"
+    if isinstance(exc, AttestorKeyError):
+        return "the attestor key could not be read"
+    return "the chain could not be reached"
 
 
 _SECURITY_WORDS = ("security", "cve", "vulnerability")

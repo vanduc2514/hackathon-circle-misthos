@@ -195,8 +195,11 @@ function Repositories({ publisherId }: { publisherId: string }) {
 }
 
 /**
- * The party's own Circle wallet. A contributor is paid into it; a publisher funds
- * from it. Setting it up opens Circle's frame for a PIN the platform never sees.
+ * The party's own Circle wallet. A contributor is paid into it. A publisher keeps it
+ * beside the wallet they signed in with, which is still the one they fund from: the
+ * escrow takes a commitment only from the wallet the approval names, and the browser
+ * commits from the signed-in one. Setting it up opens Circle's frame for a PIN the
+ * platform never sees.
  */
 function PayoutWallet({ account }: { account: Account }) {
   const qc = useQueryClient()
@@ -218,9 +221,19 @@ function PayoutWallet({ account }: { account: Account }) {
   return (
     <Panel title="Your Circle wallet">
       <p className="dim" style={{ marginBottom: 12 }}>
-        {party === 'contributor'
-          ? 'Your payouts are released to this wallet.'
-          : 'The wallet you fund issues from.'}{' '}
+        {party === 'contributor' ? (
+          'Your payouts are released to this wallet.'
+        ) : (
+          <>
+            A wallet of your own on Arc, kept beside the one you signed in with. You still
+            fund issues and pay for plans from{' '}
+            <span className="mono-num" title={account.address}>
+              {shortHash(account.address)}
+            </span>
+            : the escrow takes a commitment only from that wallet and refunds it there, so move
+            USDC to it before you fund.
+          </>
+        )}{' '}
         It is yours: you set a PIN in Circle's own window, and neither Misthos nor Circle can
         move the money in it without you.
       </p>

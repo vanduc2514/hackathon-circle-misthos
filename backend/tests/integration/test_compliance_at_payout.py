@@ -21,7 +21,7 @@ from misthos.domain.compliance import (
     ScreeningOutcome,
     ScreeningReason,
 )
-from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.issue import IssueState, silent_release_at
 from misthos.main import app
 from misthos.models.records import IssueRecord
 from misthos.schemas import PublishRequest
@@ -153,9 +153,12 @@ class TestContinuousScreening:
         store.screening.list_wallet(wallet("CON-2"))  # type: ignore[attr-defined]
         store.advance("ISS-1002")  # the verdict passes
         accepted = get("ISS-1002")
-        assert accepted.review is not None
+        assert accepted.review is not None and accepted.deadline is not None
 
-        sweep_once(store, now=accepted.review.decided_at + SILENT_PUBLISHER_GRACE + LATER)
+        # The grace has run out (it ends a margin before the escrow deadline) and the
+        # escrow still pays, so only the listing holds the release.
+        release_at = silent_release_at(accepted.review.decided_at, accepted.deadline)
+        sweep_once(store, now=release_at + timedelta(minutes=1))
 
         after = get("ISS-1002")
         assert after.state is IssueState.ACCEPTED

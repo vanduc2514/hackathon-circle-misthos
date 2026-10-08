@@ -4,50 +4,59 @@ It answers what the contract holds, from the contract, so the readback the API s
 and the reconciliation the store runs ask the same source. It moves money only in
 the ways the contract lets the platform:
 
-- `set_ceiling` records the approved price, signed with the owner key, and the take
-  rate goes with it (`setFee`), because the contract fixes the rate before the money
-  is in.
+- `set_ceiling` records the approved terms, signed with the owner key: the price as
+  the ceiling, the only wallet that may commit it and the latest deadline (#122). The
+  take rate goes first (`setFee`), because the contract fixes it with the money, and an
+  escrow with no fee recipient is refused here, before any publisher commits money it
+  could never release (#127).
 - `release` pays the contributor, signed with the attestor key.
 - `refund` returns a lapsed commitment, signed with the attestor key (anyone may).
 
 It never signs a commitment. `commit` moves the publisher's USDC, so the publisher's
-own wallet sends it; here `commit` checks that the publisher did, for the amount
-approved and from the wallet on file, and returns that transaction. Until the
-publisher has committed it refuses with `NotCommitted`, and the store saves nothing.
+own wallet sends it; here `commit` checks that the publisher did, against the terms
+they approved (the amount, the rate, the wallet and the deadline), and returns that
+transaction. Until the publisher has committed it refuses with `NotCommitted`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 
 import httpx
 
 from misthos.domain.escrow import (
     COMMITTED_TOPIC,
+    approved_publisher_call,
     ceiling_call,
     commitments_call,
     commitments_call_by_key,
+    decode_address,
     decode_ceiling,
     decode_commitment,
+    decode_moment,
     fee_call,
+    fee_recipient_call,
     issue_key,
+    latest_deadline_call,
     refund_call,
     release_call,
     set_ceiling_call,
     set_fee_call,
 )
+from misthos.domain.issue import DEADLINE_TOLERANCE
 from misthos.domain.ledger import EscrowStatus, OnChain
 from misthos.domain.money import Usdc
-from misthos.services.chain.base import ChainRevert
+from misthos.services.chain.base import ChainRevert, NotCommitted
 from misthos.services.chain.deployment import EscrowDeployment
 from misthos.services.chain.rpc import ChainUnavailable, JsonRpc, Sender
 
-# How far the deadline the publisher committed may sit from the one the platform
-# expects. The publisher's wallet sends the commitment minutes after approval, so
-# they cannot match to the second; a deadline days early would cut the escrow term.
-DEADLINE_TOLERANCE = timedelta(hours=1)
+# What an operator is told when the escrow has nowhere to send the take rate.
+NO_FEE_RECIPIENT = (
+    "the escrow has no fee recipient, so every release at a take rate would revert "
+    "FeeRecipientNotSet; the owner must call setFeeRecipient before any issue is funded"
+)
 
 __all__ = ["ArcEscrow", "ChainUnavailable"]
 
@@ -110,6 +119,28 @@ class ArcEscrow:
         self.verify()
         return decode_ceiling(self._call(ceiling_call(issue_id)))
 
+    def approval(self, issue_id: str) -> tuple[Usdc | None, str | None, datetime | None]:
+        """The approval the escrow holds: the ceiling, who may commit, and until when."""
+        self.verify()
+        return (
+            decode_ceiling(self._call(ceiling_call(issue_id))),
+            decode_address(self._call(approved_publisher_call(issue_id))),
+            decode_moment(self._call(latest_deadline_call(issue_id))),
+        )
+
+    def fee_recipient(self) -> str | None:
+        """Where releases pay the take rate, or None when the owner never named one."""
+        self.verify()
+        return decode_address(self._call(fee_recipient_call()))
+
+    def settlement_problems(self) -> list[str]:
+        """What would stop this escrow paying a funded issue out. Read at startup, so an
+        operator hears of it before a publisher commits money, not at the first release."""
+        try:
+            return [] if self.fee_recipient() is not None else [NO_FEE_RECIPIENT]
+        except ChainUnavailable as exc:
+            return [str(exc)]
+
     def commitments(self) -> dict[str, OnChain]:
         """Every commitment the escrow has emitted, keyed by issue id.
 
@@ -130,14 +161,38 @@ class ArcEscrow:
 
     # ------------------------------------------------------------- writing
 
-    def set_ceiling(self, issue_id: str, ceiling: Usdc, at: datetime) -> str:
-        """Record the approved price on chain. Returns "" when it is already there,
-        so approving again after the publisher commits costs no second transaction."""
-        if self.escrow_ceiling(issue_id) == ceiling:
-            return ""
-        return self._signer(self._owner, "owner").send(
-            self.address, set_ceiling_call(issue_id, ceiling)
-        )
+    def set_ceiling(
+        self,
+        issue_id: str,
+        ceiling: Usdc,
+        at: datetime,
+        *,
+        publisher: str,
+        latest_deadline: datetime,
+        fee_bps: int = 0,
+    ) -> str:
+        """Record the approved terms on chain. Returns the last transaction sent, or ""
+        when the escrow already holds them, so approving again after the publisher
+        commits costs no second transaction.
+
+        While nothing is committed the rate is set first: a ceiling in force before the
+        rate would let the wallet commit at a rate nobody approved, and the escrow
+        refuses to move it once the money is in. A rate with no fee recipient on the
+        escrow is refused before anything is sent, since every release at that rate
+        would revert after the publisher's money was already held.
+        """
+        signer = self._signer(self._owner, "owner")
+        sent = ""
+        if self.commitment(issue_id) is None:
+            if fee_bps and self.fee_recipient() is None:
+                raise ChainRevert(f"FeeRecipientNotSet: {NO_FEE_RECIPIENT}")
+            if self.fee_bps(issue_id) != fee_bps:
+                sent = signer.send(self.address, set_fee_call(issue_id, fee_bps))
+        latest = int(latest_deadline.timestamp())
+        wanted = (ceiling, publisher.lower(), datetime.fromtimestamp(latest, UTC))
+        if self.approval(issue_id) != wanted:
+            sent = signer.send(self.address, set_ceiling_call(issue_id, ceiling, publisher, latest))
+        return sent
 
     def commit(
         self,
@@ -148,20 +203,18 @@ class ArcEscrow:
         at: datetime,
         fee_bps: int = 0,
     ) -> str:
-        """Confirm the publisher's own commitment, and return its transaction.
+        """Confirm the publisher's own commitment against the approved terms, and return
+        its transaction.
 
-        Before the publisher has committed, this fixes the take rate on the escrow (the
-        contract refuses to move it once the money is in) and refuses with
-        `NotCommitted`, so the store saves nothing and the publisher's wallet sends the
-        commitment at the rate they saw.
+        Refuses with `NotCommitted` until the publisher's wallet has committed, so the
+        store books nothing and the wallet sends the commitment the plan spelled out.
+        `deadline` is the one the approval fixed: the escrow refuses a later one, and a
+        commitment more than `DEADLINE_TOLERANCE` earlier would cut the contributor's
+        window, so it is not booked.
         """
         held = self.commitment(issue_id)
         if held is None:
-            if self.fee_bps(issue_id) != fee_bps:
-                self._signer(self._owner, "owner").send(
-                    self.address, set_fee_call(issue_id, fee_bps)
-                )
-            raise ChainRevert(
+            raise NotCommitted(
                 "NotCommitted: the publisher has not committed this issue from their wallet yet"
             )
         if held.fee_bps != fee_bps:
@@ -172,7 +225,7 @@ class ArcEscrow:
             raise ChainRevert(f"NotHeld: the escrow reports {held.status}")
         if (held.publisher or "").lower() != publisher.lower():
             raise ChainRevert(
-                f"WrongPublisher: committed from {held.publisher}, not the wallet on file"
+                f"WrongPublisher: committed from {held.publisher}, not the wallet approved"
             )
         if held.amount != amount:
             raise ChainRevert(
@@ -180,6 +233,11 @@ class ArcEscrow:
             )
         if held.deadline is None or held.deadline < deadline - DEADLINE_TOLERANCE:
             raise ChainRevert(f"DeadlineTooEarly: committed until {held.deadline}, not {deadline}")
+        if held.deadline > deadline:
+            raise ChainRevert(f"DeadlineTooLate: committed until {held.deadline}, not {deadline}")
+        return self._commit_tx(issue_id)
+
+    def commit_tx(self, issue_id: str) -> str:
         return self._commit_tx(issue_id)
 
     def release(self, issue_id: str, contributor: str, amount: Usdc, at: datetime) -> str:

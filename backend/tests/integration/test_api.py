@@ -9,11 +9,12 @@ from fastapi.testclient import TestClient
 from siwe_wallet import Wallet
 
 from misthos.config import settings
-from misthos.domain.issue import IssueState
+from misthos.domain.issue import ESCROW_TERM, IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import take_rate_bps
 from misthos.main import app
 from misthos.repositories import StaleIssue
+from misthos.services.chain import ChainRevert
 from misthos.services.wallets import simulated_address
 from misthos.store import store
 
@@ -82,12 +83,12 @@ class TestEscrowReadback:
     def test_an_unknown_issue_is_404(self, client: TestClient) -> None:
         assert client.get(f"{API}/issues/ISS-9999/escrow").status_code == 404
 
-    def test_funding_waits_for_the_publishers_own_commitment(
+    def _awaiting_commitment(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # On Arc the escrow refuses to book funding the publisher has not committed
-        # from their wallet; the web app recognises this refusal by its name.
-        from misthos.services.chain import ChainRevert
+    ) -> str:
+        """An issue whose price is approved while the escrow waits for the publisher's
+        own wallet, as on Arc: the first approval records the terms and is refused."""
+        from misthos.services.chain import NotCommitted
 
         issue_id = self._first(client, "awaiting_approval")
         client.post(f"{API}/issues/{issue_id}/criteria", json={
@@ -95,12 +96,20 @@ class TestEscrowReadback:
         })
 
         def not_yet(*_: object) -> str:
-            raise ChainRevert("NotCommitted: the publisher has not committed this issue yet")
+            raise NotCommitted("NotCommitted: the publisher has not committed this issue yet")
 
         monkeypatch.setattr(store.chain, "commit", not_yet)
         refused = client.post(f"{API}/issues/{issue_id}/fund")
         assert refused.status_code == 409
         assert "NotCommitted" in refused.json()["detail"]
+        return issue_id
+
+    def test_funding_waits_for_the_publishers_own_commitment(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # On Arc the escrow refuses to book funding the publisher has not committed
+        # from their wallet; the web app recognises this refusal by its name.
+        issue_id = self._awaiting_commitment(client, monkeypatch)
         assert client.get(f"{API}/issues/{issue_id}").json()["state"] == "AWAITING_APPROVAL"
         # The ceiling was recorded before the refusal: the commitment can now be sent.
         assert client.get(f"{API}/issues/{issue_id}/escrow").json()["escrow_ceiling"]
@@ -111,12 +120,12 @@ class TestEscrowReadback:
         assert funded.json()["state"] == "FUNDED"
 
     def test_the_publisher_is_told_exactly_what_their_wallet_sends(
-        self, client: TestClient
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from misthos.domain.escrow import approve_call, commit_call
         from misthos.domain.money import Usdc
 
-        issue_id = self._first(client, "awaiting_approval")
+        issue_id = self._awaiting_commitment(client, monkeypatch)
         plan = client.get(f"{API}/issues/{issue_id}/commitment").json()
         amount = Usdc(plan["amount"]["base_units"])
 
@@ -134,6 +143,36 @@ class TestEscrowReadback:
         assert amount.base_units == client.get(f"{API}/issues/{issue_id}").json()["proposal"][
             "recommended"
         ]["base_units"]
+
+    def test_the_plan_is_the_approved_terms_and_does_not_move_with_the_clock(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The plan used to compute its deadline from now, and the booking computed its
+        own, so a booking more than an hour after the plan was refused for good with the
+        money already committed (#126). The plan is now the approval's own terms."""
+        issue_id = self._awaiting_commitment(client, monkeypatch)
+        rec = store.get(issue_id)
+        assert rec is not None and rec.funding is not None
+        publisher = store.get_publisher(rec.publisher_id)
+        assert publisher is not None
+
+        first = client.get(f"{API}/issues/{issue_id}/commitment").json()
+        # An hour and a half later, approving again keeps the same terms.
+        later = rec.funding.approved_at + timedelta(minutes=90)
+        with pytest.raises(Exception, match="NotCommitted"):
+            store.approve_price(issue_id, "the publisher", now=later)
+        second = client.get(f"{API}/issues/{issue_id}/commitment").json()
+
+        assert first == second
+        assert first["deadline"] == int(rec.funding.deadline.timestamp())
+        assert first["fee_bps"] == take_rate_bps(publisher.tier)
+        assert first["wallet"] == publisher.wallet.address
+
+    def test_there_is_no_plan_before_the_price_is_approved(self, client: TestClient) -> None:
+        issue_id = self._first(client, "awaiting_approval")
+        refused = client.get(f"{API}/issues/{issue_id}/commitment")
+        assert refused.status_code == 409
+        assert "approve the price" in refused.json()["detail"]
 
     def test_a_funded_issue_is_capped_at_its_approved_price(self, client: TestClient) -> None:
         issue_id = self._first(client, "funded")
@@ -156,7 +195,14 @@ class TestEscrowReadback:
         from misthos.domain.money import Usdc
 
         issue_id = self._first(client, "funded")
-        store.chain.set_ceiling(issue_id, Usdc(999_000_000), datetime.now(UTC))
+        now = datetime.now(UTC)
+        store.chain.set_ceiling(
+            issue_id,
+            Usdc(999_000_000),
+            now,
+            publisher="0x" + "b0" * 20,
+            latest_deadline=now + timedelta(days=14),
+        )
         body = client.get(f"{API}/issues/{issue_id}/escrow").json()
         assert body["escrow_ceiling"]["base_units"] == 999_000_000
         assert body["amount"]["base_units"] != 999_000_000
@@ -226,6 +272,112 @@ class TestIssues:
         assert {"actor", "action", "outcome"} <= rows[0].keys()
 
 
+class TestBookingHonoursTheApproval:
+    """Booking checks the commitment against the terms the publisher approved, never
+    against ones worked out again at booking (#126). The simulated escrow plays Arc's
+    two approvals here: the first is refused NotCommitted while the wallet commits,
+    and the second books what it committed."""
+
+    ISSUE = "ISS-1006"  # seeded AWAITING_APPROVAL, Globex on Enterprise
+
+    def first_approval(self, monkeypatch: pytest.MonkeyPatch) -> datetime:
+        from misthos.services.chain import NotCommitted
+
+        rec = store.get(self.ISSUE)
+        assert rec is not None
+        store.approve_criteria(self.ISSUE, rec.acceptance_criteria, "globex")
+
+        def not_yet(*_: object) -> str:
+            raise NotCommitted("NotCommitted: the wallet has not committed yet")
+
+        monkeypatch.setattr(store.chain, "commit", not_yet)
+        approved_at = datetime.now(UTC)
+        with pytest.raises(NotCommitted):
+            store.approve_price(self.ISSUE, "globex", now=approved_at)
+        monkeypatch.undo()
+        return approved_at
+
+    def test_a_booking_ninety_minutes_on_keeps_the_approved_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import misthos.store as store_module
+
+        approved_at = self.first_approval(monkeypatch)
+        later = approved_at + timedelta(minutes=90)
+        monkeypatch.setattr(store_module, "_now", lambda: later)
+        booked = store.approve_price(self.ISSUE, "globex", now=later)
+
+        assert booked.state is IssueState.FUNDED
+        assert booked.deadline == (approved_at + ESCROW_TERM).replace(microsecond=0)
+        assert booked.escrow is not None and booked.escrow.deadline == booked.deadline
+
+    def test_a_plan_change_between_approval_and_booking_books_the_approved_rate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Team purchase or a lapse to Open after the approval used to refuse the
+        booking FeeMismatch for good, the money already in the escrow at the old rate."""
+        approved_at = self.first_approval(monkeypatch)
+        publisher_id = store.get(self.ISSUE).publisher_id  # type: ignore[union-attr]
+        approved_rate = take_rate_bps(store.get_publisher(publisher_id).tier)  # type: ignore[union-attr]
+        store.set_contract_plan(publisher_id, "team", approved_at + timedelta(days=30))
+        assert take_rate_bps("team") != approved_rate
+
+        booked = store.approve_price(self.ISSUE, "globex", now=approved_at + timedelta(minutes=5))
+
+        assert booked.state is IssueState.FUNDED
+        assert booked.escrow is not None and booked.escrow.fee_bps == approved_rate
+        assert store.chain.commitment(self.ISSUE).fee_bps == approved_rate  # type: ignore[union-attr]
+
+    def test_approved_terms_nothing_was_committed_under_lapse_at_their_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        approved_at = self.first_approval(monkeypatch)
+        terms = store.get(self.ISSUE).funding  # type: ignore[union-attr]
+        assert terms is not None
+
+        store.run_timers(self.ISSUE, now=terms.deadline + timedelta(minutes=1))
+        lapsed = store.get(self.ISSUE)
+        assert lapsed is not None
+        assert lapsed.state is IssueState.AWAITING_APPROVAL and lapsed.funding is None
+        assert lapsed.decisions[-1].action == "approval_lapsed"
+
+        # Approving again sets new terms from then.
+        later = approved_at + timedelta(days=20)
+        booked = store.approve_price(self.ISSUE, "globex", now=later)
+        assert booked.deadline == (later + ESCROW_TERM).replace(microsecond=0)
+
+    def test_a_commitment_that_can_never_be_booked_goes_back_at_its_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A wallet that committed another amount than the approval named can never be
+        booked, and the escrow takes one commitment per issue. The escrow bounds its
+        deadline by the approved one (#122), so the money comes back then (#126)."""
+        from misthos.services.chain import SimulatedChain
+
+        approved_at = self.first_approval(monkeypatch)
+        terms = store.get(self.ISSUE).funding  # type: ignore[union-attr]
+        assert terms is not None and isinstance(store.chain, SimulatedChain)
+        # The publisher's wallet commits one base unit instead of the price.
+        store.chain.commit(
+            self.ISSUE, terms.wallet, Usdc(1), terms.deadline, approved_at, terms.fee_bps
+        )
+        with pytest.raises(ChainRevert):
+            store.approve_price(self.ISSUE, "globex", now=approved_at + timedelta(minutes=5))
+
+        store.run_timers(self.ISSUE, now=terms.deadline + timedelta(minutes=1))
+
+        back = store.get(self.ISSUE)
+        assert back is not None
+        assert back.state is IssueState.REFUNDED
+        assert [(e.kind.value, e.amount) for e in back.money_events] == [
+            ("committed", Usdc(1)),
+            ("refunded", Usdc(1)),
+        ]
+        assert back.decisions[-1].rule == "unbooked_commitment"
+        assert store.chain.commitment(self.ISSUE).status.value == "refunded"  # type: ignore[union-attr]
+        assert [d for d in store.reconcile() if d.issue_id == self.ISSUE] == []
+
+
 class TestWallets:
     def test_a_session_links_the_contributor_wallet(self, client: TestClient) -> None:
         body = client.post(f"{API}/wallets/contributor/CON-1/session").json()
@@ -243,9 +395,44 @@ class TestWallets:
         assert "wallet" not in profiles["CON-1"]
 
     def test_link_reads_the_address_back_for_a_publisher(self, client: TestClient) -> None:
+        before = store.get_publisher("PUB-1")
+        assert before is not None
         wallet = client.post(f"{API}/wallets/publisher/PUB-1/link").json()
-        publishers = {p["id"]: p for p in client.get(f"{API}/publishers").json()}
-        assert publishers["PUB-1"]["wallet"] == wallet
+        assert wallet["address"] == simulated_address("publisher", "PUB-1")
+        # Kept as the publisher's Circle wallet, beside the wallet they fund from.
+        after = store.get_publisher("PUB-1")
+        assert after is not None and after.circle_wallet is not None
+        assert after.circle_wallet.address == wallet["address"]
+        assert after.wallet == before.wallet
+
+    def test_a_circle_wallet_never_replaces_the_wallet_a_publisher_funds_from(
+        self, client: TestClient
+    ) -> None:
+        """Setting up a Circle wallet used to overwrite the publisher's wallet, while the
+        browser kept committing from the wallet they signed in with: every booking was
+        refused WrongPublisher with the USDC already in escrow, and Plans asked them to
+        switch to the Circle address (#123). Funding stays bound to the sign-in wallet."""
+        account = sign_in(client, 63, "publisher", "Fernhill", "fernhill-co")
+        pid, signed_in_with = account["party_id"], account["address"]
+        circle = client.post(f"{API}/wallets/publisher/{pid}/session").json()["wallet"]
+        assert circle["address"].lower() != signed_in_with.lower()
+
+        issue = client.post(
+            f"{API}/issues",
+            json={"repo": "fernhill/app", "title": "Fix the retry backoff", "publisher_id": pid},
+        ).json()
+        client.post(
+            f"{API}/issues/{issue['id']}/criteria",
+            json={"criteria": issue["acceptance_criteria"]},
+        )
+        funded = client.post(f"{API}/issues/{issue['id']}/fund")
+        assert funded.status_code == 200, funded.text
+
+        held = client.get(f"{API}/issues/{issue['id']}/escrow").json()
+        assert held["publisher"].lower() == signed_in_with.lower()
+        # A plan is paid from the same wallet, not the Circle one.
+        ask = client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"}).json()
+        assert ask["pending"]["payer"].lower() == signed_in_with.lower()
 
     def test_an_unknown_party_or_id_is_refused(self, client: TestClient) -> None:
         assert client.post(f"{API}/wallets/contributor/CON-999/session").status_code == 404
@@ -365,29 +552,50 @@ class TestLifecycleThroughTheApi:
         assert rec.state is IssueState.PAID
         assert rec.decisions[-1].rule == "silent_publisher_grace_period"
 
-    def test_a_late_verdict_releases_at_the_deadline_not_after_it(self) -> None:
-        """The grace is capped at the escrow deadline, so a late verdict is not stranded
-        waiting on a window the contract has already closed (#33)."""
+    def test_a_late_verdict_releases_a_margin_before_the_deadline(self) -> None:
+        """The grace is capped short of the escrow deadline, so the release lands while
+        the escrow still pays. Capped at the deadline itself it fired once the deadline
+        had passed, which is exactly when `release` reverts (#121)."""
+        from misthos.domain.issue import RELEASE_MARGIN
+
         store.advance("ISS-1002")
         rec = store.get("ISS-1002")
-        assert rec is not None and rec.escrow is not None and rec.review is not None
+        assert rec is not None and rec.deadline is not None and rec.review is not None
         assert rec.state is IssueState.ACCEPTED
-
-        # A verdict six days ago, with the deadline already behind us: a full seven-day
-        # grace would end a day after the contract stopped paying, so the window ends
-        # at the deadline instead.
-        now = datetime.now(UTC)
-        rec.review.decided_at = now - timedelta(days=6)
-        rec.deadline = now - timedelta(hours=1)
-        rec.escrow.deadline = rec.deadline
+        # Six days before the deadline: a full seven-day grace would end a day after
+        # the contract stopped paying.
+        rec.review.decided_at = rec.deadline - timedelta(days=6)
         store.save(rec)
+        release_at = rec.deadline - RELEASE_MARGIN
 
-        store.run_timers("ISS-1002", now=now)
+        store.run_timers("ISS-1002", now=release_at - timedelta(minutes=1))
+        assert store.get("ISS-1002").state is IssueState.ACCEPTED  # type: ignore[union-attr]
 
+        store.run_timers("ISS-1002", now=release_at + timedelta(minutes=1))
         paid = store.get("ISS-1002")
         assert paid is not None
         assert paid.state is IssueState.PAID
         assert paid.decisions[-1].rule == "silent_publisher_grace_period"
+
+    def test_accepted_work_the_deadline_overtook_is_refunded_not_stranded(self) -> None:
+        """Past the deadline no release can land: the contract refuses it and refunds
+        anyone who asks. ACCEPTED used to have no way out, so the sweeper failed on every
+        pass while the money went back on chain behind the ledger's back (#121)."""
+        store.advance("ISS-1002")
+        rec = store.get("ISS-1002")
+        assert rec is not None and rec.deadline is not None and rec.review is not None
+        rec.review.decided_at = rec.deadline - timedelta(minutes=1)
+        store.save(rec)
+
+        store.run_timers("ISS-1002", now=rec.deadline + timedelta(minutes=1))
+
+        refunded = store.get("ISS-1002")
+        assert refunded is not None
+        assert refunded.state is IssueState.REFUNDED
+        assert refunded.paid is None
+        assert refunded.decisions[-1].rule == "release_window_closed"
+        assert store.chain.commitment("ISS-1002").status.value == "refunded"  # type: ignore[union-attr]
+        assert [d for d in store.reconcile() if d.issue_id == "ISS-1002"] == []
 
     def test_an_issue_awaiting_merge_still_counts_as_open(self, client: TestClient) -> None:
         """ACCEPTED holds committed money until the publisher merges."""

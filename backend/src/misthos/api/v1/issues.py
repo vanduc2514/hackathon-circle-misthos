@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -19,7 +18,7 @@ from misthos.api.v1.auth import callback_url, oauth_configured
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.escrow import approve_call, commit_call, issue_key
-from misthos.domain.issue import ESCROW_TERM, IllegalTransition, IssueState
+from misthos.domain.issue import IllegalTransition, IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import UnfundableIssue
@@ -180,15 +179,23 @@ async def commitment_plan(
     """The two transactions the publisher's own wallet sends to fund the issue.
 
     The platform never signs a commitment: it moves the publisher's USDC. Approving
-    the price records it as the escrow's ceiling; the publisher's wallet then lets the
-    escrow take that amount and commits it, and approving again books it.
+    the price fixes its terms and records them on the escrow (the ceiling, the wallet
+    that may commit, the latest deadline and the take rate); the publisher's wallet
+    then lets the escrow take that amount and commits it, and approving again books it
+    against those same terms. The plan is those terms, never a deadline worked out
+    from now, so a booking an hour or a day later still matches it (#126).
     """
     rec = await _require(issue_id)
     require_owner_or_simulation(account, rec.publisher_id, "fund this issue")
-    if rec.proposal is None:
-        raise HTTPException(status_code=409, detail=f"{issue_id} has no approved price yet")
-    amount = rec.proposal.recommended
-    deadline = int((datetime.now(UTC) + ESCROW_TERM).timestamp())
+    terms = rec.funding
+    if terms is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"approve the price of {issue_id} first: the approval fixes the amount, "
+            "the deadline and the rate the escrow holds it at",
+        )
+    amount = terms.amount
+    deadline = int(terms.deadline.timestamp())
     return CommitmentPlan(
         issue_id=issue_id,
         chain_id=ESCROW.chain_id,
@@ -196,6 +203,8 @@ async def commitment_plan(
         usdc=settings.usdc_address,
         amount=money(amount),
         deadline=deadline,
+        fee_bps=terms.fee_bps,
+        wallet=terms.wallet,
         calls=[
             WalletCall(
                 label=f"Let the escrow take {amount}",

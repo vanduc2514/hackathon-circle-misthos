@@ -37,7 +37,7 @@ from misthos.domain.compliance import (
     ScreeningOutcome,
     ScreeningReason,
 )
-from misthos.domain.issue import IssueState
+from misthos.domain.issue import FundingTerms, IssueState
 from misthos.domain.ledger import MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc, format_usdc
 from misthos.domain.pricing import PriceProposal
@@ -550,6 +550,10 @@ def _publisher_values(publisher: Publisher) -> dict[str, Any]:
         "tier": publisher.tier,
         "wallet_address": publisher.wallet.address,
         "chain": publisher.wallet.chain,
+        "circle_wallet_address": (
+            publisher.circle_wallet.address if publisher.circle_wallet else None
+        ),
+        "circle_wallet_chain": publisher.circle_wallet.chain if publisher.circle_wallet else None,
         "budget_remaining_base_units": _parse_usdc(publisher.budget_remaining_usdc).base_units,
         "approval_threshold_base_units": (
             _parse_usdc(publisher.approval_threshold_usdc).base_units
@@ -602,6 +606,7 @@ def _save(conn: Connection, rec: IssueRecord, floor: int) -> int:
         "payout_checked_at": rec.payout_checked_at,
         "criteria_approved_at": rec.criteria_approved_at,
         "relisted_from": rec.relisted_from,
+        **_funding_values(rec.funding),
     }
     if rec.version == 0:
         exists = conn.execute(select(t.issues.c.id).where(t.issues.c.id == rec.id)).first()
@@ -627,6 +632,28 @@ def _save(conn: Connection, rec: IssueRecord, floor: int) -> int:
     _save_decisions(conn, rec)
     _save_money_events(conn, rec)
     return version
+
+
+def _funding_values(terms: FundingTerms | None) -> dict[str, Any]:
+    return {
+        "funding_amount_base_units": terms.amount.base_units if terms else None,
+        "funding_fee_bps": terms.fee_bps if terms else None,
+        "funding_wallet": terms.wallet if terms else None,
+        "funding_deadline": terms.deadline if terms else None,
+        "funding_approved_at": terms.approved_at if terms else None,
+    }
+
+
+def _funding(row: Row) -> FundingTerms | None:
+    if row["funding_amount_base_units"] is None:
+        return None
+    return FundingTerms(
+        amount=Usdc(row["funding_amount_base_units"]),
+        fee_bps=row["funding_fee_bps"],
+        wallet=row["funding_wallet"],
+        deadline=_utc(row["funding_deadline"]),
+        approved_at=_utc(row["funding_approved_at"]),
+    )
 
 
 def _save_proposal(conn: Connection, rec: IssueRecord) -> None:
@@ -874,6 +901,7 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             payout_checked_at=_utc_or_none(row["payout_checked_at"]),
             criteria_approved_at=_utc_or_none(row["criteria_approved_at"]),
             relisted_from=row["relisted_from"],
+            funding=_funding(row),
             decisions=logs[row["id"]],
             money_events=ledger[row["id"]],
             version=row["version"],
@@ -902,6 +930,11 @@ def _publisher(row: Row) -> Publisher:
         kind=row["kind"],
         tier=row["tier"],
         wallet=Wallet(address=row["wallet_address"], chain=row["chain"]),
+        circle_wallet=(
+            Wallet(address=row["circle_wallet_address"], chain=row["circle_wallet_chain"])
+            if row["circle_wallet_address"]
+            else None
+        ),
         budget_remaining_usdc=format_usdc(Usdc(row["budget_remaining_base_units"])),
         approval_threshold_usdc=(
             format_usdc(Usdc(row["approval_threshold_base_units"]))

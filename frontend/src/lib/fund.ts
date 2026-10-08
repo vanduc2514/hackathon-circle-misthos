@@ -18,6 +18,8 @@ export interface WalletCall {
 
 export interface CommitmentPlan {
   chain_id: number
+  /** The only wallet the escrow accepts this commitment from. */
+  wallet?: string
   calls: WalletCall[]
 }
 
@@ -43,6 +45,11 @@ export async function sendFromWallet(
   const accounts = (await wallet.request({ method: 'eth_requestAccounts' })) as string[]
   const from = accounts?.[0]
   if (!from) throw new Error('The wallet did not share an account')
+  // The escrow refuses a commitment from any wallet but the one the approval named, so
+  // say so before anything is sent rather than have the contract revert it.
+  if (plan.wallet && from.toLowerCase() !== plan.wallet.toLowerCase()) {
+    throw new Error(`Switch your wallet to ${plan.wallet}, the one this issue is funded from.`)
+  }
   await wallet.request({
     method: 'wallet_switchEthereumChain',
     params: [{ chainId: `0x${plan.chain_id.toString(16)}` }],

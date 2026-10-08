@@ -26,6 +26,12 @@ interface IERC20 {
  * never be raised above the published ceiling (docs/misthos/06) or sent somewhere
  * the owner did not name.
  *
+ * An issue's id is the keccak of a public platform id, so the approval that lets
+ * money in names who may send it and for how long: only the publisher whose price
+ * was approved can commit, and only to a deadline no later than the one approved.
+ * Without that, anyone could commit dust first with a deadline decades away, and
+ * the issue could never be funded or refunded.
+ *
  * Arc notes:
  *  - USDC is the native gas token AND an ERC-20 at a fixed predeploy address.
  *    The two views are the same balance. This contract only ever touches the
@@ -57,6 +63,8 @@ contract MisthosEscrow {
     error AmountMismatch();
     error NoCeiling();
     error ExceedsCeiling(uint256 amount, uint256 ceiling);
+    error NotApprovedPublisher(address sender);
+    error DeadlineTooLate(uint64 deadline, uint64 latest);
     error FeeTooHigh(uint256 bps, uint256 max);
     error FeeRecipientNotSet();
     error TransferFailed();
@@ -91,7 +99,9 @@ contract MisthosEscrow {
     );
     event PlatformFeePaid(bytes32 indexed issueId, address indexed recipient, uint256 amount);
     event Refunded(bytes32 indexed issueId, address indexed publisher, uint256 amount);
-    event CeilingUpdated(bytes32 indexed issueId, uint256 ceiling);
+    event CeilingUpdated(
+        bytes32 indexed issueId, uint256 ceiling, address indexed publisher, uint64 latestDeadline
+    );
     event IssueTokenSet(bytes32 indexed issueId, address indexed token);
     event FeeUpdated(bytes32 indexed issueId, uint256 bps);
     event FeeRecipientUpdated(address indexed previousRecipient, address indexed newRecipient);
@@ -121,6 +131,16 @@ contract MisthosEscrow {
     ///         do not exist.
     /// @dev In base units of the issue's token, which is always 6 decimals.
     mapping(bytes32 => uint256) public ceiling;
+
+    /// @notice The only wallet that may commit to an issue: the publisher whose price
+    ///         was approved, named by the owner together with the ceiling.
+    mapping(bytes32 => address) public approvedPublisher;
+
+    /// @notice The latest deadline a commitment to the issue may carry, named with the
+    ///         ceiling. It keeps the refund near: a commitment the platform cannot book
+    ///         goes back to the publisher at a deadline the approval bounded, not one
+    ///         the sender chose.
+    mapping(bytes32 => uint64) public latestDeadline;
 
     /// @notice The ERC-20 an issue is denominated in. Unset means USDC, which is
     ///         what every issue was before EURC existed. Named by the owner before
@@ -164,14 +184,16 @@ contract MisthosEscrow {
     // --------------------------------------------------------- publisher side
 
     /**
-     * @notice Commit the price for an issue. One commitment per issue id.
+     * @notice Commit the price for an issue. One commitment per issue id, and only
+     *         from the publisher the owner named for it.
      * @param issueId  keccak256 of the platform issue identifier.
      * @param amount   Total committed in 6-decimal base units of the issue's
      *                 token (USDC, or EURC when the owner named it), at most the
      *                 issue's ceiling. The publisher pays the fix price and nothing
      *                 else: the platform reviews the submission, so there is no
      *                 reviewer fee to fund alongside it.
-     * @param deadline Unix seconds after which the publisher can reclaim.
+     * @param deadline Unix seconds after which the publisher can reclaim. No later
+     *                 than the latest deadline the owner named for the issue.
      */
     function commit(bytes32 issueId, uint256 amount, uint64 deadline) external {
         if (commitments[issueId].status != Status.None) revert AlreadyExists();
@@ -181,7 +203,12 @@ contract MisthosEscrow {
 
         uint256 cap = ceiling[issueId];
         if (cap == 0) revert NoCeiling();
+        // The issue id is public. A commitment from anyone else would take the issue's
+        // one slot, and the publisher's own would then be refused for good.
+        if (msg.sender != approvedPublisher[issueId]) revert NotApprovedPublisher(msg.sender);
         if (amount > cap) revert ExceedsCeiling(amount, cap);
+        uint64 latest = latestDeadline[issueId];
+        if (deadline > latest) revert DeadlineTooLate(deadline, latest);
 
         commitments[issueId] = Commitment({
             publisher: msg.sender,
@@ -261,12 +288,26 @@ contract MisthosEscrow {
 
     // ------------------------------------------------------------------ admin
 
-    /// @notice Record the approved price as the most that may be committed for
-    ///         an issue. Zero removes it, which makes the issue unfundable again.
+    /// @notice Record the approved price as the most that may be committed for an
+    ///         issue, the publisher who may commit it, and the latest deadline they may
+    ///         commit it to. Zero removes all three, which makes the issue unfundable
+    ///         again.
     /// @dev Only a cap: it can stop money entering, never move money already held.
-    function setCeiling(bytes32 issueId, uint256 cap) external onlyOwner {
+    function setCeiling(bytes32 issueId, uint256 cap, address publisher, uint64 latest)
+        external
+        onlyOwner
+    {
+        if (cap == 0) {
+            publisher = address(0);
+            latest = 0;
+        } else {
+            if (publisher == address(0)) revert ZeroAddress();
+            if (latest <= block.timestamp) revert DeadlinePassed();
+        }
         ceiling[issueId] = cap;
-        emit CeilingUpdated(issueId, cap);
+        approvedPublisher[issueId] = publisher;
+        latestDeadline[issueId] = latest;
+        emit CeilingUpdated(issueId, cap, publisher, latest);
     }
 
     /// @notice Name the ERC-20 an issue is denominated in, before it is funded.

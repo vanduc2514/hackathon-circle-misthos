@@ -33,6 +33,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from misthos.domain.issue import RELEASE_MARGIN
 from misthos.domain.timers import TIMED_STATES
 from misthos.observability import context
 from misthos.observability.metrics import SWEEP_FAILURES, SWEEP_SECONDS
@@ -190,9 +191,22 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
         )
 
 
+# How many passes must fit in the margin before the escrow deadline, so a failed
+# pass still leaves another to land the release in time (#121).
+PASSES_IN_THE_MARGIN = 3
+
+
 async def run_forever(store: Store, interval_seconds: float) -> None:
     """Sweep now and then every interval, until cancelled. A failed pass is logged and
     the next one still runs: one bad issue must not stop every other refund."""
+    if interval_seconds * PASSES_IN_THE_MARGIN > RELEASE_MARGIN.total_seconds():
+        log.warning(
+            "sweeping every %ss leaves fewer than %d passes in the %s before an escrow "
+            "deadline, so a release that fails once may not land before it",
+            interval_seconds,
+            PASSES_IN_THE_MARGIN,
+            RELEASE_MARGIN,
+        )
     while True:
         # One correlation id per pass, so a pass's lines group like a request's.
         with context.bound(f"sweep-{context.new_id()[:12]}", "sweeper"):

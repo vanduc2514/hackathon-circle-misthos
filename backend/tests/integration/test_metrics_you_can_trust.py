@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from misthos.config import settings
-from misthos.domain.issue import ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.issue import ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState, silent_release_at
 from misthos.domain.ledger import MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.main import app
@@ -127,10 +127,13 @@ class TestPublisherDecline:
         self,
     ) -> None:
         """Past the grace window the sweeper owes the release. A decline in that window
-        used to send the work back and drop the payout that was due."""
+        used to send the work back and drop the payout that was due. The seeded verdict
+        lands in the last week of the escrow term, so the window ends a margin before
+        the deadline, while the escrow still pays."""
         issue_id = self.accepted()
-        verdict_at = store.get(issue_id).review.decided_at  # type: ignore[union-attr]
-        late = verdict_at + SILENT_PUBLISHER_GRACE + timedelta(minutes=1)
+        rec = store.get(issue_id)
+        assert rec is not None and rec.review is not None and rec.deadline is not None
+        late = silent_release_at(rec.review.decided_at, rec.deadline) + timedelta(minutes=1)
 
         with pytest.raises(DeclineRefused, match="grace period"):
             store.decline(issue_id, "Too late.", now=late)

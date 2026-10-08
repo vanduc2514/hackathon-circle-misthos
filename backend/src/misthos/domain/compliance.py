@@ -61,6 +61,10 @@ class PayoutGate(StrEnum):
     AWAIT_APPROVER = "await_approver"
     """Over the organisation's release threshold, waiting for a named approver.
     Not a compliance gate: the organisation's own policy (domain/policy.py)."""
+    RELEASE_FAILED = "release_failed"
+    """Everything allowed the payout and the chain did not take it: the escrow
+    reverted, or the RPC could not be reached. Not a compliance gate either. The
+    acceptance stands, and the release is tried again on the sweeper's next pass."""
 
 
 @dataclass(frozen=True)
