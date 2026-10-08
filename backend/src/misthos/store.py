@@ -166,6 +166,7 @@ def _demo_files(repo: str) -> list[ChangedFile]:
 # without one, under a placeholder that is labelled as simulated wherever it shows.
 ESCROW = load_deployment(settings)
 ESCROW_CONTRACT = ESCROW.address
+CHAIN = settings.chain
 
 REPO_POOL = [
     "acme/ledger-core",
