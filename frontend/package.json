@@ -11,6 +11,7 @@
     "codegen": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/lib/api-schema.d.ts"
   },
   "dependencies": {
+    "@circle-fin/w3s-pw-web-sdk": "^1.1.11",
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@tanstack/react-query": "^5.62.7",
@@ -27,6 +28,7 @@
     "openapi-typescript": "^7.5.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
+    "vite-plugin-node-polyfills": "^0.28.0",
     "vitest": "^2.1.8"
   }
 }

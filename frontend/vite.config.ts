@@ -1,10 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 // The API is proxied so the browser sees a single origin. That keeps cookies and
 // CORS out of the picture entirely.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // Circle's wallet frame SDK (#29) carries Node built-ins through jsonwebtoken. Only
+    // those it reaches are polyfilled, and only the chunk loaded on "Set up your
+    // wallet" pulls them in; no other page pays for them.
+    nodePolyfills({ include: ['buffer', 'crypto', 'stream', 'util', 'vm'] }),
+  ],
   server: {
     port: 5173,
     // Bind every interface. Without this Vite listens on ::1 only, so
