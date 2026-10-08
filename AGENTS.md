@@ -31,9 +31,14 @@ agent reviews the pull request against the acceptance criteria, and payment sett
 
 ### Current status
 
-A scaffold with a working simulation. The lifecycle, pricing engine, escrow contract and
-decision log are real code; the GitHub calls and the money are fake — no chain is
-contacted. Do not assume a live integration because a module names one.
+A scaffold with a working simulation. The lifecycle, pricing engine, escrow contract,
+decision log, money ledger and its timers are real code; the money is fake — no chain
+is contacted, and the escrow is a simulated one behind the chain gateway. GitHub is
+simulated too unless a GitHub App is configured (`MISTHOS_GITHUB_APP_ID`), in which
+case issues are read and pull request events move the lifecycle for real. State is in memory unless `MISTHOS_DATABASE_URL` points at Postgres, and the
+per-issue lock, idempotency keys and rate limits are per process unless
+`MISTHOS_REDIS_URL` points at Redis.
+Do not assume a live integration because a module names one.
 
 ## Project layout
 
@@ -42,7 +47,8 @@ HTTP or a contract, never by importing across folders.
 
 ```
 backend/     Python 3.11: FastAPI API, pure domain, agents, workers
-             src/misthos/{api,domain,services,models,observability}/
+             src/misthos/{api,domain,services,models,repositories,workers,
+                          migrations,observability}/
              tests/{unit,integration}/
 frontend/    Vite + React SPA, typed client generated from the API schema
              src/{routes,components,lib}/
@@ -91,6 +97,7 @@ mise run dev:edge        # edge service :8080
 mise run test            # backend + web + contracts
 mise run test:backend    # pytest
 mise run test:web        # vitest
+mise run test:edge       # node --test
 mise run test:contracts  # forge test
 mise run lint            # ruff + tsc for both TS packages
 mise run codegen         # regenerate frontend API types from the live schema
@@ -107,7 +114,7 @@ Prefer the `mise run` task over the underlying command so the tool versions matc
 
 [.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every pull request, in four
 jobs, one per runtime: `ruff` and `pytest`, then `tsc` and `vitest`, then the edge
-`tsc`, then `forge test`. Each job installs only its own dependencies through
+`tsc` and `node --test`, then `forge test`. Each job installs only its own dependencies through
 `mise run setup:<runtime>`, so a failure names the runtime it came from.
 
 `mise run ci` is the same thing locally. `MISTHOS_SIMULATED=true` is pinned in the
@@ -185,8 +192,11 @@ trim trailing whitespace (Markdown excluded).
 - NatSpec (`/// @title`, `@notice`, `@dev`) on contracts and non-obvious functions.
   Explain Arc-specific behaviour where it matters — the USDC dual decimal views,
   sub-second finality, the runtime blocklist.
-- **This contract only ever touches the 6-decimal ERC-20 USDC view.** Native 18-decimal
-  gas accounting is never handled in Solidity.
+- **This contract only ever touches a 6-decimal ERC-20 view.** USDC is an issue's
+  default denomination and EURC is the European publisher's option; both use 6
+  decimals. `setIssueToken` refuses any token whose `decimals()` is not 6, so the
+  native 18-decimal view can never enter the contract. Native gas accounting is
+  never handled in Solidity.
 - Tests are Foundry tests (`forge-std/Test.sol`) in `contracts/test/`, with a comment on
   each test explaining the invariant it protects, not what it does. `contracts/lib/` is
   cloned, never vendored.
@@ -197,7 +207,11 @@ trim trailing whitespace (Markdown excluded).
   `0x3600000000000000000000000000000000000000` is 6 decimals. In Python they are
   separate types (`Usdc`, `NativeUsdc`) in
   [domain/money.py](backend/src/misthos/domain/money.py) precisely so they cannot be
-  mixed. Everything except raw gas math uses the 6-decimal view.
+  mixed. Everything except raw gas math uses the 6-decimal view. EURC is a *different
+  token* with the same 6 decimals, and the escrow holds an issue in one of them, never
+  in a sum of both (`setIssueToken`). The backend has no currency of its own yet: every
+  amount it holds is USDC, and naming a currency to the gateway is the Arc client's
+  change (#69), which is also what widens `ChainGateway` to carry it.
 - **The platform never holds customer funds.** Any change that would put money in our
   custody, or enforce an agent limit in application code instead of in the escrow
   contract, breaks a design constraint — raise it rather than implementing it.

@@ -107,3 +107,7 @@ contracts/lib/
 # Python tooling
 .ruff_cache/
 .mypy_cache/
+
+# Playwright's run output
+frontend/playwright-report/
+frontend/test-results/

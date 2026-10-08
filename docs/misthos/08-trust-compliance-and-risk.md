@@ -87,6 +87,8 @@ Contributors are individuals with wallet addresses, and wallet addresses are pse
 
 The minimum posture: never publish the mapping between a wallet and a GitHub identity, collect identity documents only when required for payout, hold them with a provider rather than in our own storage, and publish a retention period. Publisher spend data is commercially sensitive and should never be visible to contributors beyond the price of the issue they claimed.
 
+The published policy, with its retention periods and how the code enforces it, is in [PRIVACY.md](../PRIVACY.md).
+
 ## Dispute resolution
 
 Disputes are rare and expensive, and the policy should be written before the first one rather than after.

@@ -11,6 +11,8 @@
     "codegen": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/lib/api-schema.d.ts"
   },
   "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
     "@tanstack/react-query": "^5.62.7",
     "openapi-fetch": "^0.13.4",
     "react": "^19.0.0",
@@ -18,6 +20,7 @@
     "react-router-dom": "^7.1.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",

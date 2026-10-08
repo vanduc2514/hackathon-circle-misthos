@@ -66,13 +66,15 @@ stateDiagram-v2
     InReview --> Accepted: the verdict passes
     InReview --> Rejected: the verdict rejects with reasons
     Rejected --> Funded: issue returns to the pool
+    Rejected --> Accepted: a contributor's dispute is upheld on a second review
     Accepted --> Paid: publisher merges, or the grace period expires
+    Accepted --> Rework: publisher declines once, with a reason
     Funded --> Refunded: deadline passes with no accepted work
     Refunded --> [*]
     Paid --> [*]
 ```
 
-Two states carry most of the design weight. `AwaitingApproval` is the human checkpoint that keeps the agent honest about price. `Accepted` is the window in which the publisher decides whether to merge, and it is the only other place a person reaches into the flow. Everything between them runs without one.
+Two states carry most of the design weight. `AwaitingApproval` is the human checkpoint that keeps the agent honest about price. `Accepted` is the window in which the publisher decides whether to merge, or to decline once with a reason, and it is the only other place a person reaches into the flow. Everything between them runs without one.
 
 ## How work is assigned
 

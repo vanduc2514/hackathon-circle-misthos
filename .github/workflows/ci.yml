@@ -31,6 +31,62 @@ jobs:
       - run: mise run lint:backend
       - run: mise run test:backend
 
+  # The same backend suite against a real Postgres and a real Redis.
+  # MISTHOS_DATABASE_URL switches the store from memory to the SQL repository, so every
+  # API and lifecycle test also proves the schema, the migrations and the save path
+  # (#23). MISTHOS_REDIS_URL moves the per-issue lock, idempotency keys and rate limits
+  # into Redis, so the guard tests prove them across processes (#67).
+  backend-postgres:
+    name: backend - pytest against Postgres and Redis
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: misthos
+          POSTGRES_PASSWORD: misthos
+          POSTGRES_DB: misthos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U misthos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MISTHOS_DATABASE_URL: postgresql+psycopg://misthos:misthos@localhost:5432/misthos
+      MISTHOS_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - run: mise run setup:backend
+      - run: mise run test:backend
+
+  # The whole system as it ships, from compose.yaml: four processes, Postgres and
+  # Redis. It passes when every service reports healthy and the web app serves the
+  # API through its proxy (#76).
+  compose:
+    name: compose - the whole system boots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker compose up --build --detach --wait --wait-timeout 600
+      - run: curl --fail --silent --show-error http://127.0.0.1:5173/api/v1/health
+      - run: curl --fail --silent --show-error http://127.0.0.1:8080/health
+      - if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down --volumes
+
   web:
     name: web - tsc and vitest
     runs-on: ubuntu-latest
@@ -41,14 +97,35 @@ jobs:
       - run: mise run lint:web
       - run: mise run test:web
 
+  # #73's definition of done, as a build: a publisher and a contributor take an
+  # issue from publication to payment through the web app, in Chromium, against the
+  # real API in the simulation.
+  e2e:
+    name: web - the loop in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - run: mise run setup:backend
+      - run: mise run setup:web
+      - run: mise run setup:e2e
+      - run: mise run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
   edge:
-    name: edge - tsc
+    name: edge - tsc and node test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
       - run: mise run setup:edge
       - run: mise run lint:edge
+      - run: mise run test:edge
 
   contracts:
     name: contracts - forge test
