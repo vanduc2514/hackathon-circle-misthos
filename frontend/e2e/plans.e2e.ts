@@ -14,8 +14,8 @@ test('a publisher buys Team from the web app', async ({ page, request }) => {
   await page.getByRole('button', { name: 'Demo publisher wallet' }).click()
   await page.getByLabel('Organisation name').fill('Initech')
   await page.getByRole('button', { name: 'Continue as a publisher' }).click()
-  await page.getByLabel('Or, in the simulation, any GitHub login').fill('initech')
-  await page.getByRole('button', { name: 'Link without GitHub' }).click()
+  await page.getByLabel('GitHub login').fill('initech')
+  await page.getByRole('button', { name: 'Link this login' }).click()
   await expect(page.getByRole('link', { name: 'publisher · initech' })).toBeVisible()
 
   // On Open, spend reporting answers with the plan that has it.

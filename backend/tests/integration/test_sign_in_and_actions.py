@@ -5,6 +5,7 @@ to payment without the demo stepper (#71)."""
 from __future__ import annotations
 
 import json
+from functools import partial
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -148,6 +149,130 @@ class TestGitHubLink:
         second.post(f"{API}/auth/role", json={"role": "contributor", "name": "b"})
         r = second.post(f"{API}/auth/github/simulate", json={"login": "same-login"})
         assert r.status_code == 409
+
+
+CALLBACK = "http://localhost:5173/api/v1/auth/github/callback"
+
+
+class TestLinkingARealGitHubAccount:
+    """#118: "Link with GitHub" is offered only where it can work, says what to set up
+    where it cannot, and with an OAuth App configured links the account end to end."""
+
+    @pytest.fixture
+    def unconfigured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "github_oauth_client_id", "")
+        monkeypatch.setattr(settings, "github_oauth_client_secret", "")
+
+    @pytest.fixture
+    def github_oauth(self, monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
+        """An OAuth App configured as the README says, and a GitHub that answers as the
+        real one does, refusing a code exchanged for another callback than the one the
+        user was sent with."""
+        monkeypatch.setattr(settings, "github_oauth_client_id", "Iv1.local")
+        monkeypatch.setattr(settings, "github_oauth_client_secret", "local-secret")
+        seen: list[httpx.Request] = []
+
+        def github(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/login/oauth/access_token":
+                form = parse_qs(request.content.decode())
+                expected = {
+                    "client_id": ["Iv1.local"], "client_secret": ["local-secret"],
+                    "code": ["c0de"], "redirect_uri": [CALLBACK],
+                }  # fmt: skip
+                if form != expected:
+                    return httpx.Response(200, json={"error": "redirect_uri_mismatch"})
+                return httpx.Response(200, json={"access_token": "gho_once"})
+            if request.headers.get("Authorization") != "Bearer gho_once":
+                return httpx.Response(401, json={"message": "Bad credentials"})
+            return httpx.Response(200, json={"login": "ada-real"})
+
+        monkeypatch.setattr(
+            auth_routes, "GitHubOAuth", partial(GitHubOAuth, transport=httpx.MockTransport(github))
+        )
+        return seen
+
+    @pytest.mark.parametrize(("client_id", "secret"), [("", ""), ("Iv1.local", "")])
+    def test_health_says_whether_a_real_account_can_be_linked(
+        self, monkeypatch: pytest.MonkeyPatch, client_id: str, secret: str
+    ) -> None:
+        monkeypatch.setattr(settings, "github_oauth_client_id", client_id)
+        monkeypatch.setattr(settings, "github_oauth_client_secret", secret)
+        health = TestClient(app).get(f"{API}/health").json()
+        assert health["github_oauth"] is False
+        assert health["github_oauth_callback_url"] == CALLBACK
+
+    def test_without_an_oauth_app_linking_says_what_to_set_up(self, unconfigured: None) -> None:
+        client = TestClient(app)
+        sign_in(client, Wallet(24))
+        client.post(f"{API}/auth/role", json={"role": "contributor", "name": "ada"})
+
+        r = client.post(f"{API}/auth/github/start")
+
+        assert r.status_code == 503
+        detail = r.json()["detail"]
+        for needed in (
+            "MISTHOS_GITHUB_OAUTH_CLIENT_ID", "MISTHOS_GITHUB_OAUTH_CLIENT_SECRET", CALLBACK,
+        ):  # fmt: skip
+            assert needed in detail
+
+    def test_a_configured_oauth_app_links_the_account_end_to_end(
+        self, github_oauth: list[httpx.Request]
+    ) -> None:
+        client = TestClient(app)
+        assert client.get(f"{API}/health").json()["github_oauth"] is True
+        wallet = Wallet(25)
+        nonce = client.post(f"{API}/auth/nonce").json()["nonce"]
+        message = wallet.message(nonce)
+        verified = client.post(
+            f"{API}/auth/verify", json={"message": message, "signature": wallet.sign(message)}
+        )
+        # The browser sends this cookie on the top-level return from github.com, which
+        # is what lets the callback know whose link it finishes.
+        cookie = verified.headers["set-cookie"].lower()
+        assert "httponly" in cookie and "samesite=lax" in cookie and "path=/" in cookie
+        assert "secure" not in cookie  # http://localhost, where a Secure cookie is dropped
+        client.post(f"{API}/auth/role", json={"role": "contributor", "name": "ada"})
+
+        # From the web app on http://localhost:5173, through Vite's proxy.
+        start = client.post(
+            f"{API}/auth/github/start", headers={"Origin": "http://localhost:5173"}
+        )
+        assert start.status_code == 200, start.text
+        authorize = urlsplit(start.json()["authorize_url"])
+        query = parse_qs(authorize.query)
+        assert (authorize.netloc, authorize.path) == ("github.com", "/login/oauth/authorize")
+        assert query["client_id"] == ["Iv1.local"] and query["redirect_uri"] == [CALLBACK]
+
+        # GitHub sends the user back with a code and the state it was given.
+        back = client.get(
+            f"{API}/auth/github/callback",
+            params={"code": "c0de", "state": query["state"][0]},
+            follow_redirects=False,
+        )
+
+        assert back.status_code == 303, back.text
+        assert back.headers["location"] == "http://localhost:5173/account?linked=github"
+        account = client.get(f"{API}/auth/me").json()["account"]
+        assert account["github_login"] == "ada-real"
+        contributor = store.get_contributor(account["party_id"])
+        assert contributor is not None and contributor.handle == "ada-real"
+        assert [r.url.path for r in github_oauth] == ["/login/oauth/access_token", "/user"]
+
+    def test_a_browser_on_another_address_is_told_where_to_open_the_app(
+        self, github_oauth: list[httpx.Request]
+    ) -> None:
+        """GitHub returns to MISTHOS_PUBLIC_URL, and a session opened on 127.0.0.1 is
+        not sent there: said before the user approves on GitHub, not after."""
+        client = TestClient(app)
+        sign_in(client, Wallet(26))
+        client.post(f"{API}/auth/role", json={"role": "contributor", "name": "ada"})
+
+        r = client.post(f"{API}/auth/github/start", headers={"Origin": "http://127.0.0.1:5173"})
+
+        assert r.status_code == 409
+        assert "open the app at http://localhost:5173" in r.json()["detail"]
+        assert github_oauth == []
 
 
 class TestTheWholeLoopWithoutTheDemoStepper:

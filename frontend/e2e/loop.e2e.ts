@@ -36,8 +36,8 @@ async function onboard(page: Page, side: 'publisher' | 'contributor', name: stri
   await page.getByLabel(side === 'publisher' ? 'Organisation name' : 'Your name').fill(name)
   await page.getByRole('button', { name: `Continue as a ${side}` }).click()
   await expect(page.getByRole('heading', { name: 'Link your GitHub account' })).toBeVisible()
-  await page.getByLabel('Or, in the simulation, any GitHub login').fill(login)
-  await page.getByRole('button', { name: 'Link without GitHub' }).click()
+  await page.getByLabel('GitHub login').fill(login)
+  await page.getByRole('button', { name: 'Link this login' }).click()
   await expect(page.getByRole('link', { name: `${side} · ${login}` })).toBeVisible()
 }
 

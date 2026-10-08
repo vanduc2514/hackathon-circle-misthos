@@ -346,6 +346,10 @@ function ApproveAndFund({ issue, simulated, busy, run }: Step & { simulated: boo
 
 function Submit({ issue, simulated, busy, run }: Step & { simulated: boolean }) {
   const [prNumber, setPrNumber] = useState(issue.submission?.pr_number?.toString() ?? '')
+  // The commit the review already judged. A commit gets one verdict, so after a rework
+  // verdict or a decline the work goes back as a new commit. The same one is refused:
+  // in review it would wait for a review that never comes (#119).
+  const judged = issue.state === 'REWORK' ? (issue.review?.head_sha ?? null) : null
 
   const open = useMutation({
     mutationFn: async () =>
@@ -356,12 +360,16 @@ function Submit({ issue, simulated, busy, run }: Step & { simulated: boolean }) 
       ),
     onSuccess: (pr) => setPrNumber(String(pr.pr_number)),
   })
+  // The simulation knows the pull request's head, because this page pushed it. On
+  // GitHub only GitHub does, and submitting the judged commit is refused with why.
+  const pushed = open.data?.head_sha ?? null
+  const unpushed = simulated && judged !== null && (pushed === null || pushed === judged)
 
   return (
     <div className="form">
       <p className="dim action-hint">
         {issue.state === 'REWORK'
-          ? `Push the requested changes to #${issue.submission?.pr_number}, then submit it again.`
+          ? `Push the requested changes to #${issue.submission?.pr_number} as a new commit, then submit it again.${judged ? ` The review already judged ${judged.slice(0, 7)}, and a commit is judged once.` : ''}`
           : `Open a pull request on ${issue.repo} that says "Fixes #${issue.number}", then submit it here. Only a pull request you opened counts.`}
       </p>
       {simulated && (
@@ -392,7 +400,12 @@ function Submit({ issue, simulated, busy, run }: Step & { simulated: boolean }) 
             required
           />
         </label>
-        <button className="btn primary align-end" type="submit" disabled={busy || !prNumber}>
+        <button
+          className="btn primary align-end"
+          type="submit"
+          disabled={busy || !prNumber || unpushed}
+          title={unpushed ? 'Push a new commit first' : undefined}
+        >
           Submit for review
         </button>
       </form>

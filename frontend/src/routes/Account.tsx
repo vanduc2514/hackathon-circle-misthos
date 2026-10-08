@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, shortHash, unwrap, type Account } from '../lib/client'
+import { api, shortHash, unwrap, type Account, type HealthOut } from '../lib/client'
 import { signIn, signOut, useHealth, useMe } from '../lib/session'
 import { browserProvider, browserWallet, demoWallet, type Signer } from '../lib/wallet'
 import { setUpWallet } from '../lib/circle-wallet'
+import { linking } from '../lib/github-link'
 import { Panel } from '../components/ui'
 
 /**
@@ -134,8 +135,8 @@ export default function AccountPage() {
             )}
             {account && <PayoutWallet account={account} />}
             {!account && <ChooseSide onDone={changed} />}
-            {account && !account.github_login && (
-              <LinkGitHub account={account} simulated={simulated} onDone={changed} />
+            {account && !account.github_login && health.data && (
+              <LinkGitHub account={account} health={health.data} onDone={changed} />
             )}
           </>
         )}
@@ -321,14 +322,15 @@ function ChooseSide({ onDone }: { onDone: () => void }) {
 
 function LinkGitHub({
   account,
-  simulated,
+  health,
   onDone,
 }: {
   account: Account
-  simulated: boolean
+  health: HealthOut
   onDone: () => void
 }) {
   const [login, setLogin] = useState('')
+  const way = linking(health)
 
   const start = useMutation({
     mutationFn: async () => unwrap(await api.POST('/api/v1/auth/github/start')),
@@ -349,23 +351,42 @@ function LinkGitHub({
           : 'Claiming needs a GitHub account: only pull requests you open count as your work.'}{' '}
         We keep your login and nothing else.
       </p>
-      <div className="btn-row">
-        <button className="btn primary" onClick={() => start.mutate()} disabled={start.isPending}>
-          Link with GitHub
-        </button>
-      </div>
+      {way.oauth && (
+        <div className="btn-row">
+          <button className="btn primary" onClick={() => start.mutate()} disabled={start.isPending}>
+            Link with GitHub
+          </button>
+        </div>
+      )}
       {start.error && <div className="error-box form-error">{start.error.message}</div>}
-      {simulated && (
+      {way.notSetUp && (
+        <div className={way.notSetUp === 'deployment' ? 'error-box' : 'banner'} role="note">
+          GitHub linking isn't set up on this server
+          {way.notSetUp === 'simulation'
+            ? ', so in the simulation the login you type below is taken as yours.'
+            : ', so no GitHub account can be linked here yet, and publishing and claiming wait on it.'}{' '}
+          {way.notSetUp === 'simulation' ? 'To link your real account' : 'To fix it'}, whoever runs the
+          server creates a GitHub OAuth App with the callback{' '}
+          <code>{health.github_oauth_callback_url}</code>, sets{' '}
+          <code>MISTHOS_GITHUB_OAUTH_CLIENT_ID</code> and{' '}
+          <code>MISTHOS_GITHUB_OAUTH_CLIENT_SECRET</code>, and restarts the API.
+        </div>
+      )}
+      {way.byLogin && (
         <form
           className="form"
-          style={{ marginTop: 18 }}
+          style={{ marginTop: way.byLogin === 'other' ? 18 : 14 }}
           onSubmit={(e) => {
             e.preventDefault()
             simulate.mutate()
           }}
         >
           <label className="field">
-            <span>Or, in the simulation, any GitHub login</span>
+            <span>
+              {way.byLogin === 'main'
+                ? 'Your GitHub login'
+                : 'Or, in the simulation, any GitHub login'}
+            </span>
             <input
               className="input"
               value={login}
@@ -377,8 +398,12 @@ function LinkGitHub({
             />
           </label>
           <div className="btn-row">
-            <button className="btn" type="submit" disabled={simulate.isPending || !login.trim()}>
-              Link without GitHub
+            <button
+              className={way.byLogin === 'main' ? 'btn primary' : 'btn'}
+              type="submit"
+              disabled={simulate.isPending || !login.trim()}
+            >
+              Link this login
             </button>
           </div>
           {simulate.error && <div className="error-box form-error">{simulate.error.message}</div>}
