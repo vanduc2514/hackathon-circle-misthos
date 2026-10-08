@@ -1,0 +1,548 @@
+{
+  "description": "Hand-labelled regression cases for the review agent. Constructed, not historical: they pin what the rule reviewer must and must not conclude from a file list, including three known blind spots only a reviewer that reads the code can see. Agreement with human judgement on historical pull requests is #36's corpus, which this does not replace.",
+  "cases": [
+    {
+      "id": "readme-typo",
+      "band": "low",
+      "expected": "accept",
+      "note": "a docs-only fix, documented where asked",
+      "criteria": [
+        "The typo in the README is fixed."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "README.md",
+          "additions": 1,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "id": "fix-without-test",
+      "band": "low",
+      "expected": "rework",
+      "note": "the criteria ask for a test and none is changed",
+      "criteria": [
+        "A test reproduces the bug.",
+        "The fix is in the parser."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/parser.py",
+          "additions": 6,
+          "deletions": 2
+        }
+      ]
+    },
+    {
+      "id": "checks-failing",
+      "band": "low",
+      "expected": "rework",
+      "note": "a test is added but the project's checks fail",
+      "criteria": [
+        "A test covers the fix."
+      ],
+      "checks_passed": false,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/a.py",
+          "additions": 3,
+          "deletions": 1
+        },
+        {
+          "path": "tests/test_a.py",
+          "additions": 12,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "empty",
+      "band": "low",
+      "expected": "reject",
+      "note": "the pull request changes nothing",
+      "criteria": [
+        "The crash on empty input is fixed."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": []
+    },
+    {
+      "id": "fix-and-test",
+      "band": "low",
+      "expected": "accept",
+      "note": "the fix ships with the test the criteria ask for",
+      "criteria": [
+        "A test reproduces the bug.",
+        "The fix is covered by a test that fails before and passes after."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/locale.py",
+          "additions": 8,
+          "deletions": 3
+        },
+        {
+          "path": "tests/test_locale.py",
+          "additions": 20,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "no-changelog",
+      "band": "low",
+      "expected": "rework",
+      "note": "the changelog entry the criteria ask for is missing",
+      "criteria": [
+        "Public behaviour is documented in the changelog.",
+        "A test covers it."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/x.py",
+          "additions": 4,
+          "deletions": 1
+        },
+        {
+          "path": "tests/test_x.py",
+          "additions": 9,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "rounds-exhausted",
+      "band": "low",
+      "expected": "reject",
+      "note": "a third attempt still has no test",
+      "criteria": [
+        "A test reproduces the bug."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 2,
+      "files": [
+        {
+          "path": "src/x.py",
+          "additions": 2,
+          "deletions": 2
+        }
+      ]
+    },
+    {
+      "id": "blind-wrong-default",
+      "band": "low",
+      "expected": "rework",
+      "note": "BLIND SPOT: the change sets the default to 60s, not 30s; only reading the code shows it",
+      "criteria": [
+        "The timeout default is 30 seconds."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/config.py",
+          "additions": 1,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "id": "hook-complete",
+      "band": "medium",
+      "expected": "accept",
+      "note": "hook, docs with an example, and a test",
+      "criteria": [
+        "A plugin can be registered without touching core.",
+        "The hook is documented with a working example.",
+        "A test registers a plugin."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/core/hooks.py",
+          "additions": 60,
+          "deletions": 4
+        },
+        {
+          "path": "docs/plugins.md",
+          "additions": 30,
+          "deletions": 0
+        },
+        {
+          "path": "tests/test_hooks.py",
+          "additions": 25,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "hook-no-docs",
+      "band": "medium",
+      "expected": "rework",
+      "note": "the documented example is missing",
+      "criteria": [
+        "A plugin can be registered without touching core.",
+        "The hook is documented with a working example.",
+        "A test registers a plugin."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/core/hooks.py",
+          "additions": 60,
+          "deletions": 4
+        },
+        {
+          "path": "tests/test_hooks.py",
+          "additions": 25,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "go-jitter",
+      "band": "medium",
+      "expected": "accept",
+      "note": "Go test file next to the change",
+      "criteria": [
+        "Backoff includes jitter by default.",
+        "A test asserts the jittered spread is non-zero."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "retry/backoff.go",
+          "additions": 30,
+          "deletions": 8
+        },
+        {
+          "path": "retry/backoff_test.go",
+          "additions": 22,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "tsx-empty-state",
+      "band": "medium",
+      "expected": "accept",
+      "note": "component and its test",
+      "criteria": [
+        "The list renders an empty state.",
+        "A test covers the empty state."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/List.tsx",
+          "additions": 18,
+          "deletions": 2
+        },
+        {
+          "path": "src/List.test.tsx",
+          "additions": 24,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "rounds-exhausted-checks",
+      "band": "medium",
+      "expected": "reject",
+      "note": "checks still failing after two rework rounds",
+      "criteria": [
+        "A test covers the retry path."
+      ],
+      "checks_passed": false,
+      "rework_rounds": 2,
+      "files": [
+        {
+          "path": "src/retry.py",
+          "additions": 10,
+          "deletions": 3
+        },
+        {
+          "path": "tests/test_retry.py",
+          "additions": 14,
+          "deletions": 2
+        }
+      ]
+    },
+    {
+      "id": "test-only",
+      "band": "medium",
+      "expected": "accept",
+      "note": "the criteria ask only for a reproducing test",
+      "criteria": [
+        "A test reproduces the round-down on a half-cent value."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "tests/test_rounding.py",
+          "additions": 16,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "cli-help",
+      "band": "medium",
+      "expected": "accept",
+      "note": "flag implemented and documented in the readme",
+      "criteria": [
+        "A dry run prints the statements without executing them.",
+        "The flag is documented in the CLI help and the README."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "cli/main.py",
+          "additions": 25,
+          "deletions": 3
+        },
+        {
+          "path": "README.md",
+          "additions": 6,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "blind-core-import",
+      "band": "medium",
+      "expected": "rework",
+      "note": "BLIND SPOT: core still imports a concrete adapter; only reading the code shows it",
+      "criteria": [
+        "Core has no import of any concrete adapter."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/core/registry.py",
+          "additions": 40,
+          "deletions": 12
+        },
+        {
+          "path": "tests/test_registry.py",
+          "additions": 18,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "cve-complete",
+      "band": "high",
+      "expected": "accept",
+      "note": "fuzz case, fix, and a changelog line with the CVE",
+      "criteria": [
+        "A fuzz case reproduces the out-of-bounds read.",
+        "The parser rejects unterminated input before allocation.",
+        "The fix ships with a regression test and a CVE reference in the changelog."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/parse.c",
+          "additions": 20,
+          "deletions": 4
+        },
+        {
+          "path": "tests/fuzz/test_unterminated.c",
+          "additions": 35,
+          "deletions": 0
+        },
+        {
+          "path": "CHANGELOG.md",
+          "additions": 2,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "cve-no-changelog",
+      "band": "high",
+      "expected": "rework",
+      "note": "the CVE reference in the changelog is missing",
+      "criteria": [
+        "A fuzz case reproduces the out-of-bounds read.",
+        "The fix ships with a regression test and a CVE reference in the changelog."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/parse.c",
+          "additions": 20,
+          "deletions": 4
+        },
+        {
+          "path": "tests/fuzz/test_unterminated.c",
+          "additions": 35,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "cve-no-fuzz",
+      "band": "high",
+      "expected": "rework",
+      "note": "no fuzz case or regression test",
+      "criteria": [
+        "A fuzz case reproduces the out-of-bounds read.",
+        "The parser rejects unterminated input before allocation."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/parse.c",
+          "additions": 20,
+          "deletions": 4
+        },
+        {
+          "path": "CHANGELOG.md",
+          "additions": 2,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "sbom-report",
+      "band": "high",
+      "expected": "accept",
+      "note": "nothing the file list can disprove, checks green",
+      "criteria": [
+        "A report lists each shipped dependency with its last fix and its maintainer.",
+        "Generation is deterministic and repeatable."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/report/sbom.py",
+          "additions": 140,
+          "deletions": 0
+        },
+        {
+          "path": "src/report/export.py",
+          "additions": 60,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "rework-then-fixed",
+      "band": "high",
+      "expected": "accept",
+      "note": "second round adds the missing test",
+      "criteria": [
+        "Backwards compatibility is preserved for callers that pass nothing.",
+        "A test covers the per-request override."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 1,
+      "files": [
+        {
+          "path": "src/client.py",
+          "additions": 30,
+          "deletions": 6
+        },
+        {
+          "path": "tests/test_client.py",
+          "additions": 40,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "large-checks-red",
+      "band": "high",
+      "expected": "rework",
+      "note": "a large change whose checks fail",
+      "criteria": [
+        "Settlement adapters register through the hook."
+      ],
+      "checks_passed": false,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/settle/a.py",
+          "additions": 300,
+          "deletions": 20
+        },
+        {
+          "path": "src/settle/b.py",
+          "additions": 200,
+          "deletions": 40
+        }
+      ]
+    },
+    {
+      "id": "blind-half-up",
+      "band": "high",
+      "expected": "rework",
+      "note": "BLIND SPOT: only exponent 2 is fixed; only reading the code shows it",
+      "criteria": [
+        "Rounding is half-up for every currency exponent the library supports.",
+        "A test reproduces the round-down on a half-cent value."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/rounding.py",
+          "additions": 12,
+          "deletions": 4
+        },
+        {
+          "path": "tests/test_rounding.py",
+          "additions": 16,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "vendored-test",
+      "band": "high",
+      "expected": "rework",
+      "note": "the only test touched belongs to vendored code",
+      "criteria": [
+        "A test covers the parser change."
+      ],
+      "checks_passed": true,
+      "rework_rounds": 0,
+      "files": [
+        {
+          "path": "src/parser.py",
+          "additions": 10,
+          "deletions": 2
+        },
+        {
+          "path": "vendor/lib/tests/test_x.py",
+          "additions": 5,
+          "deletions": 0
+        }
+      ]
+    }
+  ]
+}
