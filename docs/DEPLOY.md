@@ -104,7 +104,8 @@ owner, attestor and USDC, and the block to scan logs from. Commit it; the API re
 the address from it, so there is nothing to copy by hand. A dry run (without
 `--broadcast`) writes no record, and outside the simulation the API refuses a
 record whose address holds no code. `MISTHOS_ESCROW_CONTRACT` still pins an
-address explicitly and wins over the record.
+address explicitly and wins over the record. `MISTHOS_CHAIN_ID` names the network;
+there is no separate label to set.
 
 `GET /api/v1/issues/{id}/escrow` reads a commitment back: from the contract with
 `eth_call` when `MISTHOS_SIMULATED=false`, from the simulated escrow's books

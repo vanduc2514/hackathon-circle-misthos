@@ -7,13 +7,16 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from misthos.domain.network import Network, network_for
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MISTHOS_", env_file=".env", extra="ignore")
 
     app_name: str = "Misthos"
     simulated: bool = True
-    chain: str = "arc-testnet"
+    # The network's name, and whether its money is real, follow from the chain id;
+    # there is deliberately no separate label to set. See `network` below.
     chain_id: int = 5042002
     rpc_url: str = "https://rpc.testnet.arc.io"
     explorer_url: str = "https://explorer.testnet.arc.io"
@@ -112,6 +115,15 @@ class Settings(BaseSettings):
     # The name of the acceptance attestation key in the managed secret store. A
     # reference, never the key: see docs/runbooks/attestor-rotation.md.
     attestor_secret_ref: str = ""
+
+    @property
+    def network(self) -> Network:
+        return network_for(self.chain_id, simulated=self.simulated)
+
+    @property
+    def chain(self) -> str:
+        """The network's name, as recorded on escrows, wallets and statements."""
+        return self.network.name
 
     @property
     def cors_list(self) -> list[str]:

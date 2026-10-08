@@ -24,7 +24,7 @@ def money(amount: Usdc) -> dict[str, str | int]:
 
 class Wallet(BaseModel):
     address: str
-    chain: str = "arc-testnet"
+    chain: str = Field(description="The network the address was recorded on, from its chain id")
     circle_user_id: str | None = Field(
         default=None, description="Set once the address was read from the party's Circle wallet"
     )
@@ -583,7 +583,16 @@ class DisputeRequest(BaseModel):
 class HealthOut(BaseModel):
     status: str
     service: str
-    chain: str
+    chain: str = Field(description="Derived from chain_id: arc-mainnet, arc-testnet or chain-<id>")
+    chain_id: int
+    network_label: str
+    money: Literal["simulated", "test", "real", "unknown"] = Field(
+        description=(
+            "simulated: nothing moves; test: Arc testnet faucet USDC; real: Arc mainnet; "
+            "unknown: not an Arc network, so treat its USDC as real"
+        )
+    )
+    money_note: str
     seeded_issues: int
     simulated: bool
 

@@ -126,6 +126,21 @@ class TestHealth:
         assert body["simulated"] is True
         assert body["seeded_issues"] == 8
         assert body["chain"] == "arc-testnet"
+        assert body["chain_id"] == 5042002
+        assert body["money"] == "simulated"
+        assert "no money moves" in body["money_note"]
+
+    def test_the_label_follows_the_chain_id_at_request_time(self, client: TestClient) -> None:
+        original = (settings.chain_id, settings.simulated)
+        try:
+            settings.chain_id, settings.simulated = 5042, False
+            mainnet = client.get(f"{API}/health").json()
+            settings.chain_id = 8453
+            other = client.get(f"{API}/health").json()
+        finally:
+            settings.chain_id, settings.simulated = original
+        assert (mainnet["chain"], mainnet["money"]) == ("arc-mainnet", "real")
+        assert (other["chain"], other["money"]) == ("chain-8453", "unknown")
 
 
 class TestIssues:
