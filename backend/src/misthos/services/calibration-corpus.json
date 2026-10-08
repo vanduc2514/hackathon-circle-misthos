@@ -1,0 +1,4 @@
+{
+  "about": "Real issues whose worth is known, for python -m misthos.services.calibration (#41). Each entry: id (a link to the issue), signals (the six, scored 1 to 5 as the engine scores them), worth_usdc (what the buyer paid, or valued the fix at), source (where that number came from), and compliance_driven. Real issues only: an invented row calibrates the engine to the invention.",
+  "issues": []
+}

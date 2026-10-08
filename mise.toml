@@ -27,6 +27,35 @@ description = "Vite dev server on :5173"
 dir = "frontend"
 run = "npm run dev"
 
+[tasks."dev:worker"]
+description = "Run the sweeper as its own process (needs MISTHOS_DATABASE_URL)"
+dir = "backend"
+run = "uv run python -m misthos.workers"
+
+[tasks."db:migrate"]
+description = "Migrate MISTHOS_DATABASE_URL to the latest schema"
+dir = "backend"
+run = "uv run alembic upgrade head"
+
+[tasks."review:harness"]
+description = "Replay the review agent over the regression corpus and report agreement"
+dir = "backend"
+run = "uv run python -m misthos.services.review.harness"
+
+[tasks."pricing:calibrate"]
+description = "Replay the pricing engine over issues of known worth and fit the rate and weights"
+dir = "backend"
+run = "uv run python -m misthos.services.calibration"
+
+[tasks."compose:up"]
+description = "Build and run the whole system: web, api, worker, edge, Postgres and Redis"
+run = "docker compose up --build"
+
+[tasks."contracts:deploy"]
+description = "Deploy MisthosEscrow to Arc testnet with the misthos-deployer keystore"
+dir = "contracts"
+run = "forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast"
+
 [tasks."dev:edge"]
 description = "x402 gate and Circle CLI bridge on :8080"
 dir = "edge"
@@ -69,8 +98,19 @@ dir = "frontend"
 run = "npm run test"
 
 [tasks."test:edge"]
+description = "Run the edge service's tests"
 dir = "edge"
 run = "npm test"
+
+[tasks."setup:e2e"]
+description = "Install Chromium, and what it needs, for the browser tests"
+dir = "frontend"
+run = "npx playwright install --with-deps chromium"
+
+[tasks."test:e2e"]
+description = "Drive the whole loop in a browser, publisher and contributor (starts the API and the web app)"
+dir = "frontend"
+run = "npx playwright test"
 
 [tasks."test:contracts"]
 dir = "contracts"
@@ -86,9 +126,9 @@ dir = "backend"
 run = "uv run ruff check src tests"
 
 [tasks."lint:web"]
-description = "Typecheck the web app"
+description = "Typecheck the web app and its browser tests"
 dir = "frontend"
-run = "npx tsc --noEmit"
+run = "npx tsc --noEmit && npx tsc --noEmit -p tsconfig.e2e.json"
 
 [tasks."lint:edge"]
 description = "Typecheck the edge service"
@@ -104,5 +144,5 @@ description = "Regenerate the frontend API client from the live OpenAPI schema"
 run = "cd frontend && npm run codegen"
 
 [tasks.reset]
-description = "Reset the simulated data back to the seed"
-run = "curl -s -X POST http://127.0.0.1:8000/api/v1/demo/reset"
+description = "Reset the simulated data back to the seed (with a database, needs MISTHOS_ALLOW_DEMO_RESET=true)"
+run = "curl -sS --fail-with-body -X POST http://127.0.0.1:8000/api/v1/demo/reset"
