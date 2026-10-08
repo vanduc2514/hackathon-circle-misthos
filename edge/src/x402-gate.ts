@@ -59,13 +59,35 @@ export interface GateConfig {
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/
 
+// The spellings the backend's pydantic bool accepts for `MISTHOS_SIMULATED`, so the
+// two services can never read one variable differently. Only the literal string
+// "false" used to turn the gate off, so a deployment that set `MISTHOS_SIMULATED=0`
+// settled for real through the API while this gate kept answering the simulated
+// handshake and accepting any non-empty proof: metered endpoints given away, free.
+const TRUE_SPELLINGS = ['1', 'true', 't', 'yes', 'y', 'on']
+const FALSE_SPELLINGS = ['0', 'false', 'f', 'no', 'n', 'off']
+
+/** Whether the gate runs the simulation: what `MISTHOS_SIMULATED` says, read the way
+ * the backend reads it. Anything the backend would refuse is refused here too, rather
+ * than guessed at: a value neither service understands is a deployment mistake, and
+ * the safe answer to a mistake about money is to stop. */
+export function simulatedFrom(value: string | undefined): boolean {
+  const raw = (value ?? 'true').trim().toLowerCase()
+  if (TRUE_SPELLINGS.includes(raw)) return true
+  if (FALSE_SPELLINGS.includes(raw)) return false
+  throw new Error(
+    `MISTHOS_SIMULATED is not a boolean: ${JSON.stringify(value)}. ` +
+      'Use true/false, 1/0, yes/no, on/off, t/f or y/n.',
+  )
+}
+
 /**
  * Read the gate's configuration. Live mode refuses to start without a seller
  * address, and refuses mainnet unless EDGE_CONFIRM_MAINNET names chain 5042:
  * a confirmation step, not a flag that can be left on by accident.
  */
 export function gateConfig(env: NodeJS.ProcessEnv = process.env): GateConfig {
-  const simulated = (env.MISTHOS_SIMULATED ?? 'true').toLowerCase() !== 'false'
+  const simulated = simulatedFrom(env.MISTHOS_SIMULATED)
   const facilitatorUrl = env.GATEWAY_FACILITATOR_URL || TESTNET_FACILITATOR
   const networks = (env.GATEWAY_NETWORKS || ARC_TESTNET)
     .split(',')

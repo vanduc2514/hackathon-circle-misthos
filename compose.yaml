@@ -120,6 +120,14 @@ services:
     environment:
       EDGE_PORT: "8080"
       CORE_API_URL: http://api:8000
+      # Simulated by default, like the API. Settling x402 payments for real needs
+      # MISTHOS_SIMULATED=false and a seller address; see edge/.env.example for the
+      # facilitator, the networks and the mainnet confirmation.
+      MISTHOS_SIMULATED: ${MISTHOS_SIMULATED:-true}
+      MISTHOS_SELLER_ADDRESS: ${MISTHOS_SELLER_ADDRESS:-}
+      GATEWAY_FACILITATOR_URL: ${GATEWAY_FACILITATOR_URL:-}
+      GATEWAY_NETWORKS: ${GATEWAY_NETWORKS:-}
+      EDGE_CONFIRM_MAINNET: ${EDGE_CONFIRM_MAINNET:-}
     ports:
       - "8080:8080"
     depends_on:
