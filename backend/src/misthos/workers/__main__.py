@@ -9,10 +9,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from prometheus_client import start_http_server
-
 from misthos.config import settings
-from misthos.observability import logs
+from misthos.observability import logs, metrics
 from misthos.store import store
 from misthos.workers.sweeper import run_forever
 
@@ -27,7 +25,7 @@ def main() -> int:
         )
         return 1
     if settings.worker_metrics_port:
-        start_http_server(settings.worker_metrics_port)
+        metrics.serve(settings.worker_metrics_port)
     try:
         asyncio.run(run_forever(store, settings.sweep_interval_seconds))
     except KeyboardInterrupt:

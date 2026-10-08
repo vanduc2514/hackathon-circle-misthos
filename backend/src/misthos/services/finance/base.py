@@ -46,4 +46,8 @@ def dollars(value: object) -> Usdc:
         amount = Decimal(str(value).replace(",", "").strip())
     except (InvalidOperation, ValueError) as exc:
         raise FinanceError(f"not an amount: {value!r}") from exc
+    # "NaN" and "Infinity" parse as decimals and then fail to become base units with a
+    # ValueError or an OverflowError, which no caller expects from books.
+    if not amount.is_finite():
+        raise FinanceError(f"not an amount: {value!r}")
     return Usdc(int((amount * 1_000_000).to_integral_value()))

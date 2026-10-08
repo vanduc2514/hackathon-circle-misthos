@@ -47,7 +47,6 @@ class FireflyIII:
 
     def read(self, now: datetime) -> FinanceContext:
         today = now.date().isoformat()
-        left_out: set[str] = set()
         try:
             with httpx.Client(
                 base_url=self.base_url,
@@ -64,9 +63,21 @@ class FireflyIII:
                     {"start": today, "end": today},
                 )
                 accounts = self._all(http, "/api/v1/accounts", {"type": "asset"})
+            return self._context(limits, accounts, now)
         except httpx.HTTPError as exc:
             raise FinanceError(f"Firefly III could not be read: {exc}") from exc
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            # A 200 that is not the API's document: a proxy's login page or an empty
+            # body where JSON belongs (JSONDecodeError is a ValueError), a page count
+            # that is not a number, or rows of another shape. The books did not answer,
+            # which is a FinanceError, so the declared budget stands rather than the
+            # error escaping the store's guard and blocking the price.
+            raise FinanceError(f"Firefly III did not answer as its API does: {exc!r}") from exc
 
+    def _context(
+        self, limits: list[dict[str, Any]], accounts: list[dict[str, Any]], now: datetime
+    ) -> FinanceContext:
+        left_out: set[str] = set()
         budget: Usdc | None = None
         for limit in limits:
             a = limit.get("attributes", {})

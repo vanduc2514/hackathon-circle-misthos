@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import httpx
 import pytest
@@ -69,6 +71,67 @@ class TestFireflyIII:
     def test_a_refused_token_is_an_error_not_a_zero_budget(self) -> None:
         with pytest.raises(FinanceError, match="refused the token"):
             self._firefly([], status=401).read(NOW)
+
+
+class TestBooksThatAnswerWithSomethingElse:
+    """The declared budget stands in for books that cannot be read only if a failed read
+    is a FinanceError: anything else escapes the store's guard and breaks publishing,
+    repricing and relisting for that publisher."""
+
+    REPLIES: dict[str, Callable[[], httpx.Response]] = {
+        "a login page": lambda: httpx.Response(
+            200, text="<html><body>Sign in</body></html>", headers={"content-type": "text/html"}
+        ),
+        "an empty body": lambda: httpx.Response(200, content=b""),
+        "a page count that is not a number": lambda: httpx.Response(
+            200, json={"data": [], "meta": {"pagination": {"total_pages": "many"}}}
+        ),
+        "a list for a document": lambda: httpx.Response(200, json=["data"]),
+        "rows that are not objects": lambda: httpx.Response(200, json={"data": ["1", "2"]}),
+        "attributes that are null": lambda: httpx.Response(
+            200, json={"data": [{"id": "1", "attributes": None}]}
+        ),
+        "spending that is not a list": lambda: httpx.Response(
+            200,
+            json={
+                "data": [{"attributes": {"amount": "10", "currency_code": "USD", "spent": "750"}}]
+            },
+        ),
+        "an amount that is not a number": lambda: httpx.Response(
+            200, json={"data": [{"attributes": {"amount": "NaN", "currency_code": "USD"}}]}
+        ),
+        "an amount without end": lambda: httpx.Response(
+            200, json={"data": [{"attributes": {"amount": "Infinity", "currency_code": "USD"}}]}
+        ),
+    }
+
+    @pytest.mark.parametrize("reply", REPLIES.values(), ids=REPLIES.keys())
+    def test_firefly_is_a_finance_error(self, reply: Callable[[], httpx.Response]) -> None:
+        transport = httpx.MockTransport(lambda _request: reply())
+        books = FireflyIII("https://firefly.acme.example", "pat", "3", transport=transport)
+        with pytest.raises(FinanceError):
+            books.read(NOW)
+
+    def test_a_ledger_that_is_not_utf8_is_a_finance_error(self, tmp_path: Path) -> None:
+        ledger = tmp_path / "latin1.beancount"
+        text = '2026-10-02 * "Caf\u00e9"\n  Expenses:OpenSource  5.00 USD\n  Assets:Bank\n'
+        ledger.write_bytes(text.encode("latin-1"))
+        with pytest.raises(FinanceError):
+            Beancount(ledger, "Expenses:OpenSource", ["Assets:Bank"]).read(NOW)
+
+    def test_a_ledger_with_an_impossible_date_is_a_finance_error(self, tmp_path: Path) -> None:
+        ledger = tmp_path / "typo.beancount"
+        typo = '2026-02-30 * "Typo"\n  Expenses:OpenSource  5.00 USD\n  Assets:Bank\n'
+        ledger.write_text(LEDGER + "\n" + typo)
+        with pytest.raises(FinanceError, match="2026-02-30"):
+            Beancount(ledger, "Expenses:OpenSource", ["Assets:Bank"]).read(NOW)
+
+    def test_a_budget_past_what_a_decimal_holds_is_a_finance_error(self, tmp_path: Path) -> None:
+        ledger = tmp_path / "huge.beancount"
+        huge = "99999999999999999999999.00"
+        ledger.write_text(f'2026-10-01 custom "budget" Expenses:OpenSource "monthly" {huge} USD\n')
+        with pytest.raises(FinanceError):
+            Beancount(ledger, "Expenses:OpenSource", ["Assets:Bank"]).read(NOW)
 
 
 LEDGER = """

@@ -9,8 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from misthos.api.router import api_router
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.observability import logs
+from misthos.observability.metrics import exported
 from misthos.observability.middleware import RequestContext
 from misthos.store import store
 from misthos.workers.sweeper import run_forever
@@ -34,6 +36,7 @@ Everything lives under `/api/v1`.
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Run the sweeper beside the API unless a dedicated worker process owns it."""
     logs.configure(json_lines=settings.log_json, level=settings.log_level)
+    sessions.warn_if_unshared()
     sweeper = (
         asyncio.create_task(run_forever(store, settings.sweep_interval_seconds))
         if settings.sweeper_in_process
@@ -49,6 +52,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    # uvicorn sets up its own loggers, imports the app, then writes its first line.
+    # Configured only at startup, "Started server process" and "Waiting for
+    # application startup." stayed plain text in a JSON log, so when uvicorn is the
+    # importer its loggers are taken over now. Anyone else importing the app, a test
+    # included, is left alone until startup.
+    if logs.uvicorn_configured():
+        logs.configure(json_lines=settings.log_json, level=settings.log_level)
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
@@ -72,8 +82,10 @@ def create_app() -> FastAPI:
     @app.get("/internal/metrics", include_in_schema=False)
     async def prometheus() -> Response:
         """For the metrics scraper. Not proxied by the web app; keep it off the
-        public internet."""
-        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        public internet. The sweeper's series are here only when the sweeper runs in
+        this process; otherwise the worker serves them."""
+        registry = exported(sweeper=settings.sweeper_in_process)
+        return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:

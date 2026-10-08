@@ -84,6 +84,13 @@ services:
     environment:
       <<: *backend-env
       MISTHOS_WORKER_METRICS_PORT: "9100"
+    # The sweeper runs here, so the ledger divergence gauge and the sweep timings are
+    # scraped from here: worker:9100 on the compose network, and on this machine
+    # only, like the API's /internal/metrics.
+    expose:
+      - "9100"
+    ports:
+      - "127.0.0.1:9100:9100"
     healthcheck:
       test:
         - CMD
