@@ -10,6 +10,11 @@ key and letting settings ignore it — into a refusal to start.
 
 Rotation is an operational step rather than a redeploy, and the procedure with its
 verification and rollback is in `docs/runbooks/attestor-rotation.md`.
+
+Nothing in the current build signs yet: the settlement path is `SimulatedChain`, which
+attests nothing, so the reader of this key is the Arc client that implements
+`services/chain/base.py:ChainGateway` (#69). The seam is deliberate — that client has
+one module to call, and no other code path can reach the key.
 """
 
 from __future__ import annotations
@@ -64,13 +69,35 @@ class LocalSecretStore:
         self._directory = Path(directory)
 
     def read(self, reference: str) -> str | None:
+        """The secret at `reference`, refusing anything another user can read.
+
+        Opened with `O_NOFOLLOW` and then checked and read through the same file
+        descriptor. Checking a path and then reading it is two lookups, so a symlink
+        dropped at the reference between them would be read after a mode check that
+        never saw it — and a symlink is exactly what `_assert_bare_reference` cannot
+        refuse, because the reference itself looks bare.
+        """
         _assert_bare_reference(reference)
         path = self._directory / reference
-        if not path.is_file():
+        try:
+            # Windows has no O_NOFOLLOW; there the reference is read as before.
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError:
             return None
-        if path.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-            raise AttestorKeyError(f"{path} is readable by another user; chmod 600 it")
-        return path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise AttestorKeyError(f"{path} cannot be read: {exc.strerror}") from exc
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                raise AttestorKeyError(f"{path} is not a regular file")
+            if info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                raise AttestorKeyError(f"{path} is readable by another user; chmod 600 it")
+            handle = os.fdopen(fd, encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle:
+            return handle.read().strip()
 
 
 @dataclass(frozen=True)

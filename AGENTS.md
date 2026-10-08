@@ -31,9 +31,14 @@ agent reviews the pull request against the acceptance criteria, and payment sett
 
 ### Current status
 
-A scaffold with a working simulation. The lifecycle, pricing engine, escrow contract and
-decision log are real code; the GitHub calls and the money are fake — no chain is
-contacted. Do not assume a live integration because a module names one.
+A scaffold with a working simulation. The lifecycle, pricing engine, escrow contract,
+decision log, money ledger and its timers are real code; the money is fake — no chain
+is contacted, and the escrow is a simulated one behind the chain gateway. GitHub is
+simulated too unless a GitHub App is configured (`MISTHOS_GITHUB_APP_ID`), in which
+case issues are read and pull request events move the lifecycle for real. State is in memory unless `MISTHOS_DATABASE_URL` points at Postgres, and the
+per-issue lock, idempotency keys and rate limits are per process unless
+`MISTHOS_REDIS_URL` points at Redis.
+Do not assume a live integration because a module names one.
 
 ## Project layout
 
@@ -42,7 +47,8 @@ HTTP or a contract, never by importing across folders.
 
 ```
 backend/     Python 3.11: FastAPI API, pure domain, agents, workers
-             src/misthos/{api,domain,services,models,observability}/
+             src/misthos/{api,domain,services,models,repositories,workers,
+                          migrations,observability}/
              tests/{unit,integration}/
 frontend/    Vite + React SPA, typed client generated from the API schema
              src/{routes,components,lib}/
@@ -91,6 +97,7 @@ mise run dev:edge        # edge service :8080
 mise run test            # backend + web + contracts
 mise run test:backend    # pytest
 mise run test:web        # vitest
+mise run test:edge       # node --test
 mise run test:contracts  # forge test
 mise run lint            # ruff + tsc for both TS packages
 mise run codegen         # regenerate frontend API types from the live schema
@@ -107,7 +114,7 @@ Prefer the `mise run` task over the underlying command so the tool versions matc
 
 [.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every pull request, in four
 jobs, one per runtime: `ruff` and `pytest`, then `tsc` and `vitest`, then the edge
-`tsc`, then `forge test`. Each job installs only its own dependencies through
+`tsc` and `node --test`, then `forge test`. Each job installs only its own dependencies through
 `mise run setup:<runtime>`, so a failure names the runtime it came from.
 
 `mise run ci` is the same thing locally. `MISTHOS_SIMULATED=true` is pinned in the

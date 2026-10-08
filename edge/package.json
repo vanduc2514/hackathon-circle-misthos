@@ -7,10 +7,15 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "node --test"
+    "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "@circle-fin/user-controlled-wallets": "^10.8.1",
+    "@circle-fin/x402-batching": "^3.5.0",
+    "@x402/core": "^2.28.0",
+    "@x402/evm": "^2.28.0",
+    "express": "^4.21.2",
+    "viem": "^2.57.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

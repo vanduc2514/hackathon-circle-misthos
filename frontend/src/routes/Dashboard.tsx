@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api, money, relativeTime, type Decision, type IssueSummaryOut, type MetricsOut } from '../lib/client'
+import { api, money, relativeTime, unwrap, type Decision, type IssueSummaryOut, type MetricsOut } from '../lib/client'
 import { Bar, Panel, Stat, StateBadge } from '../components/ui'
 
 export default function Dashboard() {
@@ -19,8 +19,9 @@ export default function Dashboard() {
     queryFn: async () => (await api.GET('/api/v1/issues')).data as IssueSummaryOut[] | undefined,
   })
 
+  // Refused with a reason where a database is configured and reset is not allowed.
   const reset = useMutation({
-    mutationFn: async () => (await api.POST('/api/v1/demo/reset')).data,
+    mutationFn: async () => unwrap(await api.POST('/api/v1/demo/reset')),
     onSuccess: () => qc.invalidateQueries(),
   })
 
@@ -46,18 +47,21 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+      {reset.error && <div className="error-box form-error">{reset.error.message}</div>}
 
       <div className="banner">
-        Simulated build. The lifecycle, the pricing engine and the decision log are real
-        code; the money and the GitHub calls are fake. No chain is contacted.
+        Simulated build. The lifecycle, the pricing engine, the review agent and the
+        decision log are real code; the money is fake and no chain is contacted. GitHub
+        is simulated until a GitHub App is configured.
       </div>
 
       <div className="hero">
         <div className="hero-cell">
-          <div className="hero-label">North star &middot; settled issues</div>
-          <div className="hero-value">{m?.settled_issues ?? '—'}</div>
+          <div className="hero-label">North star &middot; settled issues this week</div>
+          <div className="hero-value">{m?.settled_issues_7d ?? '—'}</div>
           <div className="hero-note">
             An issue counts only when a pull request merged and the payment released.
+            {m ? ` ${m.settled_issues} settled in all.` : ''}
             {m?.median_hours_to_payout != null &&
               ` Median ${m.median_hours_to_payout}h from claim to payout.`}
           </div>
@@ -113,6 +117,29 @@ export default function Dashboard() {
           label="Repeat publishers"
           value={m ? `${Math.round(m.repeat_publisher_rate * 100)}%` : '—'}
           hint="A marketplace of first transactions has no business under it"
+        />
+      </div>
+
+      <div className="grid k4">
+        <Stat
+          label="Refund rate"
+          value={m ? `${Math.round(m.refund_rate * 100)}%` : '—'}
+          hint="Commitments that closed with the money going back. Target under 15%"
+        />
+        <Stat
+          label="Dispute rate"
+          value={m ? `${Math.round(m.dispute_rate * 100)}%` : '—'}
+          hint="Submissions whose contributor disputed a verdict. Target under 5%"
+        />
+        <Stat
+          label="Paid $500+ this month"
+          value={m?.earners_over_500_share != null ? `${Math.round(m.earners_over_500_share * 100)}%` : '—'}
+          hint="Of contributors paid in the last 30 days. Target above 30%"
+        />
+        <Stat
+          label="Top 10 share of payouts"
+          value={m?.top10_payout_share != null ? `${Math.round(m.top10_payout_share * 100)}%` : '—'}
+          hint="A marketplace, not a roster. Target under 50%"
         />
       </div>
 

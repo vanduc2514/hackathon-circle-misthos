@@ -36,9 +36,13 @@ TRANSITIONS: dict[IssueState, frozenset[IssueState]] = {
     IssueState.REWORK: frozenset({IssueState.IN_REVIEW}),
     # ACCEPTED means the platform's verdict passed and the publisher has not merged
     # yet. That is the grace window, not a resting state.
-    IssueState.ACCEPTED: frozenset({IssueState.PAID}),
+    # A publisher may decline a passing verdict, with a reason, once (#54); the work
+    # goes back for rework rather than the money back to them.
+    IssueState.ACCEPTED: frozenset({IssueState.PAID, IssueState.REWORK}),
     IssueState.PAID: frozenset(),
-    IssueState.REJECTED: frozenset({IssueState.FUNDED}),
+    # A rejection sends the issue back to the pool, or, when the contributor's
+    # dispute is upheld on a second review, on to acceptance (#39).
+    IssueState.REJECTED: frozenset({IssueState.FUNDED, IssueState.ACCEPTED}),
     IssueState.REFUNDED: frozenset(),
 }
 
@@ -67,6 +71,14 @@ HUMAN_CHECKPOINTS = frozenset(
 # A passing verdict releases without a signature once the publisher has been silent
 # this long. The only release path that does not carry one. See 08.
 SILENT_PUBLISHER_GRACE = timedelta(days=7)
+
+# How long the first claim holds an issue exclusively. With no pull request by then
+# the issue returns to the pool, which is what stops squatting on good work. See 05.
+CLAIM_WINDOW = timedelta(hours=72)
+
+# How long committed funds wait for acceptable work before they go back to the
+# publisher. The escrow contract holds the same deadline on chain.
+ESCROW_TERM = timedelta(days=14)
 
 
 class IllegalTransition(Exception):

@@ -4,6 +4,140 @@
  */
 
 export interface paths {
+    "/api/v1/auth/nonce": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Nonce
+         * @description A one-time nonce, and what the sign-in message must say around it.
+         */
+        post: operations["nonce_api_v1_auth_nonce_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify
+         * @description Check the signed message, spend its nonce, and start a session.
+         */
+        post: operations["verify_api_v1_auth_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["logout_api_v1_auth_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Me */
+        get: operations["me_api_v1_auth_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Choose Role
+         * @description The first sign-in's one choice: publisher or contributor.
+         */
+        post: operations["choose_role_api_v1_auth_role_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/github/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Github Link
+         * @description Where to send the user to approve linking their GitHub account.
+         */
+        post: operations["start_github_link_api_v1_auth_github_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/github/simulate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Simulate Github Link
+         * @description Link a GitHub login without OAuth, for the simulation's demo only.
+         */
+        post: operations["simulate_github_link_api_v1_auth_github_simulate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -84,7 +218,8 @@ export interface paths {
         put?: never;
         /**
          * Advance
-         * @description Move the issue one step along the demo path.
+         * @description Move the issue one step along the demo path. The simulation's only: it
+         *     fabricates the pull request, so a deployment uses the explicit actions.
          */
         post: operations["advance_api_v1_issues__issue_id__advance_post"];
         delete?: never;
@@ -104,9 +239,201 @@ export interface paths {
         put?: never;
         /**
          * Complete
-         * @description Run the rest of the happy path: verdict, merge, release.
+         * @description Run the rest of the happy path: verdict, merge, release. The simulation's only.
          */
         post: operations["complete_api_v1_issues__issue_id__complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decline
+         * @description The publisher declines work the review passed, with a reason. Once per issue:
+         *     the work goes back for rework, and after that the merge or the grace period
+         *     settles it.
+         */
+        post: operations["decline_api_v1_issues__issue_id__decline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/approve-release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Release
+         * @description A named approver approves a release held over the organisation's threshold.
+         *
+         *     The approver is whoever is signed in, by the GitHub login linked to their account,
+         *     and the organisation must have named that login. A name in the request would let
+         *     anyone who knew an approver's name release the money, so it counts only in the
+         *     simulation, for a visitor who is not signed in, as the claim's does.
+         */
+        post: operations["approve_release_api_v1_issues__issue_id__approve_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/criteria": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Criteria
+         * @description The publisher edits the drafted acceptance criteria and approves them. No
+         *     issue is funded without approved criteria (#21).
+         */
+        post: operations["approve_criteria_api_v1_issues__issue_id__criteria_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/fund": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fund
+         * @description The publisher approves the price, and the money is committed to the escrow.
+         */
+        post: operations["fund_api_v1_issues__issue_id__fund_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim
+         * @description A contributor takes the exclusive, time-boxed claim. First claim wins.
+         */
+        post: operations["claim_api_v1_issues__issue_id__claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit
+         * @description The claimant submits their pull request for review. GitHub says who opened it,
+         *     and only the claimant's own pull request counts.
+         */
+        post: operations["submit_api_v1_issues__issue_id__submit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Review
+         * @description Have the review agent judge the submitted commit now rather than on the
+         *     sweeper's next pass. The publisher or the claimant may ask.
+         */
+        post: operations["review_api_v1_issues__issue_id__review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/loop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Loop
+         * @description The loop in public: issues funded, settled and paid, for one repository or all.
+         *     Built for a repository's watchers to see, so it carries no wallet or transfer.
+         */
+        get: operations["loop_api_v1_loop_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/dispute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispute
+         * @description The contributor challenges a rework or reject verdict: the same commit is
+         *     reviewed again against the published criteria, and the outcome is recorded.
+         */
+        post: operations["dispute_api_v1_issues__issue_id__dispute_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -120,25 +447,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Publishers */
+        /**
+         * List Publishers
+         * @description Every publisher. Outside the simulation a publisher's budget and spending
+         *     policy are served only to that publisher, signed in.
+         */
         get: operations["list_publishers_api_v1_publishers_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/contributors": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Contributors */
-        get: operations["list_contributors_api_v1_contributors_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -184,6 +498,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/demo/issues/{issue_id}/pull-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo Pull Request
+         * @description Open the claimant's pull request on the simulated GitHub, so the browser can
+         *     submit it. The simulation's only; submitting stays the claimant's own action.
+         */
+        post: operations["demo_pull_request_api_v1_demo_issues__issue_id__pull_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/demo/issues/{issue_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo Merge
+         * @description Merge the submitted pull request on the simulated GitHub, as the publisher
+         *     would on the real one; it is handled exactly as that merge's webhook. The
+         *     simulation's only.
+         */
+        post: operations["demo_merge_api_v1_demo_issues__issue_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/demo/reset": {
         parameters: {
             query?: never;
@@ -193,8 +550,271 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reset */
+        /**
+         * Reset
+         * @description Put the simulation back to its seed. With a database configured this deletes
+         *     every row in it, so it is refused there unless MISTHOS_ALLOW_DEMO_RESET is set.
+         */
         post: operations["reset_api_v1_demo_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/contributors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Contributors
+         * @description Public profiles. A wallet is never served next to a handle; see docs/PRIVACY.md.
+         */
+        get: operations["list_contributors_api_v1_contributors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/contributors/{contributor_id}/reputation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reputation
+         * @description What a contributor's reputation is made of: one event per settled issue, from
+         *     the money ledger and nothing else. Public, like the settlement comment it mirrors.
+         */
+        get: operations["reputation_api_v1_contributors__contributor_id__reputation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/contributors/{contributor_id}/statements/{year}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Statement
+         * @description One contributor's payouts for one calendar year, to file from.
+         *
+         *     A statement is personal: its settlement references would link a wallet to a
+         *     handle. It is served to the signed-in contributor it belongs to, and by the
+         *     simulation, whose numbers are not real; an operator exports one with
+         *     `python -m misthos.services.statements`.
+         */
+        get: operations["statement_api_v1_contributors__contributor_id__statements__year__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Policy
+         * @description Replace the organisation's spending policy: a release threshold with its named
+         *     approvers, and monthly limits per issue label.
+         */
+        put: operations["set_policy_api_v1_publishers__publisher_id__policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/spend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spend
+         * @description What was budgeted, committed, released and refunded in a year, by category,
+         *     and the settled fixes to file for a security review.
+         */
+        get: operations["spend_api_v1_publishers__publisher_id__spend_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit
+         * @description The decision record and the money events for every issue the organisation
+         *     funded, unedited, as JSON or one sortable CSV.
+         */
+        get: operations["audit_api_v1_publishers__publisher_id__audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/finance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Finance
+         * @description The declared budget, what the publisher's connected books say, and the lower of
+         *     the two, which is what caps every price it is offered. Read-only, and the
+         *     publisher's alone: cash and budgets are commercially sensitive.
+         */
+        get: operations["finance_api_v1_publishers__publisher_id__finance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Repositories
+         * @description The repositories this publisher installed the GitHub App on (#6). An issue there
+         *     given the label is priced without opening the web app.
+         */
+        get: operations["repositories_api_v1_publishers__publisher_id__repositories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Plans
+         * @description What each plan costs and includes, with the take rate and the smallest fix
+         *     it will price.
+         */
+        get: operations["list_plans_api_v1_plans_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Subscription
+         * @description The plan in force, its period, what is waiting to be paid, and every payment.
+         */
+        get: operations["subscription_api_v1_publishers__publisher_id__subscription_get"];
+        put?: never;
+        /**
+         * Subscribe
+         * @description Choose a plan. A paid plan answers with what to send and where; choosing Open
+         *     cancels at the end of the paid period.
+         */
+        post: operations["subscribe_api_v1_publishers__publisher_id__subscription_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/publishers/{publisher_id}/subscription/payment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Payment
+         * @description Confirm the transaction that paid. The server reads it from the chain, and the
+         *     plan switches on only if it moved what is due from the publisher's wallet to ours.
+         */
+        post: operations["confirm_payment_api_v1_publishers__publisher_id__subscription_payment_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/demo/publishers/{publisher_id}/subscription/pay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo Pay
+         * @description Send what is due on the simulation's rail and confirm it. The simulation's only.
+         */
+        post: operations["demo_pay_api_v1_demo_publishers__publisher_id__subscription_pay_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -219,10 +839,183 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/wallets/{party}/{party_id}/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Session
+         * @description Start a Circle wallet session for a publisher or contributor.
+         *
+         *     Returns the user token and, when the party has no Arc wallet yet, the PIN
+         *     challenge their browser runs. The platform never sees the PIN or the key.
+         *     An address that already exists is linked straight away.
+         */
+        post: operations["start_session_api_v1_wallets__party___party_id__session_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wallets/{party}/{party_id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link
+         * @description After the challenge completes, read the address back from Circle and keep it.
+         */
+        post: operations["link_api_v1_wallets__party___party_id__link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * Account
+         * @description A signed-in wallet and the one role it chose (#70).
+         */
+        Account: {
+            /** Address */
+            address: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "publisher" | "contributor";
+            /** Party Id */
+            party_id: string;
+            /** Github Login */
+            github_login?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * AnnualStatement
+         * @description Every payout one contributor received in one calendar year, in UTC.
+         *
+         *     Built for a finance team to file from without asking anything: each line carries
+         *     its date, issue, counterparty, amount and settlement reference.
+         */
+        AnnualStatement: {
+            /** Contributor Id */
+            contributor_id: string;
+            /** Handle */
+            handle: string;
+            /** Year */
+            year: number;
+            /** Identity Status */
+            identity_status: string;
+            /** Lines */
+            lines: components["schemas"]["StatementLine"][];
+            /** Total */
+            total: {
+                [key: string]: string | number;
+            };
+            /** Payouts */
+            payouts: number;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Simulated */
+            simulated: boolean;
+        };
+        /** ApproveReleaseRequest */
+        ApproveReleaseRequest: {
+            /** Approver */
+            approver?: string | null;
+        };
+        /**
+         * AuditExport
+         * @description Everything an auditor needs about one organisation's issues, from the decision
+         *     log and the money ledger, unedited (#52).
+         */
+        AuditExport: {
+            /** Publisher Id */
+            publisher_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Simulated */
+            simulated: boolean;
+            /** Issues */
+            issues: components["schemas"]["AuditIssue"][];
+        };
+        /** AuditIssue */
+        AuditIssue: {
+            /** Id */
+            id: string;
+            /** Repo */
+            repo: string;
+            /** Number */
+            number: number;
+            /** Title */
+            title: string;
+            /** State */
+            state: string;
+            /** Labels */
+            labels: string[];
+            /** Compliance Driven */
+            compliance_driven: boolean;
+            /** Acceptance Criteria */
+            acceptance_criteria: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Price */
+            price: {
+                [key: string]: string | number;
+            } | null;
+            /** Decisions */
+            decisions: components["schemas"]["Decision"][];
+            /** Money Events */
+            money_events: components["schemas"]["AuditMoneyEvent"][];
+        };
+        /** AuditMoneyEvent */
+        AuditMoneyEvent: {
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Kind */
+            kind: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /** Counterparty Id */
+            counterparty_id: string;
+            /** Tx Hash */
+            tx_hash: string | null;
+        };
         /** Claim */
         Claim: {
             /** Contributor Id */
@@ -243,13 +1036,39 @@ export interface components {
              */
             active: boolean;
         };
-        /** Contributor */
-        Contributor: {
+        /** ClaimRequest */
+        ClaimRequest: {
+            /** Contributor Id */
+            contributor_id?: string | null;
+        };
+        /**
+         * ComparableOut
+         * @description A settled issue of similar shape the price was compared with (#42).
+         */
+        ComparableOut: {
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Title */
+            title: string;
+            /** Price Usdc */
+            price_usdc: string;
+            /**
+             * Settled At
+             * Format: date-time
+             */
+            settled_at: string;
+        };
+        /**
+         * ContributorProfile
+         * @description What anyone may see about a contributor: no wallet, no provider reference.
+         */
+        ContributorProfile: {
             /** Id */
             id: string;
             /** Handle */
             handle: string;
-            wallet: components["schemas"]["Wallet"];
             /** Reputation */
             reputation: number;
             /** Settled Issues */
@@ -258,6 +1077,11 @@ export interface components {
             earned_usdc: string;
             /** Verified */
             verified: boolean;
+        };
+        /** CriteriaRequest */
+        CriteriaRequest: {
+            /** Criteria */
+            criteria: string[];
         };
         /** Decision */
         Decision: {
@@ -283,6 +1107,28 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** DeclineRequest */
+        DeclineRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * DemoPullRequestOut
+         * @description A pull request the simulated GitHub opened for the claimant (simulation only).
+         */
+        DemoPullRequestOut: {
+            /** Pr Number */
+            pr_number: number;
+            /** Author */
+            author: string;
+            /** Head Sha */
+            head_sha: string;
+        };
+        /** DisputeRequest */
+        DisputeRequest: {
+            /** Reason */
+            reason: string;
         };
         /** EscrowCommitment */
         EscrowCommitment: {
@@ -313,6 +1159,69 @@ export interface components {
              * @default false
              */
             refunded: boolean;
+        };
+        /**
+         * FileableItem
+         * @description One settled fix, with what a security review needs to file it.
+         */
+        FileableItem: {
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Number */
+            number: number;
+            /** Title */
+            title: string;
+            /** Labels */
+            labels: string[];
+            /** Compliance Driven */
+            compliance_driven: boolean;
+            /** Acceptance Criteria */
+            acceptance_criteria: string[];
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /**
+             * Settled At
+             * Format: date-time
+             */
+            settled_at: string;
+            /** Github Url */
+            github_url: string;
+        };
+        /**
+         * FinanceOut
+         * @description A publisher's money as the pricing engine sees it, for that publisher alone (#43).
+         */
+        FinanceOut: {
+            /** Publisher Id */
+            publisher_id: string;
+            /** Declared Budget Usdc */
+            declared_budget_usdc: string;
+            /** Connected */
+            connected: boolean;
+            /** Source */
+            source?: string | null;
+            /** Budget Remaining Usdc */
+            budget_remaining_usdc?: string | null;
+            /** Cash Usdc */
+            cash_usdc?: string | null;
+            /** As Of */
+            as_of?: string | null;
+            /** Caps Prices At Usdc */
+            caps_prices_at_usdc: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** GitHubLinkStart */
+        GitHubLinkStart: {
+            /** Authorize Url */
+            authorize_url: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -374,6 +1283,13 @@ export interface components {
             paid_usdc?: string | null;
             /** Github Url */
             github_url: string;
+            /** Criteria Approved At */
+            criteria_approved_at?: string | null;
+            /**
+             * Awaiting Approver
+             * @default false
+             */
+            awaiting_approver: boolean;
         };
         /** IssueSummaryOut */
         IssueSummaryOut: {
@@ -402,12 +1318,74 @@ export interface components {
             /** Github Url */
             github_url: string;
         };
-        /** MetricsOut */
+        /**
+         * LoopOut
+         * @description The loop in public: what was funded, settled and paid, for one repository or
+         *     all of them. No wallet and no transfer appears here.
+         */
+        LoopOut: {
+            /** Repo */
+            repo: string | null;
+            /** Funded Open */
+            funded_open: number;
+            /** Settled Issues */
+            settled_issues: number;
+            /** Settled Issues 7D */
+            settled_issues_7d: number;
+            /** Matched Volume Usdc */
+            matched_volume_usdc: string;
+            /** Recent */
+            recent: components["schemas"]["LoopSettlement"][];
+        };
+        /** LoopSettlement */
+        LoopSettlement: {
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Number */
+            number: number;
+            /** Title */
+            title: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /** Contributor */
+            contributor: string;
+            /**
+             * Settled At
+             * Format: date-time
+             */
+            settled_at: string;
+            /** Github Url */
+            github_url: string;
+        };
+        /** MeOut */
+        MeOut: {
+            /** Address */
+            address: string;
+            account: components["schemas"]["Account"] | null;
+        };
+        /**
+         * MetricsOut
+         * @description Every number is computed from the ledger and the lifecycle records (09).
+         */
         MetricsOut: {
             /** Settled Issues */
             settled_issues: number;
+            /**
+             * Settled Issues 7D
+             * @default 0
+             */
+            settled_issues_7d: number;
             /** Funded Issues Published */
             funded_issues_published: number;
+            /**
+             * Funded Issues 7D
+             * @default 0
+             */
+            funded_issues_7d: number;
             /** Claim Rate 72H */
             claim_rate_72h: number;
             /** Acceptance Rate First Review */
@@ -418,15 +1396,116 @@ export interface components {
             matched_volume_usdc: string;
             /** Median Hours To Payout */
             median_hours_to_payout: number | null;
+            /**
+             * Refund Rate
+             * @default 0
+             */
+            refund_rate: number;
             /** Dispute Rate */
             dispute_rate: number;
             /** Publisher Overturn Rate */
             publisher_overturn_rate: number;
+            /** Earners Over 500 Share */
+            earners_over_500_share?: number | null;
+            /** Top10 Payout Share */
+            top10_payout_share?: number | null;
             /** Open Issues */
             open_issues: number;
             /** By State */
             by_state: {
                 [key: string]: number;
+            };
+            /**
+             * Reviews Issued
+             * @default 0
+             */
+            reviews_issued: number;
+            /** Median Review Seconds */
+            median_review_seconds?: number | null;
+            /** Median Review Cost Usdc */
+            median_review_cost_usdc?: string | null;
+        };
+        /** NonceOut */
+        NonceOut: {
+            /** Nonce */
+            nonce: string;
+            /** Domain */
+            domain: string;
+            /** Uri */
+            uri: string;
+            /** Chain Id */
+            chain_id: number;
+            /** Statement */
+            statement: string;
+        };
+        /** PaymentConfirmation */
+        PaymentConfirmation: {
+            /** Tx Hash */
+            tx_hash: string;
+        };
+        /**
+         * PaymentRequest
+         * @description What to send to start or renew a plan: USDC on Arc, from the publisher's wallet.
+         */
+        PaymentRequest: {
+            /**
+             * Plan
+             * @enum {string}
+             */
+            plan: "open" | "team" | "enterprise";
+            /** Amount Usdc */
+            amount_usdc: string;
+            /** Pay To */
+            pay_to: string;
+            /** Payer */
+            payer: string;
+            /** Chain */
+            chain: string;
+            /** Chain Id */
+            chain_id: number;
+            /** Usdc Address */
+            usdc_address: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+        };
+        /** PlanOut */
+        PlanOut: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "open" | "team" | "enterprise";
+            /** Name */
+            name: string;
+            /** Audience */
+            audience: string;
+            /** Monthly Usdc */
+            monthly_usdc: string;
+            /** Price From */
+            price_from: boolean;
+            /** Self Serve */
+            self_serve: boolean;
+            /** Take Rate Percent */
+            take_rate_percent: number;
+            /** Minimum Fix Usdc */
+            minimum_fix_usdc: string;
+            /** Features */
+            features: string[];
+            /** Support */
+            support: string;
+        };
+        /** PolicyRequest */
+        PolicyRequest: {
+            /** Approval Threshold Usdc */
+            approval_threshold_usdc?: string | null;
+            /** Approvers */
+            approvers?: string[];
+            /** Category Limits */
+            category_limits?: {
+                [key: string]: string;
             };
         };
         /** PriceProposalOut */
@@ -465,6 +1544,8 @@ export interface components {
             justification: string;
             /** Comparables Note */
             comparables_note: string;
+            /** Comparables */
+            comparables?: components["schemas"]["ComparableOut"][];
         };
         /** PublishRequest */
         PublishRequest: {
@@ -515,6 +1596,99 @@ export interface components {
             wallet: components["schemas"]["Wallet"];
             /** Budget Remaining Usdc */
             budget_remaining_usdc: string;
+            /** Approval Threshold Usdc */
+            approval_threshold_usdc?: string | null;
+            /** Approvers */
+            approvers?: string[];
+            /** Category Limits */
+            category_limits?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * PublisherListing
+         * @description A publisher as anyone may see it. Its budget and spending policy are
+         *     commercially sensitive, so outside the simulation they are filled in only for
+         *     the signed-in publisher itself ([PRIVACY.md](../../docs/PRIVACY.md)).
+         */
+        PublisherListing: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "company" | "maintainer";
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "open" | "team" | "enterprise";
+            wallet: components["schemas"]["Wallet"];
+            /** Budget Remaining Usdc */
+            budget_remaining_usdc?: string | null;
+            /** Approval Threshold Usdc */
+            approval_threshold_usdc?: string | null;
+            /** Approvers */
+            approvers?: string[];
+            /** Category Limits */
+            category_limits?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * RepoConnection
+         * @description A repository the GitHub App is installed on, and the publisher it belongs to.
+         */
+        RepoConnection: {
+            /** Repo */
+            repo: string;
+            /** Installation Id */
+            installation_id: number;
+            /** Installed By */
+            installed_by: string;
+            /** Publisher Id */
+            publisher_id?: string | null;
+            /**
+             * Connected At
+             * Format: date-time
+             */
+            connected_at: string;
+        };
+        /**
+         * RepositoriesOut
+         * @description A publisher's connected repositories, and how to connect more.
+         */
+        RepositoriesOut: {
+            /** Repositories */
+            repositories: components["schemas"]["RepoConnection"][];
+            /** Label */
+            label: string;
+            /** Install Url */
+            install_url?: string | null;
+        };
+        /**
+         * ReputationEventOut
+         * @description One settled issue's contribution to a contributor's standing.
+         */
+        ReputationEventOut: {
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /** Points */
+            points: number;
+            /**
+             * Settled At
+             * Format: date-time
+             */
+            settled_at: string;
         };
         /**
          * Review
@@ -536,6 +1710,142 @@ export interface components {
              * Format: date-time
              */
             decided_at: string;
+            /** Head Sha */
+            head_sha?: string | null;
+            /** Reviewer */
+            reviewer?: string | null;
+            /** Seconds */
+            seconds?: number | null;
+            /** Cost Usdc */
+            cost_usdc?: string | null;
+        };
+        /** RoleRequest */
+        RoleRequest: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "publisher" | "contributor";
+            /** Name */
+            name: string;
+            /**
+             * Budget Usdc
+             * @default 5000
+             */
+            budget_usdc: string;
+        };
+        /** SessionOut */
+        SessionOut: {
+            /** Address */
+            address: string;
+            /** Token */
+            token: string;
+            account: components["schemas"]["Account"] | null;
+        };
+        /** SignInRequest */
+        SignInRequest: {
+            /** Message */
+            message: string;
+            /** Signature */
+            signature: string;
+        };
+        /** SimulatedLink */
+        SimulatedLink: {
+            /** Login */
+            login: string;
+        };
+        /** SpendCategory */
+        SpendCategory: {
+            /** Label */
+            label: string;
+            /** Committed */
+            committed: {
+                [key: string]: string | number;
+            };
+            /** Released */
+            released: {
+                [key: string]: string | number;
+            };
+            /** Committed This Month */
+            committed_this_month: {
+                [key: string]: string | number;
+            };
+            /** Limit */
+            limit?: {
+                [key: string]: string | number;
+            } | null;
+        };
+        /**
+         * SpendOut
+         * @description What an organisation budgeted, committed, released and can file (#50).
+         */
+        SpendOut: {
+            /** Publisher Id */
+            publisher_id: string;
+            /** Name */
+            name: string;
+            /** Year */
+            year: number;
+            /** Month */
+            month: string;
+            /** Budget Remaining */
+            budget_remaining: {
+                [key: string]: string | number;
+            };
+            /** Committed Held */
+            committed_held: {
+                [key: string]: string | number;
+            };
+            /** Committed */
+            committed: {
+                [key: string]: string | number;
+            };
+            /** Released */
+            released: {
+                [key: string]: string | number;
+            };
+            /** Refunded */
+            refunded: {
+                [key: string]: string | number;
+            };
+            /** By Category */
+            by_category: components["schemas"]["SpendCategory"][];
+            /** Fileable */
+            fileable: components["schemas"]["FileableItem"][];
+        };
+        /** StatementLine */
+        StatementLine: {
+            /**
+             * Paid At
+             * Format: date-time
+             */
+            paid_at: string;
+            /** Issue Id */
+            issue_id: string;
+            /** Repo */
+            repo: string;
+            /** Issue Number */
+            issue_number: number;
+            /** Issue Title */
+            issue_title: string;
+            /** Counterparty Id */
+            counterparty_id: string;
+            /** Counterparty Name */
+            counterparty_name: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /**
+             * Currency
+             * @default USDC
+             * @constant
+             */
+            currency: "USDC";
+            /** Chain */
+            chain: string;
+            /** Tx Hash */
+            tx_hash: string | null;
         };
         /** Submission */
         Submission: {
@@ -544,13 +1854,84 @@ export interface components {
             /** Head Sha */
             head_sha: string;
             /** Checks Passed */
-            checks_passed: boolean;
+            checks_passed: boolean | null;
             /** Files Changed */
             files_changed: number;
             /** Additions */
             additions: number;
             /** Deletions */
             deletions: number;
+        };
+        /** SubmitRequest */
+        SubmitRequest: {
+            /** Pr Number */
+            pr_number: number;
+        };
+        /** SubscribeRequest */
+        SubscribeRequest: {
+            /**
+             * Plan
+             * @enum {string}
+             */
+            plan: "open" | "team" | "enterprise";
+        };
+        /** SubscriptionOut */
+        SubscriptionOut: {
+            /** Publisher Id */
+            publisher_id: string;
+            /**
+             * Plan
+             * @enum {string}
+             */
+            plan: "open" | "team" | "enterprise";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "none" | "pending" | "active" | "past_due" | "lapsed" | "cancelled" | "contract";
+            /** Period End */
+            period_end?: string | null;
+            /** Grace Ends */
+            grace_ends?: string | null;
+            /**
+             * Cancel At Period End
+             * @default false
+             */
+            cancel_at_period_end: boolean;
+            pending?: components["schemas"]["PaymentRequest"] | null;
+            /** Payments */
+            payments?: components["schemas"]["SubscriptionPayment"][];
+            /** Features */
+            features?: string[];
+        };
+        /** SubscriptionPayment */
+        SubscriptionPayment: {
+            /** Publisher Id */
+            publisher_id: string;
+            /**
+             * Plan
+             * @enum {string}
+             */
+            plan: "open" | "team" | "enterprise";
+            /** Amount Usdc */
+            amount_usdc: string;
+            /** Tx Hash */
+            tx_hash: string;
+            /**
+             * Period Start
+             * Format: date-time
+             */
+            period_start: string;
+            /**
+             * Period End
+             * Format: date-time
+             */
+            period_end: string;
+            /**
+             * Paid At
+             * Format: date-time
+             */
+            paid_at: string;
         };
         /** TimelineEntry */
         TimelineEntry: {
@@ -595,6 +1976,40 @@ export interface components {
              * @default arc-testnet
              */
             chain: string;
+            /**
+             * Circle User Id
+             * @description Set once the address was read from the party's Circle wallet
+             */
+            circle_user_id?: string | null;
+        };
+        /**
+         * WalletSessionOut
+         * @description What the browser needs to run Circle's PIN challenge for its own wallet.
+         */
+        WalletSessionOut: {
+            /**
+             * Party
+             * @enum {string}
+             */
+            party: "publisher" | "contributor";
+            /** Party Id */
+            party_id: string;
+            /** Circle User Id */
+            circle_user_id: string;
+            /** App Id */
+            app_id: string;
+            /** User Token */
+            user_token: string;
+            /** Encryption Key */
+            encryption_key: string;
+            /**
+             * Challenge Id
+             * @description None when the wallet already exists
+             */
+            challenge_id: string | null;
+            wallet: components["schemas"]["Wallet"] | null;
+            /** Simulated */
+            simulated: boolean;
         };
     };
     responses: never;
@@ -605,6 +2020,183 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    nonce_api_v1_auth_nonce_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NonceOut"];
+                };
+            };
+        };
+    };
+    verify_api_v1_auth_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    logout_api_v1_auth_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    me_api_v1_auth_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeOut"];
+                };
+            };
+        };
+    };
+    choose_role_api_v1_auth_role_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_github_link_api_v1_auth_github_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubLinkStart"];
+                };
+            };
+        };
+    };
+    simulate_github_link_api_v1_auth_github_simulate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SimulatedLink"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_api_v1_health_get: {
         parameters: {
             query?: never;
@@ -662,7 +2254,10 @@ export interface operations {
     publish_api_v1_issues_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -757,6 +2352,333 @@ export interface operations {
     advance_api_v1_issues__issue_id__advance_post: {
         parameters: {
             query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Illegal step, busy issue or refused by the escrow */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_api_v1_issues__issue_id__complete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Illegal step, busy issue or refused by the escrow */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decline_api_v1_issues__issue_id__decline_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeclineRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Not awaiting the merge, or already declined once */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_release_api_v1_issues__issue_id__approve_release_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ApproveReleaseRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Not signed in with a GitHub login the organisation named, or the contributor being paid */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No release is waiting for approval */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_criteria_api_v1_issues__issue_id__criteria_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CriteriaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fund_api_v1_issues__issue_id__fund_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_api_v1_issues__issue_id__claim_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ClaimRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_api_v1_issues__issue_id__submit_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_api_v1_issues__issue_id__review_post: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 issue_id: string;
@@ -785,13 +2707,14 @@ export interface operations {
             };
         };
     };
-    complete_api_v1_issues__issue_id__complete_post: {
+    loop_api_v1_loop_get: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                issue_id: string;
+            query?: {
+                /** @description owner/name; every repository if empty */
+                repo?: string | null;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -802,8 +2725,53 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["LoopOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispute_api_v1_issues__issue_id__dispute_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisputeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": components["schemas"]["IssueOut"];
                 };
+            };
+            /** @description Nothing to dispute, or already disputed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -831,27 +2799,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Publisher"][];
-                };
-            };
-        };
-    };
-    list_contributors_api_v1_contributors_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Contributor"][];
+                    "application/json": components["schemas"]["PublisherListing"][];
                 };
             };
         };
@@ -907,6 +2855,99 @@ export interface operations {
             };
         };
     };
+    demo_pull_request_api_v1_demo_issues__issue_id__pull_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoPullRequestOut"];
+                };
+            };
+            /** @description Outside the simulation, or not the claimant */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Nothing claimed and waiting for a pull request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    demo_merge_api_v1_demo_issues__issue_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description Outside the simulation, or not the publisher */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No pull request to merge, or nothing to release */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     reset_api_v1_demo_reset_post: {
         parameters: {
             query?: never;
@@ -925,6 +2966,415 @@ export interface operations {
                     "application/json": {
                         [key: string]: number;
                     };
+                };
+            };
+            /** @description Outside the simulation, or a database is configured and its operator has not allowed reset */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_contributors_api_v1_contributors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributorProfile"][];
+                };
+            };
+        };
+    };
+    reputation_api_v1_contributors__contributor_id__reputation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                contributor_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReputationEventOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    statement_api_v1_contributors__contributor_id__statements__year__get: {
+        parameters: {
+            query?: {
+                format?: "json" | "csv";
+            };
+            header?: never;
+            path: {
+                contributor_id: string;
+                year: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnualStatement"];
+                    "text/csv": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_policy_api_v1_publishers__publisher_id__policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Publisher"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    spend_api_v1_publishers__publisher_id__spend_get: {
+        parameters: {
+            query?: {
+                year?: number | null;
+            };
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpendOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_api_v1_publishers__publisher_id__audit_get: {
+        parameters: {
+            query?: {
+                format?: "json" | "csv";
+            };
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExport"];
+                    "text/csv": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finance_api_v1_publishers__publisher_id__finance_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FinanceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    repositories_api_v1_publishers__publisher_id__repositories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoriesOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_plans_api_v1_plans_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanOut"][];
+                };
+            };
+        };
+    };
+    subscription_api_v1_publishers__publisher_id__subscription_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    subscribe_api_v1_publishers__publisher_id__subscription_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubscribeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_payment_api_v1_publishers__publisher_id__subscription_payment_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaymentConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    demo_pay_api_v1_demo_publishers__publisher_id__subscription_pay_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -957,6 +3407,7 @@ export interface operations {
             header?: {
                 "x-hub-signature-256"?: string | null;
                 "x-github-event"?: string | null;
+                "x-github-delivery"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -972,6 +3423,70 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_session_api_v1_wallets__party___party_id__session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                party: "publisher" | "contributor";
+                party_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    link_api_v1_wallets__party___party_id__link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                party: "publisher" | "contributor";
+                party_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Wallet"];
                 };
             };
             /** @description Validation Error */

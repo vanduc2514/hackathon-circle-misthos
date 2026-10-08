@@ -76,6 +76,17 @@ class TestReadingTheKey:
         with pytest.raises(AttestorKeyError, match="not a secret reference"):
             load_attestor_key(LocalSecretStore(tmp_path), "../outside")
 
+    def test_a_symlinked_reference_is_refused(self, tmp_path: Path) -> None:
+        """A bare reference cannot be refused by name, so the file itself must not be
+        a link: checking a path and then reading it is two lookups, and the mode that
+        was checked would not be the file that was read."""
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        (tmp_path / REFERENCE).symlink_to(_mounted_secret(outside, value=KEY))
+
+        with pytest.raises(AttestorKeyError, match="cannot be read"):
+            load_attestor_key(LocalSecretStore(tmp_path), REFERENCE)
+
     def test_a_secret_that_is_not_key_material_is_refused(self, tmp_path: Path) -> None:
         _mounted_secret(tmp_path, value="hunter2")
 
@@ -111,8 +122,14 @@ class TestTheKeyNeverLeaks:
             create_app()
 
     def test_settings_carry_a_reference_and_no_key_at_all(self) -> None:
-        assert "attestor_secret_ref" in Settings.model_fields
-        assert not [name for name in Settings.model_fields if "private" in name]
+        """The attestor's only setting is the reference, so no field can be its key.
+
+        The GitHub App's private key is a different secret for a different boundary,
+        and it is read from the environment like the rest of that integration.
+        """
+        assert [name for name in Settings.model_fields if "attestor" in name] == [
+            "attestor_secret_ref"
+        ]
         assert not [
             name
             for name in Settings.model_fields

@@ -8,6 +8,20 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    # Persistence: Postgres in a deployment, SQLite for a local file. See repositories/.
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    # The per-issue lock, idempotency keys and rate limits across processes.
+    "redis>=5.0",
+    # The GitHub App: signed JWTs for installation tokens, and the REST calls.
+    "httpx>=0.27",
+    "pyjwt[crypto]>=2.8",
+    # Latency, cost, money-event and reconciliation metrics for Prometheus.
+    "prometheus-client>=0.21",
+    # Sign-In with Ethereum: secp256k1 recovery and Keccak-256 (#70).
+    "coincurve>=20",
+    "pycryptodome>=3.20",
 ]
 
 [project.optional-dependencies]
@@ -18,6 +32,8 @@ dev = [
     "ruff>=0.7",
     # The CI workflow guard test reads .github/workflows/ci.yml.
     "pyyaml>=6.0",
+    # An in-process Redis for the coordinator's tests.
+    "fakeredis[lua]>=2.26",
 ]
 
 [build-system]
@@ -28,7 +44,8 @@ build-backend = "hatchling.build"
 packages = ["src/misthos"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# tests/ too, for the shared helpers (a test wallet that signs in).
+pythonpath = ["src", "tests"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
