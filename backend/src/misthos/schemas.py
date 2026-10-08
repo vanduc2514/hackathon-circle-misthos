@@ -172,6 +172,23 @@ class EscrowCommitment(BaseModel):
     refunded: bool = False
 
 
+class EscrowReadback(BaseModel):
+    """A commitment as the escrow reports it, not as the platform remembers it."""
+
+    issue_id: str
+    issue_key: str = Field(description="bytes32 the contract stores the issue under")
+    contract: str
+    chain_id: int
+    source: Literal["chain", "simulation"] = Field(
+        description="chain: read from MisthosEscrow; simulation: the simulated escrow's books"
+    )
+    status: Literal["none", "held", "released", "refunded"]
+    publisher: str | None
+    amount: dict[str, str | int]
+    deadline: datetime | None
+    explorer_url: str
+
+
 class Claim(BaseModel):
     contributor_id: str
     issued_at: datetime

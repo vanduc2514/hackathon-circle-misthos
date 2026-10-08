@@ -46,6 +46,43 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+class TestEscrowReadback:
+    def _first(self, client: TestClient, state: str) -> str:
+        rows = client.get(f"{API}/issues", params={"state": state}).json()
+        assert rows, f"seed has no {state} issue"
+        return rows[0]["id"]
+
+    def test_a_funded_issue_reads_back_from_the_escrow_books(self, client: TestClient) -> None:
+        issue_id = self._first(client, "funded")
+        body = client.get(f"{API}/issues/{issue_id}/escrow").json()
+        issue = client.get(f"{API}/issues/{issue_id}").json()
+
+        assert body["source"] == "simulation"
+        assert body["status"] == "held"
+        assert body["amount"] == issue["escrow"]["amount"]
+        assert len(body["issue_key"]) == 66
+        assert body["explorer_url"].endswith(body["contract"])
+
+    def test_an_issue_never_committed_reads_back_as_none(self, client: TestClient) -> None:
+        body = client.get(
+            f"{API}/issues/{self._first(client, 'awaiting_approval')}/escrow"
+        ).json()
+        assert body["status"] == "none"
+        assert body["publisher"] is None
+
+    def test_the_answer_is_the_escrow_not_the_issue_record(self, client: TestClient) -> None:
+        # Move the escrow without the platform, as a compromised key would: the
+        # readback must report the escrow's state, not the platform's memory.
+        from misthos.domain.ledger import EscrowStatus
+
+        issue_id = self._first(client, "funded")
+        store.chain.tamper(issue_id, EscrowStatus.REFUNDED)  # type: ignore[attr-defined]
+        assert client.get(f"{API}/issues/{issue_id}/escrow").json()["status"] == "refunded"
+
+    def test_an_unknown_issue_is_404(self, client: TestClient) -> None:
+        assert client.get(f"{API}/issues/ISS-9999/escrow").status_code == 404
+
+
 class TestHealth:
     def test_health_reports_the_simulation(self, client: TestClient) -> None:
         body = client.get(f"{API}/health").json()

@@ -16,7 +16,12 @@ class Settings(BaseSettings):
     chain: str = "arc-testnet"
     chain_id: int = 5042002
     rpc_url: str = "https://rpc.testnet.arc.io"
-    escrow_contract: str = "0x7A3f19bE5c2D80416aB9e0C7d3F5a12B6c8E4d90"
+    explorer_url: str = "https://explorer.testnet.arc.io"
+    # Where `mise run contracts:deploy` recorded MisthosEscrow. Empty means the record
+    # for `chain_id` under contracts/deployments/. An explicit `escrow_contract` wins.
+    # With neither, only the simulation runs, under a placeholder labelled as such.
+    escrow_deployment_file: str = ""
+    escrow_contract: str = ""
     usdc_address: str = "0x3600000000000000000000000000000000000000"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 

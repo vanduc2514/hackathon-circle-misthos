@@ -15,7 +15,9 @@ from misthos.api.session import (
 )
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
+from misthos.domain.escrow import issue_key
 from misthos.domain.issue import IllegalTransition, IssueState
+from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import UnfundableIssue
 from misthos.repositories import StaleIssue
@@ -28,6 +30,7 @@ from misthos.schemas import (
     DeclineRequest,
     DemoPullRequestOut,
     DisputeRequest,
+    EscrowReadback,
     HealthOut,
     IssueOut,
     IssueSummaryOut,
@@ -38,12 +41,14 @@ from misthos.schemas import (
     PublishRequest,
     SubmitRequest,
     TimelineEntry,
+    money,
 )
-from misthos.services.chain import ChainRevert
+from misthos.services.chain import ArcEscrow, ChainGateway, ChainRevert, ChainUnavailable
 from misthos.services.coordination import Busy
 from misthos.services.github import GitHubError
 from misthos.services.review import ReviewFailed
 from misthos.store import (
+    ESCROW,
     CriteriaNotApproved,
     DeclineRefused,
     DisputeRefused,
@@ -147,6 +152,36 @@ async def get_issue(issue_id: str) -> IssueOut:
 @router.get("/issues/{issue_id}/timeline", response_model=list[TimelineEntry])
 async def get_timeline(issue_id: str) -> list[TimelineEntry]:
     return store.timeline(await _require(issue_id))
+
+
+def _escrow_source() -> tuple[ChainGateway, str]:
+    """The escrow the platform answers to: the simulated books, or the contract."""
+    if settings.simulated:
+        return store.chain, "simulation"
+    return ArcEscrow(settings.rpc_url, ESCROW), "chain"
+
+
+@router.get("/issues/{issue_id}/escrow", response_model=EscrowReadback)
+async def get_escrow(issue_id: str) -> EscrowReadback:
+    """Read the commitment back from the escrow, so nobody has to take our word."""
+    await _require(issue_id)
+    gateway, source = _escrow_source()
+    try:
+        held = await run_in_threadpool(gateway.commitment, issue_id)
+    except ChainUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return EscrowReadback(
+        issue_id=issue_id,
+        issue_key=issue_key(issue_id),
+        contract=ESCROW.address,
+        chain_id=ESCROW.chain_id,
+        source=source,  # type: ignore[arg-type]
+        status=held.status.value if held else "none",  # type: ignore[arg-type]
+        publisher=held.publisher if held else None,
+        amount=money(held.amount if held else Usdc(0)),
+        deadline=held.deadline if held else None,
+        explorer_url=f"{settings.explorer_url}/address/{ESCROW.address}",
+    )
 
 
 async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -> IssueOut:

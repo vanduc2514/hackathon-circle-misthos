@@ -58,6 +58,9 @@ class OnChain:
     fee_bps: int = 0
     """The platform's take rate the escrow holds for this issue. Read back rather than
     assumed, so the fee a settlement records is the rate the escrow enforced."""
+    # Who funded it and when it may be refunded, where the source reports them.
+    publisher: str | None = None
+    deadline: datetime | None = None
 
 
 @dataclass(frozen=True)

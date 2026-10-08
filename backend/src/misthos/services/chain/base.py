@@ -39,6 +39,9 @@ class ChainGateway(Protocol):
     def refund(self, issue_id: str, at: datetime) -> str:
         """Return the whole commitment to the publisher. Returns the transaction reference."""
 
+    def commitment(self, issue_id: str) -> OnChain | None:
+        """What the escrow holds for one issue, or None if it was never committed."""
+
     def commitments(self) -> dict[str, OnChain]:
         """Every commitment the escrow knows about, keyed by issue id."""
 

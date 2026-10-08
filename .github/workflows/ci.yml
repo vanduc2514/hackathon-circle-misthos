@@ -128,10 +128,11 @@ jobs:
       - run: mise run test:edge
 
   contracts:
-    name: contracts - forge test
+    name: contracts - abi and forge test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
       - run: mise run setup:contracts
+      - run: mise run lint:contracts
       - run: mise run test:contracts
