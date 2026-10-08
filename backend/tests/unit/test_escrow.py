@@ -148,7 +148,8 @@ class TestArcEscrow:
         transport = _rpc({"eth_getCode": "0x6080", commitments_call("ISS-1001"): HELD_180}, seen)
         c = ArcEscrow("http://rpc", DEPLOYED, transport=transport).commitment("ISS-1001")
         assert c is not None and c.status is EscrowStatus.HELD
-        assert seen[-1]["params"][0] == {"to": "0xE5C", "data": commitments_call("ISS-1001")}
+        calls = [b["params"][0] for b in seen if b["method"] == "eth_call"]
+        assert {"to": "0xE5C", "data": commitments_call("ISS-1001")} in calls
 
     def test_a_record_of_a_deploy_that_never_landed_is_refused(self) -> None:
         # The address in the record holds no code: nothing was ever deployed there.
@@ -182,9 +183,9 @@ class TestArcEscrow:
         found = escrow.commitments()
         assert set(found) == {"ISS-1001", stranger}
 
-    def test_moving_money_is_not_pretended_before_the_orchestrator_exists(self) -> None:
+    def test_nothing_is_signed_without_a_configured_key(self) -> None:
         escrow = ArcEscrow("http://rpc", DEPLOYED, transport=_rpc({}))
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(ChainUnavailable, match="no attestor key"):
             escrow.refund("ISS-1", datetime.now(UTC))
 
 

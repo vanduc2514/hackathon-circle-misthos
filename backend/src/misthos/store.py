@@ -128,6 +128,7 @@ from misthos.schemas import (
 from misthos.services import metrics, reputation
 from misthos.services.billing import PaymentRail, SimulatedRail, build_rail
 from misthos.services.chain import ChainGateway, SimulatedChain, load_deployment
+from misthos.services.chain.factory import build_chain
 from misthos.services.compliance import (
     IdentityProvider,
     ScreeningProvider,
@@ -314,7 +315,12 @@ class Store:
         self.rail: PaymentRail = rail or build_rail()
         # The simulated escrow keeps its books beside the repository's tables when
         # there is a database, so a restart does not make every issue look divergent.
-        self.chain: ChainGateway = chain or SimulatedChain(getattr(self.repo, "engine", None))
+        # Outside the simulation it is the deployed MisthosEscrow (#69).
+        self.chain: ChainGateway = chain or build_chain(
+            settings,
+            getattr(self.repo, "engine", None),
+            lambda: [rec.id for rec in self.repo.list_issues()],
+        )
         self.coordinator: Coordinator = coordinator or build_coordinator(
             settings.redis_url, self.repo
         )
@@ -361,7 +367,9 @@ class Store:
             while True:
                 with self.repo.try_lock("seed") as held:
                     if held:
-                        if self.repo.is_empty():
+                        # The demo seed funds made-up issues from made-up wallets, so
+                        # it is only ever written against the simulated escrow.
+                        if self.repo.is_empty() and isinstance(self.chain, SimulatedChain):
                             self._seed()
                         self._ready = True
                         return
@@ -785,7 +793,7 @@ class Store:
         # The fee comes out of the commitment rather than being added to it: the
         # publisher paid the fix price and nothing else. The rate is the one the escrow
         # holds for this issue, read back so the recorded fee is the transfer.
-        held = self.chain.commitments().get(rec.id)
+        held = self.chain.commitment(rec.id)
         rate = held.fee_bps if held is not None else rec.escrow.fee_bps
         fee = Usdc(amount.base_units * rate // 10_000)
         rec.platform_fee = fee

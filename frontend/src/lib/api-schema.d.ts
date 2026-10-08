@@ -207,6 +207,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issues/{issue_id}/commitment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Commitment Plan
+         * @description The two transactions the publisher's own wallet sends to fund the issue.
+         *
+         *     The platform never signs a commitment: it moves the publisher's USDC. Approving
+         *     the price records it as the escrow's ceiling; the publisher's wallet then lets the
+         *     escrow take that amount and commits it, and approving again books it.
+         */
+        get: operations["commitment_plan_api_v1_issues__issue_id__commitment_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/issues/{issue_id}/escrow": {
         parameters: {
             query?: never;
@@ -1060,6 +1084,31 @@ export interface components {
         ClaimRequest: {
             /** Contributor Id */
             contributor_id?: string | null;
+        };
+        /**
+         * CommitmentPlan
+         * @description How a publisher funds an issue from their own wallet, in the order to send.
+         */
+        CommitmentPlan: {
+            /** Issue Id */
+            issue_id: string;
+            /** Chain Id */
+            chain_id: number;
+            /** Escrow */
+            escrow: string;
+            /** Usdc */
+            usdc: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /**
+             * Deadline
+             * @description Unix seconds. Commit within the hour: the escrow term starts at approval
+             */
+            deadline: number;
+            /** Calls */
+            calls: components["schemas"]["WalletCall"][];
         };
         /**
          * ComparableOut
@@ -2057,6 +2106,18 @@ export interface components {
             circle_user_id?: string | null;
         };
         /**
+         * WalletCall
+         * @description One transaction for the user's own wallet to send. The platform does not sign it.
+         */
+        WalletCall: {
+            /** Label */
+            label: string;
+            /** To */
+            to: string;
+            /** Data */
+            data: string;
+        };
+        /**
          * WalletSessionOut
          * @description What the browser needs to run Circle's PIN challenge for its own wallet.
          */
@@ -2410,6 +2471,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TimelineEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    commitment_plan_api_v1_issues__issue_id__commitment_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitmentPlan"];
                 };
             };
             /** @description Validation Error */

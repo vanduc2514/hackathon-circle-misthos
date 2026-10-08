@@ -66,7 +66,9 @@ def create_app() -> FastAPI:
     # Key material in the environment means the boundary has already been crossed,
     # so the process refuses to start rather than serving with a key an agent can read.
     assert_key_is_not_in_the_environment()
-    assert_secrets_are_configured(settings.simulated, settings.attestor_secret_ref)
+    assert_secrets_are_configured(
+        settings.simulated, settings.attestor_secret_ref, settings.owner_secret_ref
+    )
 
     app = FastAPI(
         title=settings.app_name,

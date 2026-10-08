@@ -8,6 +8,11 @@ import {
   sameAsStored,
   tooLong,
 } from '../lib/criteria'
+import { fundFromWallet, type Wallet } from '../lib/fund'
+
+function browserWallet(): Wallet | null {
+  return (window as unknown as { ethereum?: Wallet }).ethereum ?? null
+}
 
 /** Every explicit action an issue page can take, as the API names them. */
 export type Act =
@@ -34,7 +39,13 @@ export async function perform(issueId: string, act: Act): Promise<IssueOut> {
         }),
       )
     case 'fund':
-      return unwrap(await api.POST('/api/v1/issues/{issue_id}/fund', path))
+      // In the simulation the first approval books the funding. On Arc it records the
+      // ceiling and waits for the publisher's own wallet to commit (see lib/fund).
+      return fundFromWallet(
+        async () => unwrap(await api.POST('/api/v1/issues/{issue_id}/fund', path)),
+        async () => unwrap(await api.GET('/api/v1/issues/{issue_id}/commitment', path)),
+        browserWallet(),
+      )
     case 'claim':
       return unwrap(await api.POST('/api/v1/issues/{issue_id}/claim', path))
     case 'submit':
@@ -115,7 +126,7 @@ export default function IssueActions({
   switch (issue.state) {
     case 'AWAITING_APPROVAL':
       body = who.publisher ? (
-        <ApproveAndFund issue={issue} busy={busy} run={run} />
+        <ApproveAndFund issue={issue} simulated={simulated} busy={busy} run={run} />
       ) : (
         <Wait>
           {issue.publisher_name} approves the acceptance criteria, then the price. Funds are
@@ -268,7 +279,7 @@ function SignInTo({
   )
 }
 
-function ApproveAndFund({ issue, busy, run }: Step) {
+function ApproveAndFund({ issue, simulated, busy, run }: Step & { simulated: boolean }) {
   const [draft, setDraft] = useState(issue.acceptance_criteria.join('\n'))
   const criteria = criteriaLines(draft)
   const approved = Boolean(issue.criteria_approved_at)
@@ -316,6 +327,9 @@ function ApproveAndFund({ issue, busy, run }: Step) {
       <p className="dim action-hint" style={{ marginTop: 6 }}>
         2. The price. Approving it commits ${money(issue.proposal?.recommended)} to the escrow
         contract, which only a merge, the grace period or the deadline can move.
+        {!simulated &&
+          ' Your wallet sends the commitment itself: it asks you to sign two transactions, ' +
+            'letting the escrow take the amount, then committing it. The platform never holds it.'}
       </p>
       <div className="btn-row">
         <button

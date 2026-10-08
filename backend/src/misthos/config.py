@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     # The name of the acceptance attestation key in the managed secret store. A
     # reference, never the key: see docs/runbooks/attestor-rotation.md.
     attestor_secret_ref: str = ""
+    # The escrow owner's key, which records each approved price as the escrow's
+    # ceiling (#34). Also a reference into the secret store, never the key.
+    owner_secret_ref: str = ""
+    # A mounted directory holding the referenced keys, one file each, mode 600. For
+    # local testing and anvil; a production deployment supplies its managed store.
+    secret_store_dir: str = ""
 
     @property
     def cors_list(self) -> list[str]:

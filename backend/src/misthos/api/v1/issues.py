@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -15,8 +16,8 @@ from misthos.api.session import (
 )
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
-from misthos.domain.escrow import issue_key
-from misthos.domain.issue import IllegalTransition, IssueState
+from misthos.domain.escrow import approve_call, commit_call, issue_key
+from misthos.domain.issue import ESCROW_TERM, IllegalTransition, IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import UnfundableIssue
@@ -25,6 +26,7 @@ from misthos.schemas import (
     Account,
     ApproveReleaseRequest,
     ClaimRequest,
+    CommitmentPlan,
     CriteriaRequest,
     Decision,
     DeclineRequest,
@@ -41,9 +43,10 @@ from misthos.schemas import (
     PublishRequest,
     SubmitRequest,
     TimelineEntry,
+    WalletCall,
     money,
 )
-from misthos.services.chain import ArcEscrow, ChainGateway, ChainRevert, ChainUnavailable
+from misthos.services.chain import ChainGateway, ChainRevert, ChainUnavailable
 from misthos.services.coordination import Busy
 from misthos.services.github import GitHubError
 from misthos.services.review import ReviewFailed
@@ -155,10 +158,46 @@ async def get_timeline(issue_id: str) -> list[TimelineEntry]:
 
 
 def _escrow_source() -> tuple[ChainGateway, str]:
-    """The escrow the platform answers to: the simulated books, or the contract."""
-    if settings.simulated:
-        return store.chain, "simulation"
-    return ArcEscrow(settings.rpc_url, ESCROW), "chain"
+    """The escrow the store settles through: the simulated books, or the contract."""
+    return store.chain, "simulation" if settings.simulated else "chain"
+
+
+@router.get("/issues/{issue_id}/commitment", response_model=CommitmentPlan)
+async def commitment_plan(
+    issue_id: str, account: Account | None = SIGNED_IN
+) -> CommitmentPlan:
+    """The two transactions the publisher's own wallet sends to fund the issue.
+
+    The platform never signs a commitment: it moves the publisher's USDC. Approving
+    the price records it as the escrow's ceiling; the publisher's wallet then lets the
+    escrow take that amount and commits it, and approving again books it.
+    """
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "fund this issue")
+    if rec.proposal is None:
+        raise HTTPException(status_code=409, detail=f"{issue_id} has no approved price yet")
+    amount = rec.proposal.recommended
+    deadline = int((datetime.now(UTC) + ESCROW_TERM).timestamp())
+    return CommitmentPlan(
+        issue_id=issue_id,
+        chain_id=ESCROW.chain_id,
+        escrow=ESCROW.address,
+        usdc=settings.usdc_address,
+        amount=money(amount),
+        deadline=deadline,
+        calls=[
+            WalletCall(
+                label=f"Let the escrow take {amount}",
+                to=settings.usdc_address,
+                data=approve_call(ESCROW.address, amount),
+            ),
+            WalletCall(
+                label=f"Commit {amount} to {issue_id}",
+                to=ESCROW.address,
+                data=commit_call(issue_id, amount, deadline),
+            ),
+        ],
+    )
 
 
 @router.get("/issues/{issue_id}/escrow", response_model=EscrowReadback)

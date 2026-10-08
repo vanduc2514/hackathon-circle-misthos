@@ -11,10 +11,10 @@ key and letting settings ignore it — into a refusal to start.
 Rotation is an operational step rather than a redeploy, and the procedure with its
 verification and rollback is in `docs/runbooks/attestor-rotation.md`.
 
-Nothing in the current build signs yet: the settlement path is `SimulatedChain`, which
-attests nothing, so the reader of this key is the Arc client that implements
-`services/chain/base.py:ChainGateway` (#69). The seam is deliberate — that client has
-one module to call, and no other code path can reach the key.
+The simulation signs nothing. Outside it, the Arc gateway (`services/chain/arc.py`,
+#69) is the only caller: it asks this module for the attestation key when it signs a
+release or a refund, and for the escrow owner's key when it records an approved price
+as a ceiling. No other code path can reach either key.
 """
 
 from __future__ import annotations
@@ -117,6 +117,28 @@ def load_attestor_key(store: SecretStore, reference: str) -> AttestorKey:
         raise AttestorKeyError(
             "no attestor secret reference is configured, so nothing can attest acceptance"
         )
+    return _load(store, reference)
+
+
+def load_owner_key(store: SecretStore, reference: str) -> AttestorKey:
+    """Fetch the escrow owner's key, which records approved prices as ceilings.
+
+    Read through the same guards as the attestation key: by reference, never from the
+    environment, and only when a transaction is about to be signed.
+    """
+    if not reference:
+        raise AttestorKeyError(
+            "no owner secret reference is configured, so no approved price can be recorded"
+        )
+    return _load(store, reference)
+
+
+def secret_store(directory: str) -> SecretStore:
+    """The store keys are read from: a mounted directory when one is configured."""
+    return LocalSecretStore(directory) if directory else UnavailableSecretStore()
+
+
+def _load(store: SecretStore, reference: str) -> AttestorKey:
     if is_key_material(reference):
         raise AttestorKeyError("the reference is key material; name the secret, not the key")
     material = store.read(reference)
@@ -138,16 +160,25 @@ def assert_key_is_not_in_the_environment(environment: Mapping[str, str] | None =
         )
 
 
-def assert_secrets_are_configured(simulated: bool, reference: str) -> None:
-    """Refuse a live deployment that never said where the key lives.
+def assert_secrets_are_configured(
+    simulated: bool, reference: str, owner_reference: str | None = None
+) -> None:
+    """Refuse a live deployment that never said where the keys live.
 
     The simulation signs nothing, so it needs no reference. A deployment that settles
-    for real does, and discovering that at the first release is too late.
+    for real does, and discovering that at the first release is too late. The owner's
+    key is checked when the caller passes its reference: without it no approved price
+    could be recorded as a ceiling, so no issue could ever be funded.
     """
     if not simulated and not reference:
         raise AttestorKeyError(
             "MISTHOS_SIMULATED is off and MISTHOS_ATTESTOR_SECRET_REF is unset, so no "
             "release could ever be attested"
+        )
+    if not simulated and owner_reference is not None and not owner_reference:
+        raise AttestorKeyError(
+            "MISTHOS_SIMULATED is off and MISTHOS_OWNER_SECRET_REF is unset, so no "
+            "approved price could be recorded and no issue funded"
         )
 
 
