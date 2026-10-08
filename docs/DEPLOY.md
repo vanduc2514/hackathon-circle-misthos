@@ -138,12 +138,14 @@ contributes. Money stays simulated until the chain client lands (#69), so leave
    1. Open an issue and add the `misthos` label. The App replies with the price,
       the band, the reasoning and the drafted criteria.
    2. The publisher comments `/misthos approve`, or `/misthos criteria` and a list
-      first. The App posts the funded price and criteria.
+      first; both can go in one comment, each on its own line, and they run in
+      order. The App posts the funded price and criteria.
    3. The contributor signs in once, links their GitHub account, and comments
       `/misthos claim`.
    4. The contributor opens a pull request that says `Fixes #<n>`. The project's
       checks run, and the sweeper's next pass (`MISTHOS_SWEEP_INTERVAL_SECONDS`)
-      posts the review.
+      after they report posts the review. A repository with no checks is reviewed
+      on its criteria alone 30 minutes after the pull request is submitted.
    5. The publisher merges. The App posts the settlement, and the issue is `PAID`.
 
 Every step lands in the issue's decision log in the web app.

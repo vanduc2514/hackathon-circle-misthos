@@ -23,6 +23,7 @@ from misthos.domain.issue import IssueState
 from misthos.domain.review import ChangedFile
 from misthos.domain.signals import IssueFacts
 from misthos.main import app
+from misthos.services.coordination import Busy
 from misthos.services.github import PullRequest, SimulatedGitHub
 from misthos.store import store
 from misthos.workers.sweeper import sweep_once
@@ -245,6 +246,129 @@ class TestCommands:
     def test_help_lists_the_commands(self, github: SimulatedGitHub) -> None:
         commented(99, "anyone", "/misthos help")
         assert "/misthos claim" in comments(github, 99)[-1]
+
+
+class TestCommandsInCodeAndQuotes:
+    """A command shown as an example, or quoted from someone else, is not one: for a
+    publisher, an accidental `/misthos approve` commits escrow funds."""
+
+    @pytest.fixture
+    def listed(self, github: SimulatedGitHub) -> str:
+        onboard(89, "publisher", "acme-maint")
+        installed("acme-maint")
+        labelled(12)
+        rec = store.find_open(REPO, 12)
+        assert rec is not None
+        return rec.id
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "Should I run this?\n\n```\n/misthos approve\n```\n",
+            "~~~\n/misthos approve\n~~~",
+            "```text\n/misthos approve\n```",
+            "````markdown\n```\n/misthos approve\n```\n````",
+            "Example:\n\n    /misthos approve\n",
+            "\t/misthos approve",
+            "> /misthos approve",
+            "> Should I?\n>\n> /misthos approve\n\nNot yet.",
+            "<!--\n/misthos approve\n-->",
+            "```\nnever closed\n/misthos approve",
+        ],
+        ids=[
+            "fenced", "tilde-fence", "info-string", "longer-fence", "indented", "tab",
+            "quote", "quote-reply", "html-comment", "unclosed-fence",
+        ],
+    )  # fmt: skip
+    def test_a_command_in_code_a_quote_or_a_comment_does_not_run(
+        self, listed: str, github: SimulatedGitHub, body: str
+    ) -> None:
+        before = len(comments(github, 12))
+        out = commented(12, "acme-maint", body)
+        assert store.get(listed).state is IssueState.AWAITING_APPROVAL  # type: ignore[union-attr]
+        assert out["handled"] is False
+        assert len(comments(github, 12)) == before
+
+    def test_a_command_after_a_closed_fence_or_indented_three_spaces_runs(
+        self, listed: str
+    ) -> None:
+        commented(12, "acme-maint", "Like this:\n\n```\n/misthos claim\n```\n   /misthos approve")
+        assert store.get(listed).state is IssueState.FUNDED  # type: ignore[union-attr]
+
+
+class TestSeveralCommandsInOneComment:
+    @pytest.fixture
+    def listed(self, github: SimulatedGitHub) -> str:
+        onboard(90, "publisher", "acme-maint")
+        installed("acme-maint")
+        labelled(12)
+        rec = store.find_open(REPO, 12)
+        assert rec is not None
+        return rec.id
+
+    CRITERIA = (
+        "/misthos criteria\n"
+        "- A test reproduces the 503 from `src/retry.py`.\n"
+        "- The changelog records the change.\n"
+    )
+
+    def test_every_command_line_runs_in_order(self, listed: str, github: SimulatedGitHub) -> None:
+        commented(12, "acme-maint", self.CRITERIA + "/misthos approve")
+        rec = store.get(listed)
+        assert rec is not None and rec.state is IssueState.FUNDED
+        # The approve saw the criteria just approved, and funded those, not the draft.
+        assert rec.acceptance_criteria == [
+            "A test reproduces the 503 from `src/retry.py`.",
+            "The changelog records the change.",
+        ]
+        assert "Funded on Misthos" in comments(github, 12)[-2]
+        assert "Criteria approved by @acme-maint" in comments(github, 12)[-1]
+
+    def test_a_busy_issue_stops_the_comment_without_running_it_twice(
+        self, listed: str, github: SimulatedGitHub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Failing the delivery for GitHub to retry would approve the criteria again."""
+
+        def busy(issue_id: str, by: str) -> None:
+            raise Busy(issue_id)
+
+        monkeypatch.setattr(store, "approve_price", busy)
+        out = commented(12, "acme-maint", self.CRITERIA + "/misthos approve")
+        rec = store.get(listed)
+        assert rec is not None and rec.state is IssueState.AWAITING_APPROVAL
+        assert [d.action for d in rec.decisions].count("criteria_approved") == 1
+        assert "was busy, so `/misthos approve` was not run" in comments(github, 12)[-1]
+        assert "/misthos approve did not run" in out["outcome"]
+
+    def test_a_refused_criteria_never_falls_through_to_approve(
+        self, listed: str, github: SimulatedGitHub
+    ) -> None:
+        drafted = store.get(listed).acceptance_criteria  # type: ignore[union-attr]
+        commented(12, "acme-maint", "/misthos criteria\n- It works properly.\n/misthos approve")
+        rec = store.get(listed)
+        assert rec is not None and rec.state is IssueState.AWAITING_APPROVAL
+        assert rec.criteria_approved_at is None and rec.acceptance_criteria == drafted
+        reply = comments(github, 12)[-1]
+        assert "cannot be judged" in reply
+        assert "The rest of this comment was not run" in reply and "/misthos approve" in reply
+
+    def test_a_comment_gets_one_reply_for_all_its_commands(
+        self, listed: str, github: SimulatedGitHub
+    ) -> None:
+        before = len(comments(github, 12))
+        out = commented(12, "acme-maint", "/misthos help\n" + self.CRITERIA)
+        assert len(comments(github, 12)) == before + 1
+        reply = comments(github, 12)[-1]
+        assert "**Misthos commands**" in reply and "Criteria approved by @acme-maint" in reply
+        assert "/misthos help ran" in out["outcome"] and "/misthos criteria ran" in out["outcome"]
+
+    def test_only_the_first_five_commands_in_a_comment_run(
+        self, listed: str, github: SimulatedGitHub
+    ) -> None:
+        commented(12, "acme-maint", "/misthos help\n" * 6)
+        reply = comments(github, 12)[-1]
+        assert reply.count("**Misthos commands**") == 5
+        assert "Only the first 5 commands in a comment are run" in reply
 
 
 class TestThePublishersView:

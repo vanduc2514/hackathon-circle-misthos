@@ -21,17 +21,22 @@ from misthos.domain.money import Usdc
 from misthos.models import tables
 from misthos.repositories import AppendOnlyViolation, MemoryRepository, StaleIssue
 from misthos.repositories.sql import SqlRepository
+from misthos.schemas import Account, RepoConnection
 from misthos.store import Store
+
+
+def postgres_url() -> str:
+    url = os.environ.get("MISTHOS_DATABASE_URL", "")
+    if not url.startswith(("postgres://", "postgresql")):
+        pytest.skip("set MISTHOS_DATABASE_URL to a Postgres database to run against it")
+    return url
 
 
 @pytest.fixture(params=["sqlite", "postgres"])
 def database_url(request: pytest.FixtureRequest, tmp_path: Path) -> str:
     if request.param == "sqlite":
         return f"sqlite:///{tmp_path / 'misthos.db'}"
-    url = os.environ.get("MISTHOS_DATABASE_URL", "")
-    if not url.startswith(("postgres://", "postgresql")):
-        pytest.skip("set MISTHOS_DATABASE_URL to a Postgres database to run against it")
-    return url
+    return postgres_url()
 
 
 @pytest.fixture(params=["memory", "sql"])
@@ -41,6 +46,21 @@ def any_store(request: pytest.FixtureRequest, tmp_path: Path) -> Store:
         MemoryRepository()
         if request.param == "memory"
         else SqlRepository(f"sqlite:///{tmp_path / 'misthos.db'}")
+    )
+    store = Store(repo)
+    store.reset()
+    return store
+
+
+@pytest.fixture(params=["memory", "sqlite", "postgres"])
+def every_store(request: pytest.FixtureRequest, tmp_path: Path) -> Store:
+    """The test double and both databases, for behaviour the store relies on from all three."""
+    repo = (
+        MemoryRepository()
+        if request.param == "memory"
+        else SqlRepository(
+            f"sqlite:///{tmp_path / 'misthos.db'}" if request.param == "sqlite" else postgres_url()
+        )
     )
     store = Store(repo)
     store.reset()
@@ -111,6 +131,23 @@ class TestRestart:
         assert repo.list_publishers() == sorted(built.list_publishers(), key=lambda p: p.id)
         assert repo.list_contributors() == sorted(built.list_contributors(), key=lambda c: c.id)
 
+    def test_checks_that_have_not_reported_stay_unknown_through_a_restart(
+        self, database_url: str
+    ) -> None:
+        """Read back as False, they would make the review send good work back."""
+        first = fresh(database_url)
+        rec = first.get("ISS-1002")  # seeded in review
+        assert rec is not None and rec.submission is not None
+        rec.submission = rec.submission.model_copy(
+            update={"head_sha": "c" * 40, "checks_passed": None}
+        )
+        first.save(rec)
+
+        again = Store(SqlRepository(database_url)).get("ISS-1002")
+        assert again is not None and again.submission is not None
+        assert again.submission.head_sha == "c" * 40
+        assert again.submission.checks_passed is None
+
     def test_new_ids_carry_on_after_a_restart(self, database_url: str) -> None:
         """The id sequences live in the database, so a second process cannot reuse one."""
         fresh(database_url)
@@ -164,6 +201,101 @@ class TestSaving:
         rec.decisions.pop()
         with pytest.raises(AppendOnlyViolation):
             any_store.save(rec)
+
+
+AT = datetime(2026, 10, 8, 9, 30, tzinfo=UTC)
+
+
+def connection(
+    repo: str, installation: int = 42, by: str = "acme-maint", publisher: str | None = "PUB-1"
+) -> RepoConnection:
+    return RepoConnection(
+        repo=repo,
+        installation_id=installation,
+        installed_by=by,
+        publisher_id=publisher,
+        connected_at=AT,
+    )
+
+
+class TestGitHubConnections:
+    """The repositories the GitHub App is installed on, and whose they are (#6). GitHub
+    spells a repository and a login in whatever case its owner chose, and a webhook
+    and a person may spell them differently, so neither lookup depends on it."""
+
+    @pytest.fixture
+    def three(self, every_store: Store) -> Store:
+        for c in (
+            connection("acme/widgets"),
+            connection("acme/gears"),
+            connection("other/thing", installation=7, by="other-maint", publisher="PUB-2"),
+        ):
+            every_store.repo.save_connection(c)
+        return every_store
+
+    @staticmethod
+    def repos(store: Store) -> list[str]:
+        return sorted(c.repo for c in store.repo.list_connections())
+
+    def test_a_connection_is_found_whatever_the_case_of_its_name(self, every_store: Store) -> None:
+        every_store.repo.save_connection(connection("acme/widgets"))
+        assert every_store.repo.get_connection("Acme/Widgets") == connection("acme/widgets")
+        assert every_store.repo.get_connection("acme/gears") is None
+
+    def test_saving_a_repository_again_moves_it_to_the_new_installation_and_publisher(
+        self, every_store: Store
+    ) -> None:
+        every_store.repo.save_connection(connection("acme/widgets"))
+        moved = connection("Acme/Widgets", installation=43, by="other-maint", publisher="PUB-2")
+        every_store.repo.save_connection(moved)
+        expected = connection("acme/widgets", installation=43, by="other-maint", publisher="PUB-2")
+        assert every_store.repo.list_connections() == [expected]
+        assert every_store.repo.get_connection("acme/widgets") == expected
+
+    def test_an_account_is_found_by_its_github_login_whatever_the_case(
+        self, every_store: Store
+    ) -> None:
+        every_store.repo.save_account(
+            Account(
+                address="0x" + "ab" * 20,
+                role="publisher",
+                party_id="PUB-1",
+                github_login="Acme-Maint",
+                created_at=AT,
+            )
+        )
+        found = every_store.repo.get_account_by_github_login("acme-MAINT")
+        assert found is not None and found.party_id == "PUB-1"
+        assert found.github_login == "Acme-Maint"
+        assert every_store.repo.get_account_by_github_login("someone-else") is None
+
+    def test_a_publisher_lists_only_its_own_repositories(self, three: Store) -> None:
+        assert [c.repo for c in three.connections_of("PUB-1")] == ["acme/gears", "acme/widgets"]
+        assert [c.repo for c in three.connections_of("PUB-2")] == ["other/thing"]
+        assert three.connections_of("PUB-3") == []
+
+    def test_uninstalling_disconnects_only_that_installations_repositories(
+        self, three: Store
+    ) -> None:
+        assert sorted(three.disconnect_repositories(installation_id=42)) == [
+            "acme/gears",
+            "acme/widgets",
+        ]
+        assert self.repos(three) == ["other/thing"]
+
+    def test_removed_repositories_are_disconnected_whatever_the_case_of_their_names(
+        self, three: Store
+    ) -> None:
+        three.disconnect_repositories(["Acme/Widgets", "OTHER/thing"])
+        assert self.repos(three) == ["acme/gears"]
+
+    def test_an_empty_list_or_no_installation_disconnects_nothing(self, three: Store) -> None:
+        three.repo.delete_connections([])
+        assert three.disconnect_repositories([]) == []
+        assert three.disconnect_repositories(installation_id=None) == []
+        # An empty list of removed repositories is not an uninstall.
+        assert three.disconnect_repositories([], installation_id=42) == []
+        assert self.repos(three) == ["acme/gears", "acme/widgets", "other/thing"]
 
 
 class TestSchema:

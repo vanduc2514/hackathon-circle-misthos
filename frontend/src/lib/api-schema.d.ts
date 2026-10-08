@@ -1795,7 +1795,7 @@ export interface components {
             /** Head Sha */
             head_sha: string;
             /** Checks Passed */
-            checks_passed: boolean;
+            checks_passed: boolean | null;
             /** Files Changed */
             files_changed: number;
             /** Additions */

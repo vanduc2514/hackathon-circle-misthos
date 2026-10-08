@@ -93,7 +93,8 @@ def load(path: Path = CORPUS) -> list[Case]:
                     )
                     for f in c["files"]
                 ),
-                checks_passed=bool(c["checks_passed"]),
+                # null: the checks never reported, as in a repository with no CI.
+                checks_passed=None if c["checks_passed"] is None else bool(c["checks_passed"]),
             ),
         )
         for c in raw["cases"]

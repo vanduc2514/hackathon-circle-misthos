@@ -15,7 +15,8 @@ on the next pass. An issue whose action fails is logged and skipped too, because
 bad issue must not stop every other refund.
 
 Each pass also has the review agent judge every submitted commit that has no
-verdict yet, so a pull request is reviewed without anyone asking. It re-screens live
+verdict yet, so a pull request is reviewed without anyone asking, once the project's
+checks have reported on it or have had `CHECKS_WAIT` to. It re-screens live
 counterparties whose last check is a day old, because screening once at onboarding
 is the mistake 08 is written against; deletes screening records past their published
 retention period; and reconciles the money ledger against the chain, raising an
@@ -132,7 +133,7 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
         reviewed: dict[str, str] = {}
         # Least-failed first, so a submission that keeps failing cannot hold a slot
         # while the ones behind it starve; anything past the cap is left alone.
-        queue = sorted(store.reviews_due(), key=lambda i: (_failures_for(store, i), i))
+        queue = sorted(store.reviews_due(now), key=lambda i: (_failures_for(store, i), i))
         for issue_id in queue[:MAX_REVIEWS_PER_PASS]:
             if _failures_for(store, issue_id) >= MAX_REVIEW_ATTEMPTS:
                 continue

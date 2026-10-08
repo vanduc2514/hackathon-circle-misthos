@@ -1,5 +1,7 @@
 /** Shared presentational pieces. Small enough not to need a component library. */
 
+import { checksChip } from '../lib/client'
+
 const STATE_TONE: Record<string, string> = {
   DRAFT: '',
   PRICED: 'info',
@@ -17,6 +19,11 @@ const STATE_TONE: Record<string, string> = {
 export function StateBadge({ state }: { state: string }) {
   const tone = STATE_TONE[state] ?? ''
   return <span className={`chip ${tone}`}>{state.replace(/_/g, ' ')}</span>
+}
+
+export function ChecksChip({ passed }: { passed: boolean | null }) {
+  const { label, tone } = checksChip(passed)
+  return <span className={`chip ${tone}`}>{label}</span>
 }
 
 export function Stat({

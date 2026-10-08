@@ -9,7 +9,7 @@ import {
   type IssueOut,
   type TimelineEntry,
 } from '../lib/client'
-import { Bar, Panel, StateBadge, Stepper } from '../components/ui'
+import { Bar, ChecksChip, Panel, StateBadge, Stepper } from '../components/ui'
 import IssueActions from '../components/IssueActions'
 import { useHealth, useMe } from '../lib/session'
 
@@ -108,11 +108,7 @@ export default function IssueDetail() {
                 </dd>
                 <dt>Checks</dt>
                 <dd>
-                  {issue.submission.checks_passed ? (
-                    <span className="chip ok">passing</span>
-                  ) : (
-                    <span className="chip bad">failing</span>
-                  )}
+                  <ChecksChip passed={issue.submission.checks_passed} />
                 </dd>
                 <dt>Commit</dt>
                 <dd className="muted">{shortHash(issue.submission.head_sha)}</dd>

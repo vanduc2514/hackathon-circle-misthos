@@ -161,7 +161,9 @@ class Claim(BaseModel):
 class Submission(BaseModel):
     pr_number: int
     head_sha: str
-    checks_passed: bool
+    checks_passed: bool | None
+    """None until the project's checks report on this commit, and for good in a
+    repository with no CI. Not reported is not failing."""
     files_changed: int
     additions: int
     deletions: int
