@@ -10,6 +10,7 @@ from misthos.config import settings
 from misthos.domain.issue import IssueState
 from misthos.main import app
 from misthos.repositories import StaleIssue
+from misthos.services.wallets import simulated_address
 from misthos.store import store
 
 API = "/api/v1"
@@ -86,7 +87,8 @@ class TestWallets:
         assert body["simulated"] is True
         assert body["challenge_id"] is None
         linked = body["wallet"]
-        assert linked["circle_user_id"] == "misthos-contributor-CON-1"
+        assert body["circle_user_id"] == "misthos-contributor-CON-1"
+        assert linked["address"] == simulated_address("contributor", "CON-1")
 
         # The party's own record. The public listing carries no wallet on purpose: a
         # wallet next to a GitHub handle is the link 08 says must never be published.

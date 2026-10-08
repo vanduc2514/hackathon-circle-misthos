@@ -46,6 +46,17 @@ async def _require_known(party: PartyPath, party_id: str) -> None:
         raise HTTPException(status_code=404, detail=f"no {party} {party_id}")
 
 
+def _kept(address: str) -> Wallet:
+    """The wallet as it is stored: the address and the chain.
+
+    Those are the two columns both repositories hold, and the in-memory one is the
+    test double for the SQL one, so it must not keep more. The Circle user id is
+    derived from the party (`services.wallets.circle_user_id`), and the session
+    response carries it.
+    """
+    return Wallet(address=address, chain=settings.chain)
+
+
 @router.post(
     "/{party}/{party_id}/session",
     response_model=WalletSessionOut,
@@ -69,15 +80,7 @@ async def start_session(
 
     wallet = None
     if session.address:
-        wallet = store.link_wallet(
-            party,
-            party_id,
-            Wallet(
-                address=session.address,
-                chain=settings.chain,
-                circle_user_id=session.circle_user_id,
-            ),
-        )
+        wallet = store.link_wallet(party, party_id, _kept(session.address))
     return WalletSessionOut(
         party=party,
         party_id=party_id,
@@ -106,8 +109,4 @@ async def link(party: PartyPath, party_id: str, account: Account | None = SIGNED
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if found.address is None:
         raise HTTPException(status_code=409, detail="the wallet has not been created yet")
-    return store.link_wallet(
-        party,
-        party_id,
-        Wallet(address=found.address, chain=settings.chain, circle_user_id=found.circle_user_id),
-    )
+    return store.link_wallet(party, party_id, _kept(found.address))
