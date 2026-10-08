@@ -57,3 +57,42 @@ def test_no_step_swallows_a_failure(workflow: dict) -> None:
     for name, job in workflow["jobs"].items():
         for step in job["steps"]:
             assert not step.get("continue-on-error"), f"{name} ignores a failure"
+
+
+def test_the_backend_suite_also_runs_against_postgres(workflow: dict) -> None:
+    """Memory is the default, so without this job nothing would exercise the database."""
+    job = workflow["jobs"]["backend-postgres"]
+    commands = [step["run"] for step in job["steps"] if "run" in step]
+
+    assert commands == ["mise run setup:backend", "mise run test:backend"]
+    assert job["env"]["MISTHOS_DATABASE_URL"].startswith("postgresql")
+    assert "postgres" in job["services"]
+
+
+def test_the_guards_also_run_against_redis(workflow: dict) -> None:
+    """Without Redis the lock, idempotency keys and rate limits are per process, so this
+    job is the only thing that proves them where a deployment would keep them."""
+    job = workflow["jobs"]["backend-postgres"]
+
+    assert job["env"]["MISTHOS_REDIS_URL"].startswith("redis://")
+    assert "redis" in job["services"]
+
+
+def test_the_whole_system_boots_from_compose(workflow: dict) -> None:
+    """A Dockerfile or compose change that breaks the shipped system fails the build."""
+    commands = [step["run"] for step in workflow["jobs"]["compose"]["steps"] if "run" in step]
+    up = next(c for c in commands if c.startswith("docker compose up"))
+    assert "--wait" in up and "--build" in up
+    assert any("/api/v1/health" in c and "--fail" in c for c in commands)
+
+
+def test_the_loop_runs_in_a_browser(workflow: dict) -> None:
+    """#73 is done when a publisher and a contributor complete the loop from the
+    browser; this job is what keeps it done."""
+    commands = [step["run"] for step in workflow["jobs"]["e2e"]["steps"] if "run" in step]
+    assert commands == [
+        "mise run setup:backend",
+        "mise run setup:web",
+        "mise run setup:e2e",
+        "mise run test:e2e",
+    ]

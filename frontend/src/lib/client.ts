@@ -12,7 +12,47 @@ export type IssueSummaryOut = components['schemas']['IssueSummaryOut']
 export type MetricsOut = components['schemas']['MetricsOut']
 export type TimelineEntry = components['schemas']['TimelineEntry']
 export type Decision = components['schemas']['Decision']
-export type Publisher = components['schemas']['Publisher']
+// Anyone sees every publisher; its budget and policy only it, or the simulation.
+export type Publisher = components['schemas']['PublisherListing']
+export type LoopOut = components['schemas']['LoopOut']
+export type SpendOut = components['schemas']['SpendOut']
+export type FinanceOut = components['schemas']['FinanceOut']
+
+export type Account = components['schemas']['Account']
+export type MeOut = components['schemas']['MeOut']
+export type SessionOut = components['schemas']['SessionOut']
+
+/** A refusal from the API, carrying the reason it gave. */
+export class ApiError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
+/** FastAPI's `detail`: a sentence, or a list of validation errors. */
+export function detailOf(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('detail' in error)) return null
+  const detail = (error as { detail: unknown }).detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) =>
+        item && typeof item === 'object' && 'msg' in item ? String(item.msg) : String(item),
+      )
+      .join('; ')
+  }
+  return null
+}
+
+/** The body of a successful call, or an ApiError with the API's own reason. */
+export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
+  if (result.error === undefined && result.data !== undefined) return result.data
+  const { status, statusText } = result.response
+  throw new ApiError(status, detailOf(result.error) ?? `${status} ${statusText}`.trim())
+}
 
 export type Money = { usdc: string | number; base_units: number }
 
@@ -26,7 +66,10 @@ export const money = (value: unknown): string => {
     })
   }
   if (typeof value === 'string' || typeof value === 'number') {
-    return Number(value).toLocaleString('en-US', {
+    // Tolerate a figure that arrives already grouped, such as "48,500.00".
+    const amount = typeof value === 'string' ? Number(value.replace(/,/g, '')) : value
+    if (Number.isNaN(amount)) return '—'
+    return amount.toLocaleString('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })
@@ -41,6 +84,22 @@ export const shortTime = (iso: string): string =>
     hour: '2-digit',
     minute: '2-digit',
   })
+
+/**
+ * The month a server figure counts, as `YYYY-MM`, in words: "October 2026". Read in
+ * UTC, because that is the month the server counted; a reader west of Greenwich would
+ * otherwise see the month before. Anything else is shown as it came.
+ */
+export const monthName = (yearMonth: string): string => {
+  const found = /^(\d{4})-(\d{2})$/.exec(yearMonth)
+  if (!found) return yearMonth
+  const [, year, month] = found
+  return new Date(Date.UTC(Number(year), Number(month) - 1, 1)).toLocaleString('en-US', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
+}
 
 export const relativeTime = (iso: string): string => {
   const diff = Date.now() - new Date(iso).getTime()
@@ -58,3 +117,16 @@ export const relativeTime = (iso: string): string => {
 
 export const shortHash = (value: string): string =>
   value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value
+
+/**
+ * A submission's checks as the issue page shows them. Null is not failing: the
+ * project's checks are still running, or the repository has none, and the review
+ * judges the work on its criteria once it has waited for them.
+ */
+export const checksChip = (
+  passed: boolean | null,
+): { label: string; tone: 'ok' | 'bad' | 'warn' } => {
+  if (passed === true) return { label: 'passing', tone: 'ok' }
+  if (passed === false) return { label: 'failing', tone: 'bad' }
+  return { label: 'not reported', tone: 'warn' }
+}

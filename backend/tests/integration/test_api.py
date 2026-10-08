@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from misthos.domain.issue import IssueState
 from misthos.main import app
+from misthos.repositories import StaleIssue
 from misthos.store import store
 
 API = "/api/v1"
@@ -125,15 +126,16 @@ class TestLifecycleThroughTheApi:
 
         from misthos.domain.issue import SILENT_PUBLISHER_GRACE
 
-        rec = store.get("ISS-1002")  # seeded IN_REVIEW
+        store.advance("ISS-1002")  # seeded IN_REVIEW, the verdict passes
+        rec = store.get("ISS-1002")
         assert rec is not None
-        store.advance("ISS-1002")
         assert rec.state is IssueState.ACCEPTED
         assert rec.review is not None
 
         # Backdate the verdict past the grace window and advance again.
         rec.review.decided_at -= SILENT_PUBLISHER_GRACE + timedelta(hours=1)
-        store.advance("ISS-1002")
+        store.save(rec)
+        rec = store.advance("ISS-1002")
 
         assert rec.state is IssueState.PAID
         assert rec.decisions[-1].rule == "silent_publisher_grace_period"
@@ -152,7 +154,21 @@ class TestLifecycleThroughTheApi:
         rec = store.get("ISS-1006")
         assert rec is not None
         rec.state = IssueState.PRICED
+        store.save(rec)
         assert client.post(f"{API}/issues/ISS-1006/advance").status_code == 409
+
+    def test_acting_on_an_issue_that_just_changed_is_conflict(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stale copy is refused, never saved over a refund or a release."""
+
+        def changed_underneath(issue_id: str) -> None:
+            raise StaleIssue(issue_id)
+
+        monkeypatch.setattr(store, "advance", changed_underneath)
+        r = client.post(f"{API}/issues/ISS-1006/advance")
+        assert r.status_code == 409
+        assert "changed since it was loaded" in r.json()["detail"]
 
     def test_every_transition_leaves_a_decision(self, client: TestClient) -> None:
         before = len(client.get(f"{API}/issues/ISS-1006/timeline").json())
@@ -187,7 +203,10 @@ class TestPublish:
         self, client: TestClient
     ) -> None:
         """A budget under the price floor cannot carry its own review cost."""
-        store.publishers["PUB-3"].budget_remaining_usdc = "40.00"
+        publisher = store.get_publisher("PUB-3")
+        assert publisher is not None
+        publisher.budget_remaining_usdc = "40.00"
+        store.save_publisher(publisher)
         r = client.post(
             f"{API}/issues",
             json={
@@ -285,7 +304,50 @@ class TestWebhooks:
 
 
 class TestReset:
-    def test_reset_restores_the_seed(self, client: TestClient) -> None:
+    def test_reset_restores_the_seed(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from misthos.config import settings
+
+        monkeypatch.setattr(settings, "database_url", "")  # the zero-config demo
         client.post(f"{API}/issues/ISS-1006/advance")
         assert client.post(f"{API}/demo/reset").json()["issues"] == 8
         assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"
+
+    def test_reset_is_refused_when_a_database_is_configured(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The README's durable setup sets only MISTHOS_DATABASE_URL, and there an
+        unauthenticated reset would delete every row of every table."""
+        from misthos.config import settings
+
+        monkeypatch.setattr(settings, "database_url", "postgresql://db.example/misthos")
+        monkeypatch.setattr(settings, "allow_demo_reset", False)
+        client.post(f"{API}/issues/ISS-1006/advance")
+
+        r = client.post(f"{API}/demo/reset")
+        assert r.status_code == 403
+        assert "MISTHOS_ALLOW_DEMO_RESET" in r.json()["detail"]
+        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "FUNDED"
+
+    def test_an_operator_can_allow_reset_on_a_throwaway_database(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from misthos.config import settings
+
+        monkeypatch.setattr(settings, "database_url", "postgresql://db.example/misthos")
+        monkeypatch.setattr(settings, "allow_demo_reset", True)
+        client.post(f"{API}/issues/ISS-1006/advance")
+        assert client.post(f"{API}/demo/reset").json()["issues"] == 8
+        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"
+
+    def test_reset_is_refused_outside_the_simulation(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Against a real database, reset would delete every table."""
+        from misthos.config import settings
+
+        monkeypatch.setattr(settings, "simulated", False)
+        monkeypatch.setattr(settings, "allow_demo_reset", True)  # not a way round it
+        assert client.post(f"{API}/demo/reset").status_code == 403
+        assert client.get(f"{API}/health").json()["seeded_issues"] == 8
