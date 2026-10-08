@@ -1353,8 +1353,23 @@ export interface components {
             status: string;
             /** Service */
             service: string;
-            /** Chain */
+            /**
+             * Chain
+             * @description Derived from chain_id: arc-mainnet, arc-testnet or chain-<id>
+             */
             chain: string;
+            /** Chain Id */
+            chain_id: number;
+            /** Network Label */
+            network_label: string;
+            /**
+             * Money
+             * @description simulated: nothing moves; test: Arc testnet faucet USDC; real: Arc mainnet; unknown: not an Arc network, so treat its USDC as real
+             * @enum {string}
+             */
+            money: "simulated" | "test" | "real" | "unknown";
+            /** Money Note */
+            money_note: string;
             /** Seeded Issues */
             seeded_issues: number;
             /** Simulated */
@@ -2096,7 +2111,7 @@ export interface components {
             address: string;
             /**
              * Chain
-             * @default arc-testnet
+             * @description The network the address was recorded on, from its chain id
              */
             chain: string;
             /**

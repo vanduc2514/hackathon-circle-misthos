@@ -266,7 +266,7 @@ every step. They run on every pull request with the rest of the Foundry suite.
 | Gateway Nanopayments | Rail for per-request payments | Batches thousands of payments into one onchain transaction, down to $0.000001 |
 | Transaction screening | Pre-submission sanctions control | Runs inside the wallet flow, so a blocked transfer never reaches the chain |
 | Smart Contract Platform | Deploy and monitor contracts | Deployment plus event monitoring, which saves building an indexer |
-| CCTP | Bridge USDC for publishers holding funds elsewhere | Arc's CCTP domain is `26` |
+| CCTP | Bridge USDC for publishers holding funds elsewhere | Arc's CCTP domain is `26`. Run from the publisher's browser wallet with Bridge Kit ([frontend/src/lib/bridge.ts](../frontend/src/lib/bridge.ts)); Circle's forwarder mints on Arc, so the publisher needs no USDC there for gas, and the platform never holds the USDC in transit |
 | USYC | Yield on committed funds awaiting release | Eligible entities only. See the caveat below |
 
 ## Runtime topology

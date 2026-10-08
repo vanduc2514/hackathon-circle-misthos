@@ -14,6 +14,14 @@ import Spend from './routes/Spend'
 // Signing carries the curve arithmetic, so it loads only where someone signs in.
 const AccountPage = lazy(() => import('./routes/Account'))
 
+/** Say what the money is, in the words a user would look for. */
+const moneyChip: Record<'simulated' | 'test' | 'real' | 'unknown', string> = {
+  simulated: 'simulated',
+  test: 'test USDC',
+  real: 'real USDC',
+  unknown: 'not Arc: treat as real',
+}
+
 function Layout({ children }: { children: React.ReactNode }) {
   const { data: health } = useHealth()
   const { data: me } = useMe()
@@ -52,11 +60,16 @@ function Layout({ children }: { children: React.ReactNode }) {
           </a>
         </div>
         <div className="nav-right">
-          <span className="chip">{health?.chain ?? 'arc-testnet'}</span>
-          {health?.simulated && (
-            <span className="chip accent">
+          {/* Nothing is claimed about the network until the API has said which it is. */}
+          <span className="chip">{health?.network_label ?? '…'}</span>
+          {health && (
+            <span
+              className={
+                health.money === 'simulated' || health.money === 'test' ? 'chip accent' : 'chip warn'
+              }
+            >
               <i className="dot" />
-              simulated
+              {moneyChip[health.money]}
             </span>
           )}
           <Link to="/account" className={`chip ${me ? '' : 'accent'}`}>
@@ -71,8 +84,8 @@ function Layout({ children }: { children: React.ReactNode }) {
       <main className="main">{children}</main>
       <footer className="footer">
         <span>
-          Misthos &middot; fixed price per issue, settled in USDC on Arc.
-          {health?.simulated && ' This build is a simulation: no chain is contacted.'}
+          Misthos &middot; fixed price per issue, settled in USDC on Arc.{' '}
+          {health?.money_note ?? ''}
         </span>
         <span>{health ? `${health.seeded_issues} seeded issues` : ''}</span>
       </footer>

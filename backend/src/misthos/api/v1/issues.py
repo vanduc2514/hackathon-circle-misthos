@@ -120,6 +120,10 @@ async def health() -> HealthOut:
         status="ok",
         service=settings.app_name,
         chain=settings.chain,
+        chain_id=settings.chain_id,
+        network_label=settings.network.label,
+        money=settings.network.money,
+        money_note=settings.network.description,
         seeded_issues=await run_in_threadpool(store.count_issues),
         simulated=settings.simulated,
     )
