@@ -11,6 +11,11 @@ moves state.
 Work under review is deliberately never timed out. An issue in IN_REVIEW or REWORK
 past its deadline is the conflict #33 exists to settle in the contract, and refunding
 it from here would take money from a contributor whose work the platform is judging.
+
+The silent-publisher release is the one timer bounded by another: the grace is capped at
+the escrow deadline, because `release` reverts once that has passed. Uncapped, a verdict
+that leaves less than a full grace on the clock would release after the contract had
+closed, and the work the verdict passed would be refunded instead.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 
 from misthos.domain.compliance import PAYOUT_RETRY_INTERVAL
-from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState, silent_release_at
 
 
 class TimedAction(StrEnum):
@@ -55,7 +60,7 @@ def due(clocks: Clocks, now: datetime) -> TimedAction | None:
     refund it.
     """
     match clocks.state:
-        case IssueState.ACCEPTED if _elapsed(clocks.verdict_passed_at, now, SILENT_PUBLISHER_GRACE):
+        case IssueState.ACCEPTED if _release_due(clocks, now):
             return TimedAction.RELEASE_AFTER_GRACE
         case IssueState.ACCEPTED if _elapsed(clocks.payout_held_since, now, PAYOUT_RETRY_INTERVAL):
             return TimedAction.RETRY_PAYOUT
@@ -72,6 +77,22 @@ def due(clocks: Clocks, now: datetime) -> TimedAction | None:
 
 def deadline_passed(clocks: Clocks, now: datetime) -> bool:
     return _elapsed(clocks.deadline, now)
+
+
+def _release_due(clocks: Clocks, now: datetime) -> bool:
+    """Whether the silent-publisher release is owed at `now`.
+
+    The grace runs from the verdict and stops at the escrow deadline: the contract will
+    not pay after it, so releasing later is not a release. A commitment always carries a
+    deadline; the uncapped case is kept for a record that has none, where the grace
+    stands on its own rather than the timer disappearing.
+    """
+    passed = clocks.verdict_passed_at
+    if passed is None:
+        return False
+    if clocks.deadline is None:
+        return now > passed + SILENT_PUBLISHER_GRACE
+    return now > silent_release_at(passed, clocks.deadline)
 
 
 def _elapsed(moment: datetime | None, now: datetime, wait: timedelta = timedelta(0)) -> bool:

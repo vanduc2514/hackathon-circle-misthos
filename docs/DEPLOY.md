@@ -91,23 +91,59 @@ cast wallet import misthos-deployer --interactive
 export ARC_TESTNET_RPC_URL=https://rpc.testnet.arc.io
 # Optional: the attestor that may release funds; the deployer by default.
 export MISTHOS_ATTESTOR_ADDRESS=0x...
-forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast
+forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast \
+  --verify --verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/
 ```
 
 or `mise run contracts:deploy`, which runs the same command. Fund the deployer
-with testnet USDC from faucet.circle.com first: USDC is the gas token on Arc.
+with testnet USDC from faucet.circle.com first: USDC is the gas token on Arc. Arc's
+explorer runs Blockscout, so verifying needs no API key.
 
-The script prints the escrow's address. Set it for the API:
+A broadcast writes `contracts/deployments/5042002.json`: the escrow's address, its
+owner, attestor and USDC, and the block to scan logs from. Commit it; the API reads
+the address from it, so there is nothing to copy by hand. A dry run (without
+`--broadcast`) writes no record, and outside the simulation the API refuses a
+record whose address holds no code. `MISTHOS_ESCROW_CONTRACT` still pins an
+address explicitly and wins over the record. `MISTHOS_CHAIN_ID` names the network;
+there is no separate label to set.
 
-```bash
-MISTHOS_ESCROW_CONTRACT=0x...   # the address the script printed
-MISTHOS_CHAIN=arc-testnet
-MISTHOS_RPC_URL=https://rpc.testnet.arc.io
-```
+`GET /api/v1/issues/{id}/escrow` reads a commitment back: from the contract with
+`eth_call` when `MISTHOS_SIMULATED=false`, from the simulated escrow's books
+otherwise, and says which. Report anything settled on testnet as testnet.
 
-The API records it on every commitment today. Settling against it needs the chain
-client (#69); until that lands, `MISTHOS_SIMULATED` stays true and the simulated
-escrow keeps the books. Report anything settled on testnet as testnet.
+### Settling on Arc
+
+With `MISTHOS_SIMULATED=false` the store settles through the deployed escrow (#69).
+Who signs what is fixed by the contract, and the platform never signs for a
+publisher:
+
+| Step | Signed by | Key |
+| --- | --- | --- |
+| Approving a price records it as the escrow's ceiling | the escrow owner | `MISTHOS_OWNER_SECRET_REF` |
+| The commitment itself | the publisher's own wallet, in the browser | never the platform's |
+| Release on acceptance | the attestor | `MISTHOS_ATTESTOR_SECRET_REF` |
+| Refund once the deadline passed | the attestor (anyone may) | `MISTHOS_ATTESTOR_SECRET_REF` |
+
+Both keys are read from the secret store by reference when a transaction is signed.
+`MISTHOS_SECRET_STORE_DIR` points at a mounted directory with one file per reference,
+mode 600, for local runs and anvil; a production deployment supplies its managed
+store behind the same `SecretStore` interface. Fund both signers with a little USDC,
+which is Arc's gas. The owner is the deployer unless ownership was transferred; the
+attestor is the address passed as `MISTHOS_ATTESTOR_ADDRESS` at deploy.
+
+Funding takes two approvals. The first records the ceiling and is refused with
+`NotCommitted`; the web app then has the publisher's wallet send the two calls from
+`GET /api/v1/issues/{id}/commitment` (the USDC allowance, then the commitment) and
+approves again, which books the publisher's own transaction after checking the
+amount, the wallet and the deadline against what was approved. The demo seed is not
+written outside the simulation: it would fund made-up issues from made-up wallets.
+
+After any change to the contract, run `mise run abi:contracts` and commit
+`contracts/deployments/MisthosEscrow.abi.json`; `mise run lint` fails while it is
+stale.
+
+The script refuses Arc mainnet (chain 5042) unless `MISTHOS_CONFIRM_MAINNET=5042`
+is set for that one command.
 
 Mainnet moves real USDC irreversibly. There is deliberately no mainnet task.
 
@@ -115,8 +151,8 @@ Mainnet moves real USDC irreversibly. There is deliberately no mainnet task.
 
 This runs an issue in a real repository from a label to a payout on GitHub events
 (#6). Use a sandbox repository and two GitHub accounts: one publishes, one
-contributes. Money stays simulated until the chain client lands (#69), so leave
-`MISTHOS_SIMULATED=true`; GitHub is real as soon as the App is configured.
+contributes. Leave `MISTHOS_SIMULATED=true` to keep the money simulated while GitHub
+is real, or settle on Arc testnet as section 3 describes.
 
 1. **Give GitHub a way to reach the API.** On a laptop, a smee.io channel forwards
    webhooks to it. Open https://smee.io/new, then run:

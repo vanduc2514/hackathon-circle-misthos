@@ -5,6 +5,8 @@ interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
 
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+
+    function decimals() external view returns (uint8);
 }
 
 /**
@@ -18,11 +20,21 @@ interface IERC20 {
  * this contract expects. That removes the failure mode that ended the previous
  * attempt in this category.
  *
+ * The one thing the platform is paid from this contract is its take rate, and it
+ * is carved out inside the same `release` call rather than accumulated here. The
+ * rate and its recipient are set by the owner and bounded on chain, so a fee can
+ * never be raised above the published ceiling (docs/misthos/06) or sent somewhere
+ * the owner did not name.
+ *
  * Arc notes:
  *  - USDC is the native gas token AND an ERC-20 at a fixed predeploy address.
  *    The two views are the same balance. This contract only ever touches the
  *    ERC-20 view, which uses 6 decimals. Gas is accounted by the protocol in
  *    18 decimals and is never handled here.
+ *  - An issue is denominated in one ERC-20: USDC unless the owner names another
+ *    6-decimal token, which is how a European publisher funds in EURC. A token
+ *    whose `decimals()` is not 6 is refused when it is named, so the 18-decimal
+ *    view of USDC can never be committed against this contract.
  *  - Finality is deterministic and sub-second, so there is no confirmation
  *    window to wait out and no reorg handling.
  *  - The USDC blocklist is enforced at runtime. A transfer to or from a
@@ -31,6 +43,9 @@ interface IERC20 {
 contract MisthosEscrow {
     // ----------------------------------------------------------------- errors
 
+    error NotAToken(address token);
+    error WrongDecimals(address token, uint256 decimals);
+    error CommitmentStarted();
     error NotOwner();
     error NotAttestor();
     error AlreadyExists();
@@ -40,7 +55,10 @@ contract MisthosEscrow {
     error ZeroAddress();
     error ZeroAmount();
     error AmountMismatch();
+    error NoCeiling();
     error ExceedsCeiling(uint256 amount, uint256 ceiling);
+    error FeeTooHigh(uint256 bps, uint256 max);
+    error FeeRecipientNotSet();
     error TransferFailed();
 
     // ------------------------------------------------------------------ types
@@ -64,13 +82,19 @@ contract MisthosEscrow {
     event Committed(
         bytes32 indexed issueId, address indexed publisher, uint256 amount, uint64 deadline
     );
+    /// @param contributorAmount What the contributor actually received: the
+    ///        commitment less the take rate. The fee is reported separately.
     event Released(
         bytes32 indexed issueId,
         address indexed contributor,
-        uint256 fixAmount
+        uint256 contributorAmount
     );
+    event PlatformFeePaid(bytes32 indexed issueId, address indexed recipient, uint256 amount);
     event Refunded(bytes32 indexed issueId, address indexed publisher, uint256 amount);
     event CeilingUpdated(bytes32 indexed issueId, uint256 ceiling);
+    event IssueTokenSet(bytes32 indexed issueId, address indexed token);
+    event FeeUpdated(bytes32 indexed issueId, uint256 bps);
+    event FeeRecipientUpdated(address indexed previousRecipient, address indexed newRecipient);
     event AttestorUpdated(address indexed previousAttestor, address indexed newAttestor);
 
     // ------------------------------------------------------------------ state
@@ -88,9 +112,35 @@ contract MisthosEscrow {
 
     mapping(bytes32 => Commitment) public commitments;
 
-    /// @notice Optional per-issue ceiling. Zero means uncapped. A budget an agent
-    ///         cannot exceed is a contract, not a prompt.
+    /// @notice Per-issue ceiling: the most that may be committed for the issue.
+    ///         It is the price a human approved, recorded here at the approval
+    ///         checkpoint. An issue without one cannot be funded, so an agent
+    ///         holding the publisher's key can never commit more than a person
+    ///         agreed to. A budget an agent cannot exceed is a contract, not a
+    ///         prompt, and it holds on testnet, where Circle's spending policies
+    ///         do not exist.
+    /// @dev In base units of the issue's token, which is always 6 decimals.
     mapping(bytes32 => uint256) public ceiling;
+
+    /// @notice The ERC-20 an issue is denominated in. Unset means USDC, which is
+    ///         what every issue was before EURC existed. Named by the owner before
+    ///         the commitment, and refused unless it has 6 decimals: the escrow
+    ///         holds ERC-20 amounts only, never the 18-decimal native view.
+    mapping(bytes32 => address) public issueToken;
+
+    /// @notice The platform's take rate for an issue, in basis points, set from
+    ///         the publisher's tier before the work is accepted. Zero means the
+    ///         contributor receives the whole commitment.
+    mapping(bytes32 => uint256) public feeBps;
+
+    /// @notice Where the take rate goes on release. A platform treasury address,
+    ///         never a balance this contract accumulates.
+    address public feeRecipient;
+
+    /// @notice The published ceiling on the take rate, in basis points. Above 15
+    ///         percent the tier table in docs/misthos/06 says the rate is
+    ///         renegotiated, so the contract refuses to carry one.
+    uint256 public constant MAX_FEE_BPS = 1500;
 
     // ------------------------------------------------------------- modifiers
 
@@ -116,9 +166,11 @@ contract MisthosEscrow {
     /**
      * @notice Commit the price for an issue. One commitment per issue id.
      * @param issueId  keccak256 of the platform issue identifier.
-     * @param amount   Total committed in 6-decimal USDC. The publisher pays the fix
-     *                 price and nothing else: the platform reviews the submission,
-     *                 so there is no reviewer fee to fund alongside it.
+     * @param amount   Total committed in 6-decimal base units of the issue's
+     *                 token (USDC, or EURC when the owner named it), at most the
+     *                 issue's ceiling. The publisher pays the fix price and nothing
+     *                 else: the platform reviews the submission, so there is no
+     *                 reviewer fee to fund alongside it.
      * @param deadline Unix seconds after which the publisher can reclaim.
      */
     function commit(bytes32 issueId, uint256 amount, uint64 deadline) external {
@@ -128,7 +180,8 @@ contract MisthosEscrow {
         if (amount > type(uint96).max) revert AmountMismatch();
 
         uint256 cap = ceiling[issueId];
-        if (cap != 0 && amount > cap) revert ExceedsCeiling(amount, cap);
+        if (cap == 0) revert NoCeiling();
+        if (amount > cap) revert ExceedsCeiling(amount, cap);
 
         commitments[issueId] = Commitment({
             publisher: msg.sender,
@@ -139,7 +192,7 @@ contract MisthosEscrow {
 
         emit Committed(issueId, msg.sender, amount, deadline);
 
-        if (!IERC20(usdc).transferFrom(msg.sender, address(this), amount)) {
+        if (!IERC20(tokenOf(issueId)).transferFrom(msg.sender, address(this), amount)) {
             revert TransferFailed();
         }
     }
@@ -157,19 +210,26 @@ contract MisthosEscrow {
         c.status = Status.Refunded;
         emit Refunded(issueId, c.publisher, c.amount);
 
-        if (!IERC20(usdc).transfer(c.publisher, c.amount)) revert TransferFailed();
+        if (!IERC20(tokenOf(issueId)).transfer(c.publisher, c.amount)) revert TransferFailed();
     }
 
     // ------------------------------------------------------------ attestation
 
     /**
-     * @notice Release the commitment on acceptance.
+     * @notice Release the commitment on acceptance, carving out the platform's
+     *         take rate.
      *
-     * Pays the contributor in one transfer. The platform performs the review, so
-     * there is no second party holding a verdict and nothing to split: the whole
-     * commitment is the fix price. The attestor decides nothing about quality; it
-     * only records that acceptance happened, whether that was the publisher's
-     * merge or the silent-publisher grace period expiring.
+     * Pays the contributor in the issue's own token, less the platform's take rate.
+     * The publisher paid the fix price and nothing else, so the fee is taken out of
+     * the commitment rather than added to it: the contributor receives the remainder
+     * and the platform's wallet receives the rate, from the same balance. The fee is
+     * integer division on basis points and rounds down, which leaves the extra base
+     * unit with the contributor.
+     *
+     * The attestor decides nothing about quality; it only records that acceptance
+     * happened, whether that was the publisher's merge or the silent-publisher grace
+     * period expiring.
+
      */
     function release(bytes32 issueId, address contributor, uint256 fixAmount)
         external
@@ -181,18 +241,71 @@ contract MisthosEscrow {
         if (contributor == address(0)) revert ZeroAddress();
         if (fixAmount != c.amount) revert AmountMismatch();
 
-        c.status = Status.Released;
-        emit Released(issueId, contributor, fixAmount);
+        uint256 fee = (fixAmount * feeBps[issueId]) / 10_000;
+        address recipient = feeRecipient;
+        // A rate with nowhere to send the money would strand it in this contract,
+        // where nobody has a claim on it. Refuse instead.
+        if (fee != 0 && recipient == address(0)) revert FeeRecipientNotSet();
 
-        if (!IERC20(usdc).transfer(contributor, fixAmount)) revert TransferFailed();
+        uint256 contributorAmount = fixAmount - fee;
+        c.status = Status.Released;
+        emit Released(issueId, contributor, contributorAmount);
+        if (fee != 0) emit PlatformFeePaid(issueId, recipient, fee);
+
+        // The issue's own token: an issue held in EURC settles in EURC (#30), and the
+        // fee comes out of the same balance.
+        IERC20 token = IERC20(tokenOf(issueId));
+        if (!token.transfer(contributor, contributorAmount)) revert TransferFailed();
+        if (fee != 0 && !token.transfer(recipient, fee)) revert TransferFailed();
     }
 
     // ------------------------------------------------------------------ admin
 
-    /// @notice Cap what may be committed for an issue. Zero means no cap.
+    /// @notice Record the approved price as the most that may be committed for
+    ///         an issue. Zero removes it, which makes the issue unfundable again.
+    /// @dev Only a cap: it can stop money entering, never move money already held.
     function setCeiling(bytes32 issueId, uint256 cap) external onlyOwner {
         ceiling[issueId] = cap;
         emit CeilingUpdated(issueId, cap);
+    }
+
+    /// @notice Name the ERC-20 an issue is denominated in, before it is funded.
+    ///         USDC is the default. EURC is the European publisher's option, and
+    ///         it is the same 6 decimals, which is the only kind of token this
+    ///         contract can hold: an 18-decimal token, including the native view
+    ///         of USDC, is refused here rather than reverting mid-release.
+    function setIssueToken(bytes32 issueId, address token) external onlyOwner {
+        if (commitments[issueId].status != Status.None) revert CommitmentStarted();
+        if (token == address(0)) revert ZeroAddress();
+        (bool ok, bytes memory data) = token.staticcall(abi.encodeCall(IERC20.decimals, ()));
+        if (!ok || data.length < 32) revert NotAToken(token);
+        uint256 tokenDecimals = abi.decode(data, (uint256));
+        if (tokenDecimals != 6) revert WrongDecimals(token, tokenDecimals);
+        issueToken[issueId] = token;
+        emit IssueTokenSet(issueId, token);
+    }
+
+    /// @notice Set the take rate for an issue from the publisher's tier. Bounded
+    ///         on chain, so a compromised owner key still cannot release at a rate
+    ///         the published tier table forbids.
+    /// @dev Refused once the money is in, like the currency, and for the same reason:
+    ///      the publisher approved the price at this rate. Moving it afterwards would
+    ///      charge a rate they never saw, and the settlement record — which reads the
+    ///      rate back from here rather than from the publisher's plan — would stop
+    ///      matching what this contract does.
+    function setFee(bytes32 issueId, uint256 bps) external onlyOwner {
+        if (commitments[issueId].status != Status.None) revert CommitmentStarted();
+        if (bps > MAX_FEE_BPS) revert FeeTooHigh(bps, MAX_FEE_BPS);
+        feeBps[issueId] = bps;
+        emit FeeUpdated(issueId, bps);
+    }
+
+    /// @notice Point the take rate at a platform treasury address. Rotating it
+    ///         does not move fees already paid.
+    function setFeeRecipient(address next) external onlyOwner {
+        if (next == address(0)) revert ZeroAddress();
+        emit FeeRecipientUpdated(feeRecipient, next);
+        feeRecipient = next;
     }
 
     function setAttestor(address next) external onlyOwner {
@@ -202,6 +315,13 @@ contract MisthosEscrow {
     }
 
     // ------------------------------------------------------------------ views
+
+    /// @notice The ERC-20 an issue's commitment is denominated in: the token the
+    ///         owner named, or USDC when nobody named one.
+    function tokenOf(bytes32 issueId) public view returns (address) {
+        address token = issueToken[issueId];
+        return token == address(0) ? usdc : token;
+    }
 
     function statusOf(bytes32 issueId) external view returns (Status) {
         return commitments[issueId].status;

@@ -7,16 +7,24 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from misthos.domain.network import Network, network_for
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MISTHOS_", env_file=".env", extra="ignore")
 
     app_name: str = "Misthos"
     simulated: bool = True
-    chain: str = "arc-testnet"
+    # The network's name, and whether its money is real, follow from the chain id;
+    # there is deliberately no separate label to set. See `network` below.
     chain_id: int = 5042002
     rpc_url: str = "https://rpc.testnet.arc.io"
-    escrow_contract: str = "0x7A3f19bE5c2D80416aB9e0C7d3F5a12B6c8E4d90"
+    explorer_url: str = "https://explorer.testnet.arc.io"
+    # Where `mise run contracts:deploy` recorded MisthosEscrow. Empty means the record
+    # for `chain_id` under contracts/deployments/. An explicit `escrow_contract` wins.
+    # With neither, only the simulation runs, under a placeholder labelled as such.
+    escrow_deployment_file: str = ""
+    escrow_contract: str = ""
     usdc_address: str = "0x3600000000000000000000000000000000000000"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
@@ -107,6 +115,21 @@ class Settings(BaseSettings):
     # The name of the acceptance attestation key in the managed secret store. A
     # reference, never the key: see docs/runbooks/attestor-rotation.md.
     attestor_secret_ref: str = ""
+    # The escrow owner's key, which records each approved price as the escrow's
+    # ceiling (#34). Also a reference into the secret store, never the key.
+    owner_secret_ref: str = ""
+    # A mounted directory holding the referenced keys, one file each, mode 600. For
+    # local testing and anvil; a production deployment supplies its managed store.
+    secret_store_dir: str = ""
+
+    @property
+    def network(self) -> Network:
+        return network_for(self.chain_id, simulated=self.simulated)
+
+    @property
+    def chain(self) -> str:
+        """The network's name, as recorded on escrows, wallets and statements."""
+        return self.network.name
 
     @property
     def cors_list(self) -> list[str]:

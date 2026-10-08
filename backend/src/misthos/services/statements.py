@@ -48,7 +48,9 @@ def annual_statement(store: Store, contributor_id: str, year: int) -> AnnualStat
     """Every payout to one contributor in one UTC calendar year, or None if unknown.
 
     A payout is a release in the ledger, whatever state the issue's record shows: the
-    ledger is what is reported, so an issue's state cannot drop a payout from it.
+    ledger is what is reported, so an issue's state cannot drop a payout from it. The
+    amount is what the contributor received, which is the commitment less the
+    platform's take rate (#32).
     """
     contributor = store.get_contributor(contributor_id)
     if contributor is None:
@@ -74,13 +76,13 @@ def annual_statement(store: Store, contributor_id: str, year: int) -> AnnualStat
             issue_title=rec.title,
             counterparty_id=rec.publisher_id,
             counterparty_name=publishers.get(rec.publisher_id, rec.publisher_id),
-            amount=money(event.amount),
+            amount=money(rec.received),
             chain=rec.escrow.chain if rec.escrow else settings.chain,
             tx_hash=event.tx_hash,
         )
         for event, rec in releases
     ]
-    total = Usdc(sum(event.amount.base_units for event, _ in releases))
+    total = Usdc(sum(rec.received.base_units for _, rec in releases))
     return AnnualStatement(
         contributor_id=contributor.id,
         handle=contributor.handle,

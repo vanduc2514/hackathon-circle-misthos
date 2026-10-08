@@ -39,6 +39,9 @@ class IssueRecord:
     review: Review | None = None
     contributor_id: str | None = None
     paid: Usdc | None = None
+    platform_fee: Usdc | None = None
+    """The platform's take rate carved out of the settlement (#32). The contributor
+    received `paid`; the two add up to the commitment."""
     paid_at: datetime | None = None
     payout_tx_hash: str | None = None
     """The release transfer. Kept off every public view: with the contributor's handle
@@ -50,6 +53,16 @@ class IssueRecord:
     """Why an entitled payout has not left the escrow yet, from the compliance gate."""
     payout_checked_at: datetime | None = None
     criteria_approved_at: datetime | None = None
+
+    @property
+    def received(self) -> Usdc:
+        """What the contributor received: the commitment less the platform's take (#32).
+
+        The RELEASED event is the whole commitment, because that is what leaves the
+        escrow and what the chain settles against, so every figure about what a
+        contributor earned reads this and not the event.
+        """
+        return self.paid if self.paid is not None else Usdc(0)
     """When the publisher approved the acceptance criteria. No funding before it (#21)."""
     relisted_from: str | None = None
     """The issue this one re-lists at a higher band after nobody claimed it."""

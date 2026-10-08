@@ -8,6 +8,7 @@ import type { paths, components } from './api-schema'
 export const api = createClient<paths>({})
 
 export type IssueOut = components['schemas']['IssueOut']
+export type EscrowReadback = components['schemas']['EscrowReadback']
 export type IssueSummaryOut = components['schemas']['IssueSummaryOut']
 export type MetricsOut = components['schemas']['MetricsOut']
 export type TimelineEntry = components['schemas']['TimelineEntry']

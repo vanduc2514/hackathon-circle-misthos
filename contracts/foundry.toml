@@ -9,6 +9,20 @@ evm_version = "osaka"
 optimizer = true
 optimizer_runs = 200
 gas_reports = ["MisthosEscrow"]
+# The deploy script records each broadcast deployment here, the ABI is exported
+# next to it, and tests write only under deployments/.test/. Nothing else in the
+# project root is writable from a script.
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+
+# The money-path invariants run on every change, so the campaign is sized for CI
+# rather than for a nightly: each property is checked from 4,096 random call
+# sequences. `fail_on_revert` is on deliberately — a handler call that reverts
+# unexpectedly is a finding, not a rejected input, and the refusals the campaign
+# does expect are marked with `vm.expectRevert` in the handler.
+[invariant]
+runs = 64
+depth = 64
+fail_on_revert = true
 
 # Arc testnet. USDC is the native gas token and also an ERC-20 at a fixed
 # predeploy address, so the same USDC address works on every Arc network.

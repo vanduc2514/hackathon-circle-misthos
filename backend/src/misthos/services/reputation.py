@@ -57,8 +57,8 @@ def events(records: Iterable[IssueRecord]) -> list[ReputationEvent]:
             contributor_id=e.counterparty_id,
             issue_id=rec.id,
             repo=rec.repo,
-            amount=e.amount,
-            points=points_for(e.amount),
+            amount=rec.received,
+            points=points_for(rec.received),
             settled_at=e.occurred_at,
         )
         for rec in records

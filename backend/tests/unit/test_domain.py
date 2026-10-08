@@ -15,11 +15,13 @@ import pytest
 from misthos.domain import comparables
 from misthos.domain.comparables import SettledWork
 from misthos.domain.issue import (
+    ESCROW_TERM,
     SILENT_PUBLISHER_GRACE,
     IllegalTransition,
     IssueState,
     can_transition,
     is_open,
+    silent_release_at,
     transition,
 )
 from misthos.domain.money import NativeUsdc, Usdc, format_usdc
@@ -31,8 +33,10 @@ from misthos.domain.pricing import (
     ComplexitySignals,
     effort,
     min_fix_price,
+    platform_fee,
     propose,
     relist,
+    take_rate_bps,
 )
 
 
@@ -116,6 +120,39 @@ class TestLifecycle:
         assert can_transition(IssueState.AWAITING_APPROVAL, IssueState.DRAFT)
 
 
+class TestGraceAgainstTheEscrowDeadline:
+    """The grace and the escrow deadline are one window, not two timers.
+
+    `release` reverts once the escrow deadline has passed, so a grace that ran past
+    it would be a release path that exists on paper only.
+    """
+
+    def test_committed_funds_live_for_a_fortnight(self) -> None:
+        assert ESCROW_TERM == timedelta(days=14)
+
+    def test_an_early_verdict_still_gets_the_whole_grace(self) -> None:
+        decided_at = datetime(2026, 10, 1, tzinfo=UTC)
+        deadline = decided_at + ESCROW_TERM
+        assert silent_release_at(decided_at, deadline) == decided_at + SILENT_PUBLISHER_GRACE
+
+    def test_a_verdict_inside_the_last_week_releases_at_the_deadline(self) -> None:
+        """Day ten of a fourteen-day funding window: six days of grace remain, not
+        seven, so the release is the deadline rather than a day the contract has
+        already closed."""
+        decided_at = datetime(2026, 10, 1, tzinfo=UTC)
+        deadline = decided_at + timedelta(days=4)
+        assert silent_release_at(decided_at, deadline) == deadline
+
+    def test_every_passing_verdict_before_the_deadline_has_a_reachable_release(self) -> None:
+        """Whatever the verdict time, the release lands inside the escrow window."""
+        funded_at = datetime(2026, 10, 1, tzinfo=UTC)
+        deadline = funded_at + ESCROW_TERM
+        for hours in range(0, 14 * 24, 7):
+            decided_at = funded_at + timedelta(hours=hours)
+            release_at = silent_release_at(decided_at, deadline)
+            assert decided_at <= release_at <= deadline
+
+
 class TestPricing:
     def test_effort_scales_with_complexity(self) -> None:
         small = ComplexitySignals(1, 1, 1, 1, 1, 1)
@@ -140,6 +177,28 @@ class TestPricing:
 
     def test_the_floor_rises_as_the_take_rate_thins(self) -> None:
         assert min_fix_price("open") < min_fix_price("team") < min_fix_price("enterprise")
+
+    def test_the_platform_fee_is_the_tier_rate_of_the_fix_price(self) -> None:
+        """The commission comes out of the price the publisher already approved."""
+        price = Usdc.from_decimal("500")
+        assert platform_fee(price, "open") == Usdc.from_decimal("60")
+        assert platform_fee(price, "team") == Usdc.from_decimal("50")
+        assert platform_fee(price, "enterprise") == Usdc.from_decimal("40")
+
+    def test_the_platform_fee_floors_like_the_escrow_does(self) -> None:
+        """Basis points and integer division, so the recorded fee is the transfer."""
+        odd = Usdc(55_555_555)
+        assert take_rate_bps("open") == 1200
+        assert platform_fee(odd, "open").base_units == odd.base_units * 1200 // 10_000
+
+    def test_every_tier_rate_fits_the_escrows_ceiling(self) -> None:
+        """`MisthosEscrow.MAX_FEE_BPS` is 1500; a higher tier could never be set."""
+        assert all(0 < take_rate_bps(tier) <= 1500 for tier in TAKE_RATE_BY_TIER)
+
+    def test_the_fee_never_takes_the_whole_commitment(self) -> None:
+        commitment = Usdc.from_decimal("55")
+        for tier in TAKE_RATE_BY_TIER:
+            assert platform_fee(commitment, tier) < commitment
 
     def test_the_floor_is_applied_at_the_publisher_tier(self) -> None:
         """A price that clears the Open floor can still fail the Enterprise one."""

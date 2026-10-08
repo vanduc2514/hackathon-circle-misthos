@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from siwe_wallet import Wallet
 
 from misthos.config import settings
 from misthos.domain.issue import IssueState
+from misthos.domain.money import Usdc
+from misthos.domain.pricing import take_rate_bps
 from misthos.main import app
 from misthos.repositories import StaleIssue
 from misthos.services.wallets import simulated_address
@@ -42,6 +46,132 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+class TestEscrowReadback:
+    def _first(self, client: TestClient, state: str) -> str:
+        rows = client.get(f"{API}/issues", params={"state": state}).json()
+        assert rows, f"seed has no {state} issue"
+        return rows[0]["id"]
+
+    def test_a_funded_issue_reads_back_from_the_escrow_books(self, client: TestClient) -> None:
+        issue_id = self._first(client, "funded")
+        body = client.get(f"{API}/issues/{issue_id}/escrow").json()
+        issue = client.get(f"{API}/issues/{issue_id}").json()
+
+        assert body["source"] == "simulation"
+        assert body["status"] == "held"
+        assert body["amount"] == issue["escrow"]["amount"]
+        assert len(body["issue_key"]) == 66
+        assert body["explorer_url"].endswith(body["contract"])
+
+    def test_an_issue_never_committed_reads_back_as_none(self, client: TestClient) -> None:
+        body = client.get(
+            f"{API}/issues/{self._first(client, 'awaiting_approval')}/escrow"
+        ).json()
+        assert body["status"] == "none"
+        assert body["publisher"] is None
+
+    def test_the_answer_is_the_escrow_not_the_issue_record(self, client: TestClient) -> None:
+        # Move the escrow without the platform, as a compromised key would: the
+        # readback must report the escrow's state, not the platform's memory.
+        from misthos.domain.ledger import EscrowStatus
+
+        issue_id = self._first(client, "funded")
+        store.chain.tamper(issue_id, EscrowStatus.REFUNDED)  # type: ignore[attr-defined]
+        assert client.get(f"{API}/issues/{issue_id}/escrow").json()["status"] == "refunded"
+
+    def test_an_unknown_issue_is_404(self, client: TestClient) -> None:
+        assert client.get(f"{API}/issues/ISS-9999/escrow").status_code == 404
+
+    def test_funding_waits_for_the_publishers_own_commitment(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # On Arc the escrow refuses to book funding the publisher has not committed
+        # from their wallet; the web app recognises this refusal by its name.
+        from misthos.services.chain import ChainRevert
+
+        issue_id = self._first(client, "awaiting_approval")
+        client.post(f"{API}/issues/{issue_id}/criteria", json={
+            "criteria": client.get(f"{API}/issues/{issue_id}").json()["acceptance_criteria"]
+        })
+
+        def not_yet(*_: object) -> str:
+            raise ChainRevert("NotCommitted: the publisher has not committed this issue yet")
+
+        monkeypatch.setattr(store.chain, "commit", not_yet)
+        refused = client.post(f"{API}/issues/{issue_id}/fund")
+        assert refused.status_code == 409
+        assert "NotCommitted" in refused.json()["detail"]
+        assert client.get(f"{API}/issues/{issue_id}").json()["state"] == "AWAITING_APPROVAL"
+        # The ceiling was recorded before the refusal: the commitment can now be sent.
+        assert client.get(f"{API}/issues/{issue_id}/escrow").json()["escrow_ceiling"]
+
+        monkeypatch.undo()
+        funded = client.post(f"{API}/issues/{issue_id}/fund")
+        assert funded.status_code == 200, funded.text
+        assert funded.json()["state"] == "FUNDED"
+
+    def test_the_publisher_is_told_exactly_what_their_wallet_sends(
+        self, client: TestClient
+    ) -> None:
+        from misthos.domain.escrow import approve_call, commit_call
+        from misthos.domain.money import Usdc
+
+        issue_id = self._first(client, "awaiting_approval")
+        plan = client.get(f"{API}/issues/{issue_id}/commitment").json()
+        amount = Usdc(plan["amount"]["base_units"])
+
+        assert plan["escrow"] == client.get(f"{API}/issues/{issue_id}/escrow").json()["contract"]
+        approve, commit = plan["calls"]
+        # First the USDC allowance, then the commitment, to the addresses that hold them.
+        assert (approve["to"], approve["data"]) == (
+            plan["usdc"],
+            approve_call(plan["escrow"], amount),
+        )
+        assert (commit["to"], commit["data"]) == (
+            plan["escrow"],
+            commit_call(issue_id, amount, plan["deadline"]),
+        )
+        assert amount.base_units == client.get(f"{API}/issues/{issue_id}").json()["proposal"][
+            "recommended"
+        ]["base_units"]
+
+    def test_a_funded_issue_is_capped_at_its_approved_price(self, client: TestClient) -> None:
+        issue_id = self._first(client, "funded")
+        body = client.get(f"{API}/issues/{issue_id}/escrow").json()
+        issue = client.get(f"{API}/issues/{issue_id}").json()
+        assert body["escrow_ceiling"] == issue["proposal"]["recommended"]
+        assert body["amount"]["base_units"] <= body["escrow_ceiling"]["base_units"]
+
+    def test_an_issue_nobody_approved_has_no_ceiling(self, client: TestClient) -> None:
+        issue_id = self._first(client, "awaiting_approval")
+        assert client.get(f"{API}/issues/{issue_id}/escrow").json()["escrow_ceiling"] is None
+
+    def test_the_ceiling_is_the_escrow_s_not_a_copy_of_the_amount(
+        self, client: TestClient
+    ) -> None:
+        # Change the ceiling on the escrow alone: the readback must follow the escrow,
+        # which it could not if the ceiling were derived from the committed amount.
+        from datetime import UTC, datetime
+
+        from misthos.domain.money import Usdc
+
+        issue_id = self._first(client, "funded")
+        store.chain.set_ceiling(issue_id, Usdc(999_000_000), datetime.now(UTC))
+        body = client.get(f"{API}/issues/{issue_id}/escrow").json()
+        assert body["escrow_ceiling"]["base_units"] == 999_000_000
+        assert body["amount"]["base_units"] != 999_000_000
+
+    def test_approving_the_price_records_the_ceiling_before_committing(
+        self, client: TestClient
+    ) -> None:
+        issue_id = self._first(client, "awaiting_approval")
+        approved = client.get(f"{API}/issues/{issue_id}").json()["proposal"]["recommended"]
+        store.advance(issue_id)
+        body = client.get(f"{API}/issues/{issue_id}/escrow").json()
+        assert body["status"] == "held"
+        assert body["escrow_ceiling"] == approved
+
+
 class TestHealth:
     def test_health_reports_the_simulation(self, client: TestClient) -> None:
         body = client.get(f"{API}/health").json()
@@ -49,6 +179,21 @@ class TestHealth:
         assert body["simulated"] is True
         assert body["seeded_issues"] == 8
         assert body["chain"] == "arc-testnet"
+        assert body["chain_id"] == 5042002
+        assert body["money"] == "simulated"
+        assert "no money moves" in body["money_note"]
+
+    def test_the_label_follows_the_chain_id_at_request_time(self, client: TestClient) -> None:
+        original = (settings.chain_id, settings.simulated)
+        try:
+            settings.chain_id, settings.simulated = 5042, False
+            mainnet = client.get(f"{API}/health").json()
+            settings.chain_id = 8453
+            other = client.get(f"{API}/health").json()
+        finally:
+            settings.chain_id, settings.simulated = original
+        assert (mainnet["chain"], mainnet["money"]) == ("arc-mainnet", "real")
+        assert (other["chain"], other["money"]) == ("chain-8453", "unknown")
 
 
 class TestIssues:
@@ -177,6 +322,26 @@ class TestLifecycleThroughTheApi:
         assert "reviewer_id" not in body
         assert "review_fee_paid_usdc" not in body
 
+    def test_a_settlement_records_the_platform_fee_at_the_tier_rate(
+        self, client: TestClient
+    ) -> None:
+        """The take rate is carved out of the commitment, not added to it."""
+        client.post(f"{API}/issues/ISS-1002/complete")
+        body = client.get(f"{API}/issues/ISS-1002").json()
+        assert body["state"] == "PAID"
+
+        tier = next(
+            p["tier"]
+            for p in client.get(f"{API}/publishers").json()
+            if p["id"] == body["publisher_id"]
+        )
+        gross = body["escrow"]["amount"]["base_units"]
+        fee = Usdc.from_decimal(body["platform_fee_usdc"])
+        payout = Usdc.from_decimal(body["paid_usdc"])
+
+        assert fee.base_units == gross * take_rate_bps(tier) // 10_000
+        assert payout.base_units + fee.base_units == gross
+
     def test_advancing_a_finished_issue_is_conflict(self, client: TestClient) -> None:
         assert client.post(f"{API}/issues/ISS-1005/advance").status_code == 409
 
@@ -199,6 +364,30 @@ class TestLifecycleThroughTheApi:
 
         assert rec.state is IssueState.PAID
         assert rec.decisions[-1].rule == "silent_publisher_grace_period"
+
+    def test_a_late_verdict_releases_at_the_deadline_not_after_it(self) -> None:
+        """The grace is capped at the escrow deadline, so a late verdict is not stranded
+        waiting on a window the contract has already closed (#33)."""
+        store.advance("ISS-1002")
+        rec = store.get("ISS-1002")
+        assert rec is not None and rec.escrow is not None and rec.review is not None
+        assert rec.state is IssueState.ACCEPTED
+
+        # A verdict six days ago, with the deadline already behind us: a full seven-day
+        # grace would end a day after the contract stopped paying, so the window ends
+        # at the deadline instead.
+        now = datetime.now(UTC)
+        rec.review.decided_at = now - timedelta(days=6)
+        rec.deadline = now - timedelta(hours=1)
+        rec.escrow.deadline = rec.deadline
+        store.save(rec)
+
+        store.run_timers("ISS-1002", now=now)
+
+        paid = store.get("ISS-1002")
+        assert paid is not None
+        assert paid.state is IssueState.PAID
+        assert paid.decisions[-1].rule == "silent_publisher_grace_period"
 
     def test_an_issue_awaiting_merge_still_counts_as_open(self, client: TestClient) -> None:
         """ACCEPTED holds committed money until the publisher merges."""
@@ -311,6 +500,18 @@ class TestMetrics:
             client.post(f"{API}/issues/ISS-1006/advance")
         client.post(f"{API}/issues/ISS-1006/complete")
         assert client.get(f"{API}/metrics").json()["settled_issues"] == before + 1
+
+    def test_metrics_report_the_take_rate_revenue(self, client: TestClient) -> None:
+        """The revenue line moves with each settlement, and never exceeds it."""
+        before = client.get(f"{API}/metrics").json()
+        for _ in range(3):
+            client.post(f"{API}/issues/ISS-1006/advance")
+        client.post(f"{API}/issues/ISS-1006/complete")
+        after = client.get(f"{API}/metrics").json()
+
+        fees = Usdc.from_decimal(after["platform_fees_usdc"])
+        assert fees.base_units > Usdc.from_decimal(before["platform_fees_usdc"]).base_units
+        assert fees.base_units < Usdc.from_decimal(after["matched_volume_usdc"]).base_units
 
 
 class TestDecisions:

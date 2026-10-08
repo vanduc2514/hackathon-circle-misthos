@@ -78,7 +78,9 @@ _VERSION_FLOOR = "issue_version_floor"
 # database but belong to the chain gateway, which resets them itself, before a seed
 # is built against them.
 _RESET_TABLES = [
-    table for table in reversed(t.metadata.sorted_tables) if table is not t.simulated_escrow
+    table
+    for table in reversed(t.metadata.sorted_tables)
+    if table not in (t.simulated_escrow, t.simulated_escrow_ceilings)
 ]
 # The order a reset locks them in under Postgres. Every save takes its issue row
 # before any other, so the reset takes issues first too and never holds a table a
@@ -592,6 +594,7 @@ def _save(conn: Connection, rec: IssueRecord, floor: int) -> int:
         "created_at": rec.created_at,
         "deadline": rec.deadline,
         "paid_base_units": rec.paid.base_units if rec.paid else None,
+        "platform_fee_base_units": rec.platform_fee.base_units if rec.platform_fee else None,
         "paid_at": rec.paid_at,
         "payout_tx_hash": rec.payout_tx_hash,
         "accepted_by": rec.accepted_by,
@@ -680,6 +683,7 @@ def _save_escrow(conn: Connection, rec: IssueRecord) -> None:
             "tx_hash": e.tx_hash,
             "amount_base_units": int(e.amount["base_units"]),
             "deadline": e.deadline,
+            "fee_bps": e.fee_bps,
             "released": e.released,
             "refunded": e.refunded,
         },
@@ -858,6 +862,11 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             review=_review(reviews[row["id"]]) if row["id"] in reviews else None,
             contributor_id=row["contributor_id"],
             paid=Usdc(row["paid_base_units"]) if row["paid_base_units"] is not None else None,
+            platform_fee=(
+                Usdc(row["platform_fee_base_units"])
+                if row["platform_fee_base_units"] is not None
+                else None
+            ),
             paid_at=_utc_or_none(row["paid_at"]),
             payout_tx_hash=row["payout_tx_hash"],
             accepted_by=row["accepted_by"],
@@ -989,6 +998,7 @@ def _escrow(row: Row) -> EscrowCommitment:
         tx_hash=row["tx_hash"],
         amount=money(Usdc(row["amount_base_units"])),
         deadline=_utc(row["deadline"]),
+        fee_bps=row["fee_bps"],
         released=row["released"],
         refunded=row["refunded"],
     )

@@ -206,7 +206,7 @@ Our reason is that we do two things a marketplace normally does not: we price th
 
 The tier table in the section below is the single source of truth for these numbers. Every rate quoted anywhere else in this set is one of those three.
 
-The publisher pays the fix price and nothing else. The take rate is charged on that amount rather than added to it, so the price a manager approves is the price on the issue. Note that the escrow releases the whole commitment to the contributor in one transfer (`contracts/src/MisthosEscrow.sol`), so the platform's cut is not carved out on chain yet; until it is, the take is a reporting-layer number and not a transfer.
+The publisher pays the fix price and nothing else. The take rate is charged on that amount rather than added to it, so the price a manager approves is the price on the issue. The escrow carves the rate out on acceptance (`MisthosEscrow.release`), paying the contributor the remainder and the platform's take-rate wallet the fee in the same call, so the rate is a transfer rather than a reporting-layer number. The per-issue rate is set in the contract and bounded there at 15 percent, which is the ceiling above.
 
 ### The price floor
 

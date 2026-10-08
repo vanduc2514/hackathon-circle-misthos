@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -15,7 +16,9 @@ from misthos.api.session import (
 )
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
-from misthos.domain.issue import IllegalTransition, IssueState
+from misthos.domain.escrow import approve_call, commit_call, issue_key
+from misthos.domain.issue import ESCROW_TERM, IllegalTransition, IssueState
+from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import UnfundableIssue
 from misthos.repositories import StaleIssue
@@ -23,11 +26,13 @@ from misthos.schemas import (
     Account,
     ApproveReleaseRequest,
     ClaimRequest,
+    CommitmentPlan,
     CriteriaRequest,
     Decision,
     DeclineRequest,
     DemoPullRequestOut,
     DisputeRequest,
+    EscrowReadback,
     HealthOut,
     IssueOut,
     IssueSummaryOut,
@@ -38,12 +43,15 @@ from misthos.schemas import (
     PublishRequest,
     SubmitRequest,
     TimelineEntry,
+    WalletCall,
+    money,
 )
-from misthos.services.chain import ChainRevert
+from misthos.services.chain import ChainGateway, ChainRevert, ChainUnavailable
 from misthos.services.coordination import Busy
 from misthos.services.github import GitHubError
 from misthos.services.review import ReviewFailed
 from misthos.store import (
+    ESCROW,
     CriteriaNotApproved,
     DeclineRefused,
     DisputeRefused,
@@ -112,6 +120,10 @@ async def health() -> HealthOut:
         status="ok",
         service=settings.app_name,
         chain=settings.chain,
+        chain_id=settings.chain_id,
+        network_label=settings.network.label,
+        money=settings.network.money,
+        money_note=settings.network.description,
         seeded_issues=await run_in_threadpool(store.count_issues),
         simulated=settings.simulated,
     )
@@ -147,6 +159,74 @@ async def get_issue(issue_id: str) -> IssueOut:
 @router.get("/issues/{issue_id}/timeline", response_model=list[TimelineEntry])
 async def get_timeline(issue_id: str) -> list[TimelineEntry]:
     return store.timeline(await _require(issue_id))
+
+
+def _escrow_source() -> tuple[ChainGateway, str]:
+    """The escrow the store settles through: the simulated books, or the contract."""
+    return store.chain, "simulation" if settings.simulated else "chain"
+
+
+@router.get("/issues/{issue_id}/commitment", response_model=CommitmentPlan)
+async def commitment_plan(
+    issue_id: str, account: Account | None = SIGNED_IN
+) -> CommitmentPlan:
+    """The two transactions the publisher's own wallet sends to fund the issue.
+
+    The platform never signs a commitment: it moves the publisher's USDC. Approving
+    the price records it as the escrow's ceiling; the publisher's wallet then lets the
+    escrow take that amount and commits it, and approving again books it.
+    """
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "fund this issue")
+    if rec.proposal is None:
+        raise HTTPException(status_code=409, detail=f"{issue_id} has no approved price yet")
+    amount = rec.proposal.recommended
+    deadline = int((datetime.now(UTC) + ESCROW_TERM).timestamp())
+    return CommitmentPlan(
+        issue_id=issue_id,
+        chain_id=ESCROW.chain_id,
+        escrow=ESCROW.address,
+        usdc=settings.usdc_address,
+        amount=money(amount),
+        deadline=deadline,
+        calls=[
+            WalletCall(
+                label=f"Let the escrow take {amount}",
+                to=settings.usdc_address,
+                data=approve_call(ESCROW.address, amount),
+            ),
+            WalletCall(
+                label=f"Commit {amount} to {issue_id}",
+                to=ESCROW.address,
+                data=commit_call(issue_id, amount, deadline),
+            ),
+        ],
+    )
+
+
+@router.get("/issues/{issue_id}/escrow", response_model=EscrowReadback)
+async def get_escrow(issue_id: str) -> EscrowReadback:
+    """Read the commitment back from the escrow, so nobody has to take our word."""
+    await _require(issue_id)
+    gateway, source = _escrow_source()
+    try:
+        held = await run_in_threadpool(gateway.commitment, issue_id)
+        ceiling = await run_in_threadpool(gateway.escrow_ceiling, issue_id)
+    except ChainUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return EscrowReadback(
+        issue_id=issue_id,
+        issue_key=issue_key(issue_id),
+        contract=ESCROW.address,
+        chain_id=ESCROW.chain_id,
+        source=source,  # type: ignore[arg-type]
+        status=held.status.value if held else "none",  # type: ignore[arg-type]
+        publisher=held.publisher if held else None,
+        amount=money(held.amount if held else Usdc(0)),
+        escrow_ceiling=money(ceiling) if ceiling else None,
+        deadline=held.deadline if held else None,
+        explorer_url=f"{settings.explorer_url}/address/{ESCROW.address}",
+    )
 
 
 async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -> IssueOut:

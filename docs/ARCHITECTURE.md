@@ -16,12 +16,12 @@ The diagrams below describe the target system. This table is what is actually in
 | Edge | Express x402 gate and Circle CLI bridge | Built. The gate settles through Circle Gateway Nanopayments when `MISTHOS_SIMULATED=false`; simulated by default |
 | Core | FastAPI, lifecycle, pricing engine, review agent, decision log, money ledger | Built. Money moves through a chain gateway, simulated until #69. The review agent is Claude once `MISTHOS_ANTHROPIC_API_KEY` is set, and a rule reviewer otherwise |
 | Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
-| Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
+| Contracts | `MisthosEscrow` | Built. Example, fuzz and invariant tests (#35) |
 | Data | Postgres, Redis | Built and optional. Postgres once `MISTHOS_DATABASE_URL` is set, memory otherwise. Redis once `MISTHOS_REDIS_URL` is set, for the per-issue lock, idempotency keys and rate limits across processes |
 | Compliance | Screening, identity at first payout, statements | Built against simulated providers. See [PRIVACY.md](./PRIVACY.md) |
 | GitHub | App authentication, read path, write path, webhooks | Built behind one gateway. Simulated until `MISTHOS_GITHUB_APP_ID` and `MISTHOS_GITHUB_APP_PRIVATE_KEY` are set; `backend/github-app-manifest.json` registers the App |
 | Sign-in | Sign-In with Ethereum, a role per wallet, GitHub account linking, explicit lifecycle actions | Built. Linking is simulated until `MISTHOS_GITHUB_OAUTH_CLIENT_ID` is set. Outside the simulation every write needs a signed-in account |
-| Integrations | Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
+| Integrations | Circle wallets, Arc settlement | Arc settlement built behind the chain gateway (`services/chain/arc.py`), simulated by default; Circle wallet sessions built, the browser step pending |
 
 Everything marked not built has its interface in place, which is why the missing pieces are listed here as work rather than as risk.
 
@@ -237,16 +237,24 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 
 | Contract | Purpose |
 | --- | --- |
-| `MisthosEscrow` | Holds committed USDC per issue. Releases on an acceptance attestation, refunds on deadline |
+| `MisthosEscrow` | Holds the committed ERC-20 (USDC, or EURC for a European publisher) per issue. Releases on an acceptance attestation, refunds on deadline |
 | `Memo` (predeployed) | Attaches the issue and PR reference to every money movement, so reconciliation is on-chain |
 | `Multicall3From` (predeployed) | Batches payouts while preserving the original sender as `msg.sender` |
 
-`MisthosEscrow` is the only contract we write. Its job is to make four things true:
+`MisthosEscrow` is the only contract we write. Its job is to make five things true:
 
 1. Money for an issue is visibly committed before a contributor starts.
 2. Release requires an acceptance attestation from a key the contributor cannot obtain.
 3. Refund happens on a deadline without requiring anyone to act.
 4. A per-issue ceiling is enforced here, so an agent with a compromised key cannot drain a budget.
+5. The platform's take rate is carved out of the release in the same call, so the
+   commission is a transfer rather than a reporting number, and a per-issue rate
+   above the published 15 percent ceiling cannot be set at all.
+
+Those four are checked by the fuzz and invariant tests in
+[contracts/test/](contracts/test/): the campaign drives random sequences of commit,
+release, refund, ceiling updates and attestor rotations, and asserts the properties after
+every step. They run on every pull request with the rest of the Foundry suite.
 
 ### Circle primitives
 
@@ -258,7 +266,7 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 | Gateway Nanopayments | Rail for per-request payments | Batches thousands of payments into one onchain transaction, down to $0.000001 |
 | Transaction screening | Pre-submission sanctions control | Runs inside the wallet flow, so a blocked transfer never reaches the chain |
 | Smart Contract Platform | Deploy and monitor contracts | Deployment plus event monitoring, which saves building an indexer |
-| CCTP | Bridge USDC for publishers holding funds elsewhere | Arc's CCTP domain is `26` |
+| CCTP | Bridge USDC for publishers holding funds elsewhere | Arc's CCTP domain is `26`. Run from the publisher's browser wallet with Bridge Kit ([frontend/src/lib/bridge.ts](../frontend/src/lib/bridge.ts)); Circle's forwarder mints on Arc, so the publisher needs no USDC there for gas, and the platform never holds the USDC in transit |
 | USYC | Yield on committed funds awaiting release | Eligible entities only. See the caveat below |
 
 ## Runtime topology
@@ -324,7 +332,7 @@ flowchart LR
     end
 ```
 
-**Path A carries the work payment.** A publisher commits USDC into `MisthosEscrow` against a specific issue. The contract holds it. On acceptance it releases to the contributor, on deadline it refunds. This is the path that satisfies C1, because the platform is never a custodian, and C7, because an Arc transfer costs about a cent.
+**Path A carries the work payment.** A publisher commits USDC into `MisthosEscrow` against a specific issue. The contract holds it. On acceptance it releases to the contributor with the platform's take rate carved out of the same commitment, on deadline it refunds in full. This is the path that satisfies C1, because the platform is never a custodian, and C7, because an Arc transfer costs about a cent.
 
 **Path B carries everything metered.** Paying our own review agents per invocation, a publisher buying a pricing report, or any endpoint we expose for agents to consume. No escrow, no commitment, no state. The agent pays per request and gets a result.
 
@@ -359,6 +367,19 @@ Rules the code must follow:
 - Keep every amount in the 6-decimal ERC-20 view except raw gas math. Name variables so the view is unambiguous.
 
 Escrow amounts, price bands and payouts are all 6-decimal. Only gas estimation touches 18-decimal.
+
+### One issue, one ERC-20
+
+An issue is denominated in a single ERC-20. USDC is the default, and a European
+publisher's issue is denominated in EURC, which uses the same 6 decimals. The
+escrow records the token per issue (`setIssueToken`, before the commitment), and
+releases and refunds in that token, so the two balances are never summed and a
+refund is never quietly converted into USDC on the way back.
+
+The escrow refuses a token whose `decimals()` is not 6 when the token is named,
+not when the money has to move. That is what keeps the 18-decimal native view out
+of the contract: a proper token answers `decimals()`, a native sentinel reverts,
+and an address with no code returns nothing — all three fail the same check.
 
 ### Arc behaviours that affect this design
 
@@ -668,7 +689,7 @@ Inference is roughly nine hundred times the settlement cost. Any optimisation ef
 
 These are unresolved. Each one has a real constraint behind it, and none should be quietly assumed away.
 
-**Spending policies are mainnet only.** Circle's wallet spending policies do not support testnet, and setting one triggers an email OTP. That means the agent-guardrail story cannot be demonstrated on testnet through Circle's own mechanism. Either the demo runs on mainnet with small real amounts, or `MisthosEscrow` implements the per-issue ceiling itself so the guardrail exists at both tiers. The second is more work and is the more honest design, because it puts the limit in the contract rather than in a policy tied to one vendor.
+**Spending policies are mainnet only.** Circle's wallet spending policies do not support testnet, and setting one triggers an email OTP. That means the agent-guardrail story cannot be demonstrated on testnet through Circle's own mechanism. `MisthosEscrow` therefore enforces the guardrail itself: an issue cannot be funded without a per-issue ceiling, the price a human approved, and a commitment above it reverts. The limit lives in the contract rather than in a policy tied to one vendor, so it holds on testnet and mainnet alike. See [contracts/README.md](../contracts/README.md).
 
 **Nanopayments require EOA signatures.** Gateway Nanopayments and x402 batch settlement do not support ERC-1271. If a contributor is paid to a smart contract account, Path B is unavailable to them. Path A is unaffected, which is another argument for keeping escrow as the primary rail.
 

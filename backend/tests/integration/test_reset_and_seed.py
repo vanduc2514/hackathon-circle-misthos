@@ -169,6 +169,7 @@ class TestTheSimulatedChainAcrossAReset:
         was refused as AlreadyExists and the reset failed."""
         now = datetime.now(UTC)
         chain = SimulatedChain()
+        chain.set_ceiling("ISS-1007", Usdc(5_000_000), now)
         chain.commit("ISS-1007", "0xpublisher", Usdc(5_000_000), now, now)
         resetting = threading.Thread(target=chain.reset)
         read = chain._get
@@ -185,6 +186,7 @@ class TestTheSimulatedChainAcrossAReset:
         resetting.join()
 
         assert chain.commitments() == {}
+        chain.set_ceiling("ISS-1007", Usdc(5_000_000), now)
         chain.commit("ISS-1007", "0xpublisher", Usdc(5_000_000), now, now)
 
 

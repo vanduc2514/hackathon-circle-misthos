@@ -22,6 +22,8 @@ dependencies = [
     # Sign-In with Ethereum: secp256k1 recovery and Keccak-256 (#70).
     "coincurve>=20",
     "pycryptodome>=3.20",
+    "eth-account>=0.13",
+    "eth-utils>=5",
 ]
 
 [project.optional-dependencies]

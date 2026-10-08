@@ -24,7 +24,7 @@ def money(amount: Usdc) -> dict[str, str | int]:
 
 class Wallet(BaseModel):
     address: str
-    chain: str = "arc-testnet"
+    chain: str = Field(description="The network the address was recorded on, from its chain id")
     circle_user_id: str | None = Field(
         default=None, description="Set once the address was read from the party's Circle wallet"
     )
@@ -164,8 +164,58 @@ class EscrowCommitment(BaseModel):
     tx_hash: str
     amount: dict[str, str | int]
     deadline: datetime
+    fee_bps: int = 0
+    """The platform's take rate for this issue, in basis points, fixed when the money
+    was committed. The escrow enforces this rate, not the publisher's tier at the
+    moment of release, so a plan that lapses mid-flight cannot move it."""
     released: bool = False
     refunded: bool = False
+
+
+class WalletCall(BaseModel):
+    """One transaction for the user's own wallet to send. The platform does not sign it."""
+
+    label: str
+    to: str
+    data: str
+
+
+class CommitmentPlan(BaseModel):
+    """How a publisher funds an issue from their own wallet, in the order to send."""
+
+    issue_id: str
+    chain_id: int
+    escrow: str
+    usdc: str
+    amount: dict[str, str | int]
+    deadline: int = Field(
+        description="Unix seconds. Commit within the hour: the escrow term starts at approval"
+    )
+    calls: list[WalletCall]
+
+
+class EscrowReadback(BaseModel):
+    """A commitment as the escrow reports it, not as the platform remembers it."""
+
+    issue_id: str
+    issue_key: str = Field(description="bytes32 the contract stores the issue under")
+    contract: str
+    chain_id: int
+    source: Literal["chain", "simulation"] = Field(
+        description="chain: read from MisthosEscrow; simulation: the simulated escrow's books"
+    )
+    status: Literal["none", "held", "released", "refunded"]
+    publisher: str | None
+    amount: dict[str, str | int]
+    escrow_ceiling: dict[str, str | int] | None = Field(
+        description=(
+            "The most the escrow will take for this issue: the price a human approved, "
+            "as the escrow holds it. None means the issue cannot be funded. Not the "
+            "affordability ceiling, which is the platform's estimate from the budget."
+        )
+    )
+    deadline: datetime | None
+    explorer_url: str
 
 
 class Claim(BaseModel):
@@ -227,6 +277,9 @@ class IssueOut(BaseModel):
     review: Review | None = None
     contributor_id: str | None = None
     paid_usdc: str | None = None
+    """What the contributor received: the commitment less the platform's take rate."""
+    platform_fee_usdc: str | None = None
+    """The platform's commission on this settlement, at the publisher's tier rate."""
     github_url: str
     criteria_approved_at: datetime | None = None
     """When the publisher approved the acceptance criteria; funding waits for it (#21)."""
@@ -268,6 +321,8 @@ class MetricsOut(BaseModel):
     repeat_publisher_rate: float
     """Publishers who funded a second issue within 60 days of an earlier one."""
     matched_volume_usdc: str
+    platform_fees_usdc: str
+    """The take-rate revenue actually collected across settled issues."""
     median_hours_to_payout: float | None
     refund_rate: float = 0.0
     """Of the commitments that closed, the share refunded rather than paid."""
@@ -550,7 +605,16 @@ class DisputeRequest(BaseModel):
 class HealthOut(BaseModel):
     status: str
     service: str
-    chain: str
+    chain: str = Field(description="Derived from chain_id: arc-mainnet, arc-testnet or chain-<id>")
+    chain_id: int
+    network_label: str
+    money: Literal["simulated", "test", "real", "unknown"] = Field(
+        description=(
+            "simulated: nothing moves; test: Arc testnet faucet USDC; real: Arc mainnet; "
+            "unknown: not an Arc network, so treat its USDC as real"
+        )
+    )
+    money_note: str
     seeded_issues: int
     simulated: bool
 

@@ -62,6 +62,22 @@ def min_fix_price(tier: str = "open") -> Usdc:
     return Usdc.from_decimal(rounded * FLOOR_ROUNDING)
 
 
+def take_rate_bps(tier: str = "open") -> int:
+    """The tier's take rate in basis points, which is the unit the escrow enforces."""
+    return int(TAKE_RATE_BY_TIER[tier] * 10_000)
+
+
+def platform_fee(amount: Usdc, tier: str = "open") -> Usdc:
+    """The platform's cut of a settlement.
+
+    Charged on the fix price rather than added to it, so it comes out of the
+    commitment the publisher already approved. Integer basis points and floor
+    division mirror `MisthosEscrow.release` exactly, which is what keeps the
+    recorded fee equal to the on-chain transfer.
+    """
+    return Usdc(amount.base_units * take_rate_bps(tier) // 10_000)
+
+
 BAND_LOW = Decimal("0.7")
 BAND_HIGH = Decimal("1.4")
 

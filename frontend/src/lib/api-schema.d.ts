@@ -207,6 +207,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issues/{issue_id}/commitment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Commitment Plan
+         * @description The two transactions the publisher's own wallet sends to fund the issue.
+         *
+         *     The platform never signs a commitment: it moves the publisher's USDC. Approving
+         *     the price records it as the escrow's ceiling; the publisher's wallet then lets the
+         *     escrow take that amount and commits it, and approving again books it.
+         */
+        get: operations["commitment_plan_api_v1_issues__issue_id__commitment_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/escrow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Escrow
+         * @description Read the commitment back from the escrow, so nobody has to take our word.
+         */
+        get: operations["get_escrow_api_v1_issues__issue_id__escrow_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/issues/{issue_id}/advance": {
         parameters: {
             query?: never;
@@ -1042,6 +1086,31 @@ export interface components {
             contributor_id?: string | null;
         };
         /**
+         * CommitmentPlan
+         * @description How a publisher funds an issue from their own wallet, in the order to send.
+         */
+        CommitmentPlan: {
+            /** Issue Id */
+            issue_id: string;
+            /** Chain Id */
+            chain_id: number;
+            /** Escrow */
+            escrow: string;
+            /** Usdc */
+            usdc: string;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /**
+             * Deadline
+             * @description Unix seconds. Commit within the hour: the escrow term starts at approval
+             */
+            deadline: number;
+            /** Calls */
+            calls: components["schemas"]["WalletCall"][];
+        };
+        /**
          * ComparableOut
          * @description A settled issue of similar shape the price was compared with (#42).
          */
@@ -1150,6 +1219,11 @@ export interface components {
              */
             deadline: string;
             /**
+             * Fee Bps
+             * @default 0
+             */
+            fee_bps: number;
+            /**
              * Released
              * @default false
              */
@@ -1159,6 +1233,51 @@ export interface components {
              * @default false
              */
             refunded: boolean;
+        };
+        /**
+         * EscrowReadback
+         * @description A commitment as the escrow reports it, not as the platform remembers it.
+         */
+        EscrowReadback: {
+            /** Issue Id */
+            issue_id: string;
+            /**
+             * Issue Key
+             * @description bytes32 the contract stores the issue under
+             */
+            issue_key: string;
+            /** Contract */
+            contract: string;
+            /** Chain Id */
+            chain_id: number;
+            /**
+             * Source
+             * @description chain: read from MisthosEscrow; simulation: the simulated escrow's books
+             * @enum {string}
+             */
+            source: "chain" | "simulation";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "none" | "held" | "released" | "refunded";
+            /** Publisher */
+            publisher: string | null;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /**
+             * Escrow Ceiling
+             * @description The most the escrow will take for this issue: the price a human approved, as the escrow holds it. None means the issue cannot be funded. Not the affordability ceiling, which is the platform's estimate from the budget.
+             */
+            escrow_ceiling: {
+                [key: string]: string | number;
+            } | null;
+            /** Deadline */
+            deadline: string | null;
+            /** Explorer Url */
+            explorer_url: string;
         };
         /**
          * FileableItem
@@ -1234,8 +1353,23 @@ export interface components {
             status: string;
             /** Service */
             service: string;
-            /** Chain */
+            /**
+             * Chain
+             * @description Derived from chain_id: arc-mainnet, arc-testnet or chain-<id>
+             */
             chain: string;
+            /** Chain Id */
+            chain_id: number;
+            /** Network Label */
+            network_label: string;
+            /**
+             * Money
+             * @description simulated: nothing moves; test: Arc testnet faucet USDC; real: Arc mainnet; unknown: not an Arc network, so treat its USDC as real
+             * @enum {string}
+             */
+            money: "simulated" | "test" | "real" | "unknown";
+            /** Money Note */
+            money_note: string;
             /** Seeded Issues */
             seeded_issues: number;
             /** Simulated */
@@ -1281,6 +1415,8 @@ export interface components {
             contributor_id?: string | null;
             /** Paid Usdc */
             paid_usdc?: string | null;
+            /** Platform Fee Usdc */
+            platform_fee_usdc?: string | null;
             /** Github Url */
             github_url: string;
             /** Criteria Approved At */
@@ -1394,6 +1530,8 @@ export interface components {
             repeat_publisher_rate: number;
             /** Matched Volume Usdc */
             matched_volume_usdc: string;
+            /** Platform Fees Usdc */
+            platform_fees_usdc: string;
             /** Median Hours To Payout */
             median_hours_to_payout: number | null;
             /**
@@ -1973,7 +2111,7 @@ export interface components {
             address: string;
             /**
              * Chain
-             * @default arc-testnet
+             * @description The network the address was recorded on, from its chain id
              */
             chain: string;
             /**
@@ -1981,6 +2119,18 @@ export interface components {
              * @description Set once the address was read from the party's Circle wallet
              */
             circle_user_id?: string | null;
+        };
+        /**
+         * WalletCall
+         * @description One transaction for the user's own wallet to send. The platform does not sign it.
+         */
+        WalletCall: {
+            /** Label */
+            label: string;
+            /** To */
+            to: string;
+            /** Data */
+            data: string;
         };
         /**
          * WalletSessionOut
@@ -2336,6 +2486,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TimelineEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    commitment_plan_api_v1_issues__issue_id__commitment_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitmentPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_escrow_api_v1_issues__issue_id__escrow_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EscrowReadback"];
                 };
             };
             /** @description Validation Error */

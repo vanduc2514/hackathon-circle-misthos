@@ -100,6 +100,9 @@ edge/dist/
 contracts/out/
 contracts/cache/
 contracts/broadcast/
+# Deploy-script test scratch and local anvil records. Arc records are committed.
+contracts/deployments/.test/
+contracts/deployments/31337.json
 
 # Foundry dependencies are cloned, not vendored
 contracts/lib/

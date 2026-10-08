@@ -174,6 +174,16 @@ class TestARealDeploymentMustNameItsSecret:
     def test_a_live_deployment_with_a_reference_passes(self) -> None:
         assert_secrets_are_configured(simulated=False, reference=REFERENCE)
 
+    def test_a_live_deployment_without_the_owner_key_is_refused(self) -> None:
+        """Without it no approved price becomes a ceiling, so nothing can be funded."""
+        with pytest.raises(AttestorKeyError, match="MISTHOS_OWNER_SECRET_REF"):
+            assert_secrets_are_configured(
+                simulated=False, reference=REFERENCE, owner_reference=""
+            )
+        assert_secrets_are_configured(
+            simulated=False, reference=REFERENCE, owner_reference="owner-2026-10"
+        )
+
     def test_the_api_checks_it_on_construction(self) -> None:
         main = REPO_ROOT / "backend" / "src" / "misthos" / "main.py"
 
