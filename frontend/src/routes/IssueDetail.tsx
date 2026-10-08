@@ -10,7 +10,8 @@ import {
   type TimelineEntry,
 } from '../lib/client'
 import { Bar, ChecksChip, Panel, StateBadge, Stepper } from '../components/ui'
-import IssueActions from '../components/IssueActions'
+import IssueActions, { roleOn } from '../components/IssueActions'
+import { BridgeToArc } from '../components/BridgeToArc'
 import { useHealth, useMe } from '../lib/session'
 
 export default function IssueDetail() {
@@ -297,6 +298,10 @@ export default function IssueDetail() {
             simulated={health.data?.simulated ?? false}
           />
           </Panel>
+
+          {issue.state === 'AWAITING_APPROVAL' && roleOn(issue, me.data).publisher && (
+            <BridgeToArc suggested={p ? String(p.recommended.usdc) : undefined} />
+          )}
 
           <Panel title="Parties">
             <dl className="kv">
