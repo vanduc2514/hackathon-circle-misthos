@@ -173,7 +173,10 @@ contract MisthosEscrowInvariant is Test {
             uint256 committed = handler.committedAmount(issueId);
             uint256 ceiling = handler.committedCeiling(issueId);
 
-            if (committed == 0 || ceiling == 0) continue;
+            if (committed == 0) continue;
+            // Every commitment had an approved price behind it: an unset ceiling
+            // refuses the commitment rather than leaving it uncapped.
+            assertGt(ceiling, 0, "committed without a ceiling");
             assertLe(committed, ceiling, "committed above the ceiling in force");
         }
     }

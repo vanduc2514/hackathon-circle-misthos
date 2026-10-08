@@ -675,6 +675,10 @@ class Store:
         at = when or _now()
         committed = rec.proposal.recommended
         deadline = at + lifecycle.ESCROW_TERM
+        # The approved price goes to the escrow as its ceiling first: the escrow
+        # refuses any commitment without one or above it, so what an agent can commit
+        # is bounded by what a person approved, on chain and not in this code.
+        self.chain.set_ceiling(rec.id, committed, at)
         # The rate is fixed here, with the money. The escrow enforces the rate it was
         # given on release, so reading the publisher's plan at settlement time instead
         # would let a plan that lapses mid-flight move the fee after the price was

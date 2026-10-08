@@ -191,6 +191,7 @@ class TestRefusals:
         rec = get("ISS-1006")
         assert rec.state is IssueState.AWAITING_APPROVAL
         # Something already holds money for this issue on chain.
+        store.chain.set_ceiling("ISS-1006", Usdc(1), rec.created_at)
         store.chain.commit("ISS-1006", "0xelse", Usdc(1), rec.created_at, rec.created_at)
 
         with pytest.raises(ChainRevert, match="AlreadyExists"):
@@ -202,6 +203,7 @@ class TestRefusals:
 
     def test_the_api_turns_a_refusal_into_a_conflict(self) -> None:
         rec = get("ISS-1006")
+        store.chain.set_ceiling("ISS-1006", Usdc(1), rec.created_at)
         store.chain.commit("ISS-1006", "0xelse", Usdc(1), rec.created_at, rec.created_at)
         r = TestClient(app).post(f"{API}/issues/ISS-1006/advance")
         assert r.status_code == 409

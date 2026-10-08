@@ -78,7 +78,9 @@ _VERSION_FLOOR = "issue_version_floor"
 # database but belong to the chain gateway, which resets them itself, before a seed
 # is built against them.
 _RESET_TABLES = [
-    table for table in reversed(t.metadata.sorted_tables) if table is not t.simulated_escrow
+    table
+    for table in reversed(t.metadata.sorted_tables)
+    if table not in (t.simulated_escrow, t.simulated_escrow_ceilings)
 ]
 # The order a reset locks them in under Postgres. Every save takes its issue row
 # before any other, so the reset takes issues first too and never holds a table a

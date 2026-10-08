@@ -271,6 +271,10 @@ export default function IssueDetail() {
                 </dd>
                 {onChain && (
                   <>
+                    <dt>Escrow ceiling</dt>
+                    <dd className="mono-num">
+                      {onChain.escrow_ceiling ? `$${money(onChain.escrow_ceiling)}` : 'none set'}
+                    </dd>
                     <dt>Escrow says</dt>
                     <dd>
                       <a href={onChain.explorer_url} target="_blank" rel="noreferrer">

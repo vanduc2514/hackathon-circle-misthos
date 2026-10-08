@@ -52,6 +52,17 @@ def commitments_call(issue_id: str) -> str:
     return commitments_call_by_key(issue_key(issue_id))
 
 
+def ceiling_call(issue_id: str) -> str:
+    """Call data for `ceiling(bytes32)`: the most the escrow will take for the issue."""
+    return selector("ceiling(bytes32)") + issue_key(issue_id)[2:]
+
+
+def decode_ceiling(result: str) -> Usdc | None:
+    """The escrow's ceiling for an issue. Zero means none: the issue cannot be funded."""
+    (value,) = _words(result, 1)
+    return Usdc(value) if value else None
+
+
 def _words(result: str, count: int) -> list[int]:
     body = result.removeprefix("0x")
     if len(body) != count * WORD_HEX:
