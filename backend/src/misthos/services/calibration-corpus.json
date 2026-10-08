@@ -1,4 +1,695 @@
 {
-  "about": "Real issues whose worth is known, for python -m misthos.services.calibration (#41). Each entry: id (a link to the issue), signals (the six, scored 1 to 5 as the engine scores them), worth_usdc (what the buyer paid, or valued the fix at), source (where that number came from), and compliance_driven. Real issues only: an invented row calibrates the engine to the invention.",
-  "issues": []
+  "about": "Real issues whose worth is known, for python -m misthos.services.calibration (#41), built by python -m misthos.services.bounties from calibration-sources.json. Each entry: id (a link to the issue), signals (the six, as domain/signals.read scores the issue today), reasons (why each scored what it did), worth_usdc (what the bounty paid), priced_usdc (what it was priced at up front), source (the payment announcement on the issue), and compliance_driven. Real issues only: an invented row calibrates the engine to the invention.",
+  "issues": [
+    {
+      "id": "https://github.com/archestra-ai/archestra/issues/4464",
+      "signals": {
+        "code_surface": 5.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 4.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 3466 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "2364 test files for 3466 source files",
+        "dependency_depth": "31 dependency manifest(s)",
+        "prior_attempts": "3 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "30",
+      "priced_usdc": "150",
+      "source": "https://github.com/archestra-ai/archestra/issues/4464#issuecomment-4842542889",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/archestra-ai/archestra/issues/4201",
+      "signals": {
+        "code_surface": 5.0,
+        "requirement_clarity": 2.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 2.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 3466 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour, a checklist",
+        "test_coverage": "2364 test files for 3466 source files",
+        "dependency_depth": "31 dependency manifest(s)",
+        "prior_attempts": "1 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "50",
+      "priced_usdc": "50",
+      "source": "https://github.com/archestra-ai/archestra/issues/4201#issuecomment-4408471151",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/archestra-ai/archestra/issues/4124",
+      "signals": {
+        "code_surface": 5.0,
+        "requirement_clarity": 2.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 3466 source files",
+        "requirement_clarity": "the issue has a full description, code or a trace, expected behaviour",
+        "test_coverage": "2364 test files for 3466 source files",
+        "dependency_depth": "31 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "30",
+      "priced_usdc": "30",
+      "source": "https://github.com/archestra-ai/archestra/issues/4124#issuecomment-4346065857",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/mangdangroboticsclub/apps-md-robots/issues/13",
+      "signals": {
+        "code_surface": 1.0,
+        "requirement_clarity": 5.0,
+        "test_coverage": 5.0,
+        "dependency_depth": 3.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 19 source files",
+        "requirement_clarity": "the issue says little about done",
+        "test_coverage": "0 test files for 19 source files, and no CI runs them",
+        "dependency_depth": "3 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/mangdangroboticsclub/apps-md-robots/issues/13#issuecomment-3996453778",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/coollabsio/coolify/issues/7941",
+      "signals": {
+        "code_surface": 4.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 3.0,
+        "prior_attempts": 5.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 2032 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "1066 test files for 2032 source files",
+        "dependency_depth": "3 dependency manifest(s)",
+        "prior_attempts": "5 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "15",
+      "priced_usdc": "15",
+      "source": "https://github.com/coollabsio/coolify/issues/7941#issuecomment-3776874671",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/projectdiscovery/nuclei-templates/issues/14693",
+      "signals": {
+        "code_surface": 1.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 5.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 4.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "the issue names 1 source file(s)",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "0 test files for 10 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "3 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/projectdiscovery/nuclei-templates/issues/14693#issuecomment-3709291026",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/projectdiscovery/nuclei-templates/issues/14673",
+      "signals": {
+        "code_surface": 2.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 5.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 4.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "the issue names 2 source file(s)",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "0 test files for 10 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "3 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/projectdiscovery/nuclei-templates/issues/14673#issuecomment-3714317630",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/projectdiscovery/nuclei-templates/issues/14623",
+      "signals": {
+        "code_surface": 1.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 5.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 5.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 10 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "0 test files for 10 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "4 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/projectdiscovery/nuclei-templates/issues/14623#issuecomment-3714231508",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/coollabsio/coolify/issues/7743",
+      "signals": {
+        "code_surface": 4.0,
+        "requirement_clarity": 4.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 3.0,
+        "prior_attempts": 5.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 2032 source files",
+        "requirement_clarity": "the issue has a full description",
+        "test_coverage": "1066 test files for 2032 source files",
+        "dependency_depth": "3 dependency manifest(s)",
+        "prior_attempts": "23 earlier pull request(s) closed without merging",
+        "blast_radius": "labelled ✨ enhancement"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/coollabsio/coolify/issues/7743#issuecomment-4042082731",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/golemcloud/golem/issues/2497",
+      "signals": {
+        "code_surface": 5.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 2.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 2689 source files",
+        "requirement_clarity": "the issue has a full description, code or a trace",
+        "test_coverage": "855 test files for 2689 source files",
+        "dependency_depth": "135 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "2000",
+      "priced_usdc": "2000",
+      "source": "https://github.com/golemcloud/golem/issues/2497#issuecomment-3693493435",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/mediar-ai/terminator/issues/396",
+      "signals": {
+        "code_surface": 3.0,
+        "requirement_clarity": 4.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 186 source files",
+        "requirement_clarity": "the issue has a full description",
+        "test_coverage": "122 test files for 186 source files",
+        "dependency_depth": "27 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/mediar-ai/terminator/issues/396#issuecomment-3605489214",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/mediar-ai/terminator/issues/385",
+      "signals": {
+        "code_surface": 3.0,
+        "requirement_clarity": 4.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 186 source files",
+        "requirement_clarity": "the issue has a full description",
+        "test_coverage": "122 test files for 186 source files",
+        "dependency_depth": "27 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/mediar-ai/terminator/issues/385#issuecomment-3599557584",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/mediar-ai/terminator/issues/378",
+      "signals": {
+        "code_surface": 3.0,
+        "requirement_clarity": 4.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 186 source files",
+        "requirement_clarity": "the issue has a full description",
+        "test_coverage": "122 test files for 186 source files",
+        "dependency_depth": "27 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/mediar-ai/terminator/issues/378#issuecomment-3587108950",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/go-gitea/gitea/issues/35898",
+      "signals": {
+        "code_surface": 4.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 3.0,
+        "prior_attempts": 2.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 2255 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "1159 test files for 2255 source files",
+        "dependency_depth": "3 dependency manifest(s)",
+        "prior_attempts": "1 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "300",
+      "priced_usdc": "300",
+      "source": "https://github.com/go-gitea/gitea/issues/35898#issuecomment-3593295853",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/coollabsio/coolify/issues/7113",
+      "signals": {
+        "code_surface": 4.0,
+        "requirement_clarity": 2.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 3.0,
+        "prior_attempts": 2.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 2032 source files",
+        "requirement_clarity": "the issue has a full description, code or a trace, expected behaviour",
+        "test_coverage": "1066 test files for 2032 source files",
+        "dependency_depth": "3 dependency manifest(s)",
+        "prior_attempts": "1 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "80",
+      "priced_usdc": "50",
+      "source": "https://github.com/coollabsio/coolify/issues/7113#issuecomment-3529003291",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/databuddy-analytics/Databuddy/issues/190",
+      "signals": {
+        "code_surface": 2.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 3.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 4.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "the issue names 2 source file(s)",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "412 test files for 1712 source files",
+        "dependency_depth": "35 dependency manifest(s)",
+        "prior_attempts": "3 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "150",
+      "priced_usdc": "150",
+      "source": "https://github.com/databuddy-analytics/Databuddy/issues/190#issuecomment-3693895647",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/activepieces/activepieces/issues/9915",
+      "signals": {
+        "code_surface": 5.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 4.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 4.0,
+        "blast_radius": 1.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 16471 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "1067 test files for 16471 source files",
+        "dependency_depth": "783 dependency manifest(s)",
+        "prior_attempts": "3 earlier pull request(s) closed without merging",
+        "blast_radius": "labelled good first issue"
+      },
+      "worth_usdc": "35",
+      "priced_usdc": "35",
+      "source": "https://github.com/activepieces/activepieces/issues/9915#issuecomment-3515408689",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/activepieces/activepieces/issues/9914",
+      "signals": {
+        "code_surface": 5.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 4.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 5.0,
+        "blast_radius": 1.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 16471 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "1067 test files for 16471 source files",
+        "dependency_depth": "783 dependency manifest(s)",
+        "prior_attempts": "4 earlier pull request(s) closed without merging",
+        "blast_radius": "labelled good first issue"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/activepieces/activepieces/issues/9914#issuecomment-3500955105",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/tscircuit/tscircuit/issues/1190",
+      "signals": {
+        "code_surface": 1.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 5.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 11 source files",
+        "requirement_clarity": "the issue has a full description, a checklist",
+        "test_coverage": "6 test files for 11 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "4 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "60",
+      "priced_usdc": "60",
+      "source": "https://github.com/tscircuit/tscircuit/issues/1190#issuecomment-3462637110",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/tscircuit/core/issues/1596",
+      "signals": {
+        "code_surface": 3.0,
+        "requirement_clarity": 5.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 573 source files",
+        "requirement_clarity": "the issue says little about done",
+        "test_coverage": "1807 test files for 573 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "40",
+      "priced_usdc": "40",
+      "source": "https://github.com/tscircuit/core/issues/1596#issuecomment-3454847870",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/tscircuit/schematic-trace-solver/issues/87",
+      "signals": {
+        "code_surface": 3.0,
+        "requirement_clarity": 2.0,
+        "test_coverage": 1.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 2.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 328 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour, a checklist",
+        "test_coverage": "311 test files for 328 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "1 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "150",
+      "priced_usdc": "150",
+      "source": "https://github.com/tscircuit/schematic-trace-solver/issues/87#issuecomment-3500532667",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/activepieces/activepieces/issues/9858",
+      "signals": {
+        "code_surface": 5.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 4.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 4.0,
+        "blast_radius": 1.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 16471 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "1067 test files for 16471 source files",
+        "dependency_depth": "783 dependency manifest(s)",
+        "prior_attempts": "3 earlier pull request(s) closed without merging",
+        "blast_radius": "labelled good first issue"
+      },
+      "worth_usdc": "30",
+      "priced_usdc": "30",
+      "source": "https://github.com/activepieces/activepieces/issues/9858#issuecomment-3479281314",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/CapSoftware/Cap/issues/1100",
+      "signals": {
+        "code_surface": 4.0,
+        "requirement_clarity": 5.0,
+        "test_coverage": 3.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 2481 source files",
+        "requirement_clarity": "the issue says little about done",
+        "test_coverage": "453 test files for 2481 source files",
+        "dependency_depth": "78 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "labelled feature"
+      },
+      "worth_usdc": "30",
+      "priced_usdc": "30",
+      "source": "https://github.com/CapSoftware/Cap/issues/1100#issuecomment-3431964271",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/aqualinkorg/aqualink-app/issues/1172",
+      "signals": {
+        "code_surface": 4.0,
+        "requirement_clarity": 5.0,
+        "test_coverage": 3.0,
+        "dependency_depth": 3.0,
+        "prior_attempts": 2.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 661 source files",
+        "requirement_clarity": "the issue says little about done",
+        "test_coverage": "112 test files for 661 source files",
+        "dependency_depth": "3 dependency manifest(s)",
+        "prior_attempts": "1 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "105",
+      "priced_usdc": "70",
+      "source": "https://github.com/aqualinkorg/aqualink-app/issues/1172#issuecomment-3352232391",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/golemcloud/golem/issues/2082",
+      "signals": {
+        "code_surface": 5.0,
+        "requirement_clarity": 4.0,
+        "test_coverage": 2.0,
+        "dependency_depth": 5.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 2689 source files",
+        "requirement_clarity": "the issue has a full description",
+        "test_coverage": "855 test files for 2689 source files",
+        "dependency_depth": "135 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "1500",
+      "priced_usdc": "1500",
+      "source": "https://github.com/golemcloud/golem/issues/2082#issuecomment-3403314652",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/supadata-ai/mcp/issues/2",
+      "signals": {
+        "code_surface": 1.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 2.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 3.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 8 source files",
+        "requirement_clarity": "the issue has a full description, a checklist",
+        "test_coverage": "2 test files for 8 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "2 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "30",
+      "priced_usdc": "30",
+      "source": "https://github.com/supadata-ai/mcp/issues/2#issuecomment-3239713015",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/prequel-dev/cre/issues/132",
+      "signals": {
+        "code_surface": 1.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 3.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 7 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "1 test files for 7 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "300",
+      "priced_usdc": "300",
+      "source": "https://github.com/prequel-dev/cre/issues/132#issuecomment-3363573160",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/prequel-dev/cre/issues/131",
+      "signals": {
+        "code_surface": 1.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 3.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 3.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 7 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "1 test files for 7 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "2 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "300",
+      "priced_usdc": "300",
+      "source": "https://github.com/prequel-dev/cre/issues/131#issuecomment-3363576490",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/prequel-dev/cre/issues/130",
+      "signals": {
+        "code_surface": 1.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 3.0,
+        "dependency_depth": 2.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "no files named, so judged from the repository's 7 source files",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "1 test files for 7 source files",
+        "dependency_depth": "1 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "200",
+      "priced_usdc": "200",
+      "source": "https://github.com/prequel-dev/cre/issues/130#issuecomment-3363561558",
+      "compliance_driven": false
+    },
+    {
+      "id": "https://github.com/autobase-tech/autobase/issues/1218",
+      "signals": {
+        "code_surface": 1.0,
+        "requirement_clarity": 3.0,
+        "test_coverage": 4.0,
+        "dependency_depth": 4.0,
+        "prior_attempts": 1.0,
+        "blast_radius": 2.0
+      },
+      "reasons": {
+        "code_surface": "the issue names 1 source file(s)",
+        "requirement_clarity": "the issue has a full description, expected behaviour",
+        "test_coverage": "16 test files for 436 source files",
+        "dependency_depth": "5 dependency manifest(s)",
+        "prior_attempts": "0 earlier pull request(s) closed without merging",
+        "blast_radius": "no label says otherwise"
+      },
+      "worth_usdc": "100",
+      "priced_usdc": "100",
+      "source": "https://github.com/autobase-tech/autobase/issues/1218#issuecomment-3221249732",
+      "compliance_driven": false
+    }
+  ]
 }

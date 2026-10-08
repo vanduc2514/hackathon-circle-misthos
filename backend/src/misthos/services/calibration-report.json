@@ -1,0 +1,65 @@
+{
+  "issues": 30,
+  "sources": [
+    "https://github.com/CapSoftware/Cap/issues/1100#issuecomment-3431964271",
+    "https://github.com/activepieces/activepieces/issues/9858#issuecomment-3479281314",
+    "https://github.com/activepieces/activepieces/issues/9914#issuecomment-3500955105",
+    "https://github.com/activepieces/activepieces/issues/9915#issuecomment-3515408689",
+    "https://github.com/aqualinkorg/aqualink-app/issues/1172#issuecomment-3352232391",
+    "https://github.com/archestra-ai/archestra/issues/4124#issuecomment-4346065857",
+    "https://github.com/archestra-ai/archestra/issues/4201#issuecomment-4408471151",
+    "https://github.com/archestra-ai/archestra/issues/4464#issuecomment-4842542889",
+    "https://github.com/autobase-tech/autobase/issues/1218#issuecomment-3221249732",
+    "https://github.com/coollabsio/coolify/issues/7113#issuecomment-3529003291",
+    "https://github.com/coollabsio/coolify/issues/7743#issuecomment-4042082731",
+    "https://github.com/coollabsio/coolify/issues/7941#issuecomment-3776874671",
+    "https://github.com/databuddy-analytics/Databuddy/issues/190#issuecomment-3693895647",
+    "https://github.com/go-gitea/gitea/issues/35898#issuecomment-3593295853",
+    "https://github.com/golemcloud/golem/issues/2082#issuecomment-3403314652",
+    "https://github.com/golemcloud/golem/issues/2497#issuecomment-3693493435",
+    "https://github.com/mangdangroboticsclub/apps-md-robots/issues/13#issuecomment-3996453778",
+    "https://github.com/mediar-ai/terminator/issues/378#issuecomment-3587108950",
+    "https://github.com/mediar-ai/terminator/issues/385#issuecomment-3599557584",
+    "https://github.com/mediar-ai/terminator/issues/396#issuecomment-3605489214",
+    "https://github.com/prequel-dev/cre/issues/130#issuecomment-3363561558",
+    "https://github.com/prequel-dev/cre/issues/131#issuecomment-3363576490",
+    "https://github.com/prequel-dev/cre/issues/132#issuecomment-3363573160",
+    "https://github.com/projectdiscovery/nuclei-templates/issues/14623#issuecomment-3714231508",
+    "https://github.com/projectdiscovery/nuclei-templates/issues/14673#issuecomment-3714317630",
+    "https://github.com/projectdiscovery/nuclei-templates/issues/14693#issuecomment-3709291026",
+    "https://github.com/supadata-ai/mcp/issues/2#issuecomment-3239713015",
+    "https://github.com/tscircuit/core/issues/1596#issuecomment-3454847870",
+    "https://github.com/tscircuit/schematic-trace-solver/issues/87#issuecomment-3500532667",
+    "https://github.com/tscircuit/tscircuit/issues/1190#issuecomment-3462637110"
+  ],
+  "current": {
+    "weights": {
+      "code_surface": 0.25,
+      "requirement_clarity": 0.2,
+      "test_coverage": 0.15,
+      "dependency_depth": 0.15,
+      "prior_attempts": 0.15,
+      "blast_radius": 0.1
+    },
+    "rate": "90.00",
+    "within_band": 0.033,
+    "median_error": 15.988,
+    "log_rms": 3.0791
+  },
+  "proposed": {
+    "weights": {
+      "code_surface": 0.05,
+      "requirement_clarity": 0.05,
+      "test_coverage": 0.1,
+      "dependency_depth": 0.05,
+      "prior_attempts": 0.05,
+      "blast_radius": 0.7
+    },
+    "rate": "8.09",
+    "within_band": 0.467,
+    "median_error": 0.518,
+    "log_rms": 1.058
+  },
+  "notes": [],
+  "self_consistency": false
+}

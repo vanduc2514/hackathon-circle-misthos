@@ -42,6 +42,11 @@ description = "Replay the review agent over the regression corpus and report agr
 dir = "backend"
 run = "uv run python -m misthos.services.review.harness"
 
+[tasks."pricing:bounties"]
+description = "Rebuild the calibration corpus from paid GitHub bounties (needs GITHUB_TOKEN)"
+dir = "backend"
+run = "uv run python -m misthos.services.bounties"
+
 [tasks."pricing:calibrate"]
 description = "Replay the pricing engine over issues of known worth and fit the rate and weights"
 dir = "backend"
