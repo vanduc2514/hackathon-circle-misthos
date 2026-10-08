@@ -40,6 +40,23 @@ def test_the_worker_owns_the_sweeper(compose: dict) -> None:
     assert compose["services"]["worker"]["command"] == ["python", "-m", "misthos.workers"]
 
 
+def test_a_scraper_on_the_network_reaches_the_worker_and_the_host_only_on_loopback(
+    compose: dict,
+) -> None:
+    """The sweeper runs in the worker, so the worker is where the ledger divergence
+    gauge and the sweep timings live. With its port neither exposed nor published, the
+    series operators are told to alert on could only be read from inside the
+    container, and the API's own scrape showed the gauge at 0 forever."""
+    worker = compose["services"]["worker"]
+    port = worker["environment"]["MISTHOS_WORKER_METRICS_PORT"]
+    assert port in [str(p) for p in worker.get("expose", [])]
+    assert f"127.0.0.1:{port}:{port}" in worker.get("ports", [])
+    # Neither internal endpoint is published beyond this machine.
+    for name in ("api", "worker"):
+        for published in compose["services"][name].get("ports", []):
+            assert str(published).startswith("127.0.0.1:"), (name, published)
+
+
 def test_each_built_service_has_a_dockerfile(compose: dict) -> None:
     for name, service in compose["services"].items():
         if "build" in service:

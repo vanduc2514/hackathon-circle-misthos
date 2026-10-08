@@ -23,9 +23,14 @@ ISSUER = "misthos"
 log = logging.getLogger("misthos.auth")
 
 _SECRET = settings.session_secret or secrets.token_hex(32)
-if not settings.session_secret:
-    # Fine for one process; sessions end at a restart and do not cross processes.
-    log.warning("MISTHOS_SESSION_SECRET is not set; sessions last only this process")
+
+
+def warn_if_unshared() -> None:
+    """Said at startup, once logging is configured. Said at import, it was written
+    before any handler existed, as the one bare line in a JSON log."""
+    if not settings.session_secret:
+        # Fine for one process; sessions end at a restart and do not cross processes.
+        log.warning("MISTHOS_SESSION_SECRET is not set; sessions last only this process")
 
 
 def issue(address: str, now: datetime | None = None) -> str:

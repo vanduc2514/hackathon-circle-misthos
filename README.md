@@ -182,6 +182,14 @@ against issues whose worth is known:
 
 ```bash
 mise run pricing:calibrate                       # the corpus of real, scored issues
+```
+
+`--settled` replays the platform's own settlements instead. It is not a check against
+known worth: the amount a settled issue paid is the price the engine recommended, so
+the engine agrees with it by construction. It measures self-consistency (how far
+today's engine has moved from the one that priced those issues), and it fits nothing.
+
+```bash
 cd backend && uv run python -m misthos.services.calibration --settled
 ```
 

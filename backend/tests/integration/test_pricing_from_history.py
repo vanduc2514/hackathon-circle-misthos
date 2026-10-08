@@ -3,15 +3,18 @@ own books (#43), and neither leaks what the publisher would rather keep."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from misthos.config import settings
 from misthos.domain.money import Usdc
 from misthos.main import app
-from misthos.services.finance import FinanceContext, FinanceError
+from misthos.services.finance import Beancount, FinanceContext, FinanceError, FireflyIII
 from misthos.store import store
 
 API = "/api/v1"
@@ -109,6 +112,33 @@ class TestTheBooksCapThePrice:
 
     def test_books_that_cannot_be_read_never_block_a_price(self, client: TestClient) -> None:
         store.finance = lambda pid: Books(None, fail=True)
+        assert publish(client, SETTLED_SHAPE)["proposal"]["fundable"] is True
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            lambda: httpx.Response(200, text="<html>Sign in</html>"),
+            lambda: httpx.Response(200, content=b""),
+            lambda: httpx.Response(200, json={"meta": {"pagination": {"total_pages": "many"}}}),
+        ],
+        ids=["a login page", "an empty body", "a page count that is not a number"],
+    )
+    def test_firefly_answering_with_something_else_never_blocks_a_price(
+        self, client: TestClient, reply: Callable[[], httpx.Response]
+    ) -> None:
+        transport = httpx.MockTransport(lambda _request: reply())
+        store.finance = lambda pid: FireflyIII("https://f.example", "pat", "3", transport=transport)
+        assert publish(client, SETTLED_SHAPE)["proposal"]["fundable"] is True
+        body = client.get(f"{API}/publishers/PUB-1/finance").json()
+        assert body["connected"] is True and body["note"]
+        assert body["caps_prices_at_usdc"] == body["declared_budget_usdc"]
+
+    def test_a_ledger_that_cannot_be_understood_never_blocks_a_price(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        ledger = tmp_path / "latin1.beancount"
+        ledger.write_bytes('2026-10-02 * "Caf\u00e9"\n'.encode("latin-1"))
+        store.finance = lambda pid: Beancount(ledger, "Expenses:OpenSource", ["Assets:Bank"])
         assert publish(client, SETTLED_SHAPE)["proposal"]["fundable"] is True
 
 

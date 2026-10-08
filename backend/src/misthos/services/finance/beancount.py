@@ -65,6 +65,14 @@ def _amount(text: str) -> Decimal:
         raise FinanceError(f"not an amount: {text}") from exc
 
 
+def _day(text: str) -> date:
+    # The pattern admits 2026-02-30, which only the calendar refuses.
+    try:
+        return date.fromisoformat(text)
+    except ValueError as exc:
+        raise FinanceError(f"not a date: {text}") from exc
+
+
 def parse(text: str) -> tuple[list[Posting], list[Budget], list[str]]:
     """Postings and budget directives, and what was not followed."""
     postings: list[Posting] = []
@@ -103,11 +111,11 @@ def parse(text: str) -> tuple[list[Posting], list[Budget], list[str]]:
             close()
             current = None
             if found := _TXN.match(line):
-                current = date.fromisoformat(found[1])
+                current = _day(found[1])
             elif found := _BUDGET.match(line):
                 budgets.append(
                     Budget(
-                        day=date.fromisoformat(found[1]),
+                        day=_day(found[1]),
                         account=found["account"],
                         period=found["period"],
                         amount=_amount(found["amount"]),
@@ -164,9 +172,14 @@ class Beancount:
     def read(self, now: datetime) -> FinanceContext:
         try:
             text = self.path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
+            # A ledger saved in another encoding fails as a ValueError, not an OSError.
             raise FinanceError(f"the ledger could not be read: {exc}") from exc
-        return self.context(text, now)
+        try:
+            return self.context(text, now)
+        except ArithmeticError as exc:
+            # An amount past what a decimal holds at USDC's precision.
+            raise FinanceError(f"the ledger could not be understood: {exc}") from exc
 
     def context(self, text: str, now: datetime) -> FinanceContext:
         postings, budgets, skipped = parse(text)

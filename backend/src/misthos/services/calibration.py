@@ -13,6 +13,13 @@ beside it, never something the engine does to itself.
 
 The corpus is `calibration-corpus.json` beside this file: real issues only, each with
 where its worth came from. An empty corpus is reported as empty, not filled in.
+
+`--settled` is not a calibration. The amount a settled issue paid is the price the
+engine recommended and the publisher approved, so the engine agrees with it by
+construction: the report measures self-consistency, which shows only how far today's
+engine has moved from the one that priced those issues. Nothing is fitted from a
+settlement, because fitting the engine to its own output would fit the budget
+ceiling and the relist uplift, not what the work was worth.
 """
 
 from __future__ import annotations
@@ -37,6 +44,9 @@ CORPUS = Path(__file__).with_name("calibration-corpus.json")
 # weights fitted to fewer points would fit the noise.
 MIN_FOR_WEIGHTS = 20
 MIN_FOR_RATE = 5
+
+# Where a settled observation's worth came from: the engine's own recommendation.
+SETTLED = "settled on the platform"
 
 STEP = 0.05
 FLOOR = 0.05
@@ -69,6 +79,19 @@ class Report:
     current: Fit | None
     proposed: Fit | None
     notes: list[str] = field(default_factory=list)
+    self_consistency: bool = False
+    """True when some worth is the engine's own price, so nothing was fitted."""
+
+
+SELF_CONSISTENCY = [
+    "These are settled prices, which are the engine's own output: the amount paid is "
+    "the price it recommended and the publisher approved. Agreement with them is "
+    "self-consistency, not calibration; it shows only how far today's engine has moved "
+    "from the one that priced them.",
+    "Nothing is fitted from settlements: fitted to its own output, the engine would "
+    "learn the budget ceiling and the relist uplift, not what the work was worth. "
+    "Calibrate against the corpus of independently scored issues.",
+]
 
 
 def _price(obs: Observation, weights: dict[str, float], rate: Usdc):  # type: ignore[no-untyped-def]
@@ -137,6 +160,9 @@ def calibrate(observations: list[Observation]) -> Report:
     if not observations:
         return Report(0, [], None, None, ["No issues with a known worth yet: nothing to fit."])
     current = evaluate(observations, WEIGHTS, RATE_PER_HOUR)
+    if any(o.source == SETTLED for o in observations):
+        return Report(len(observations), sources, current, None, list(SELF_CONSISTENCY),
+                      self_consistency=True)  # fmt: skip
     notes: list[str] = []
     if len(observations) < MIN_FOR_RATE:
         notes.append(f"{len(observations)} issues: too few to fit even the rate.")
@@ -169,7 +195,8 @@ def load_corpus(path: Path = CORPUS) -> list[Observation]:
 
 
 def load_settled() -> list[Observation]:
-    """What the platform itself settled: the price a publisher approved and paid."""
+    """What the platform itself settled: the price a publisher approved and paid, which
+    is the price the engine recommended. Evidence of consistency, never of worth."""
     from misthos.store import store
 
     observations = []
@@ -181,7 +208,7 @@ def load_settled() -> list[Observation]:
                 id=rec.id,
                 signals=dict(rec.proposal.signals),
                 worth=rec.paid,
-                source="settled on the platform",
+                source=SETTLED,
                 compliance_driven=rec.compliance_driven,
             )
         )
@@ -189,7 +216,11 @@ def load_settled() -> list[Observation]:
 
 
 def render(report: Report) -> str:
-    lines = [f"{report.issues} issues with a known worth"]
+    lines = [
+        f"{report.issues} settled issues, priced by the engine itself"
+        if report.self_consistency
+        else f"{report.issues} issues with a known worth"
+    ]
     if report.sources:
         lines.append("sources: " + "; ".join(report.sources))
 
@@ -223,13 +254,18 @@ def _jsonable(report: Report) -> dict:
         "current": fit(report.current),
         "proposed": fit(report.proposed),
         "notes": report.notes,
+        "self_consistency": report.self_consistency,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--corpus", type=Path, default=CORPUS)
-    parser.add_argument("--settled", action="store_true", help="use the platform's settlements")
+    parser.add_argument(
+        "--settled",
+        action="store_true",
+        help="replay the platform's settlements: a self-consistency check that fits nothing",
+    )
     parser.add_argument("--write", type=Path, help="record the report as JSON")
     args = parser.parse_args(argv)
 

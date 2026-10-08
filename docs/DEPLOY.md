@@ -23,7 +23,7 @@ docker compose up --build
 | --- | --- | --- |
 | `web` | The web app, served by nginx, which proxies `/api`, `/docs` and `/openapi.json` | http://localhost:5173 |
 | `api` | FastAPI, with the sweeper switched off | http://127.0.0.1:8000 (localhost only) |
-| `worker` | `python -m misthos.workers`: timers, reviews, re-screening, reconciliation | metrics on 9100, inside the network |
+| `worker` | `python -m misthos.workers`: timers, reviews, re-screening, reconciliation | metrics at http://127.0.0.1:9100/metrics (localhost only), `worker:9100` inside the network |
 | `edge` | The x402 gate and the Circle CLI bridge | http://localhost:8080 |
 | `postgres` | State, durable in the `pgdata` volume | inside the network |
 | `redis` | The per-issue lock, idempotency keys and rate limits | inside the network |
@@ -43,20 +43,41 @@ Pass real integrations through from your shell or a `.env` file next to
 
 ### Observing it
 
-- Logs are one JSON object per line (`MISTHOS_LOG_JSON=true` in compose). Every line
-  carries a `correlation_id`: the `X-Request-ID` nginx assigns to the request, or
-  `sweep-…` for a sweeper pass. Money events, verdicts and prices are logged with
-  their fields, so `issue_id`, `kind` and `tx_hash` can be filtered on directly.
-- Prometheus metrics are served by the API at `/internal/metrics` and by the worker on
-  port 9100. Neither is proxied by the web app. The series that matter most are:
-  - `misthos_review_seconds` and `misthos_review_cost_usdc` (review in under five
-    minutes, for about six dollars)
-  - `misthos_price_seconds` (a price in under 60 seconds)
-  - `misthos_money_events_total`
-  - `misthos_ledger_divergences`, which should always be 0, and
-    `misthos_ledger_divergence_alerts_total`. Alert on any increase. Each alert is
-    also an `ERROR` line with `"alert": "ledger_divergence"`, and an entry in the
-    issue's decision log.
+- Logs are one JSON object per line (`MISTHOS_LOG_JSON=true` in compose), uvicorn's
+  own startup and access lines included. Every line carries a `correlation_id`: the
+  `X-Request-ID` nginx assigns to the request, `sweep-…` for a sweeper pass, or `-`
+  for a line that belongs to neither, such as startup. Money events, verdicts and
+  prices are logged with their fields, so `issue_id`, `kind` and `tx_hash` can be
+  filtered on directly.
+- Prometheus metrics come from two processes, and each exports only what it writes:
+  the API at `/internal/metrics` (`api:8000` inside the network), and the worker at
+  `/metrics` on port 9100 (`worker:9100`). Neither is proxied by the web app, and on
+  the host both are published on 127.0.0.1 only. Scrape both:
+
+  ```yaml
+  scrape_configs:
+    - job_name: misthos-api
+      metrics_path: /internal/metrics
+      static_configs: [{targets: ["api:8000"]}]
+    - job_name: misthos-worker
+      static_configs: [{targets: ["worker:9100"]}]
+  ```
+
+  | Series | Exported by | What it shows |
+  | --- | --- | --- |
+  | `misthos_ledger_divergences`, `misthos_ledger_divergence_alerts_total` | the worker | Alert here: the gauge above 0, or any increase of the counter |
+  | `misthos_sweep_seconds`, `misthos_sweep_failures_total` | the worker | A sweeper pass that slows down or fails |
+  | `misthos_review_seconds`, `misthos_review_cost_usdc` | the worker for the sweeper's reviews, the API for one a person asks for | A review in under five minutes, for about six dollars; sum across both jobs |
+  | `misthos_money_events_total` | the API for what people do, the worker for what timers do | Sum across both jobs |
+  | `misthos_price_seconds` | the API | A price in under 60 seconds |
+  | `misthos_http_request_seconds` | the API | Request latency by route |
+
+  The sweeper's series come only from the process that runs the sweeper: the worker
+  under compose, and the API itself in development, where
+  `MISTHOS_SWEEPER_IN_PROCESS=true`. An API that does not sweep leaves them out
+  rather than reporting a 0 it never measured. Each divergence alert is also an
+  `ERROR` line with `"alert": "ledger_divergence"` in the worker's log, and an entry
+  in the issue's decision log.
 
 ## 3. The contract on Arc testnet
 

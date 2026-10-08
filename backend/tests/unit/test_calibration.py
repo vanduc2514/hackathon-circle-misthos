@@ -8,13 +8,18 @@ from __future__ import annotations
 
 import json
 import random
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import RATE_PER_HOUR, WEIGHTS, ComplexitySignals, propose
+from misthos.services import calibration
 from misthos.services.calibration import (
     MIN_FOR_WEIGHTS,
+    SETTLED,
     Observation,
     calibrate,
     load_corpus,
@@ -81,3 +86,40 @@ def test_the_report_is_recorded(tmp_path: Path) -> None:
     assert recorded["issues"] == 6
     assert recorded["current"]["rate"] == f"{RATE_PER_HOUR.decimal:.2f}"
     assert recorded["proposed"]["rate"].startswith("100")
+
+
+def as_settled(observations: list[Observation]) -> list[Observation]:
+    return [replace(o, source=SETTLED) for o in observations]
+
+
+def test_settlements_measure_self_consistency_and_fit_nothing() -> None:
+    """A settled price is the price the engine recommended and the publisher approved,
+    so the engine agrees with it by construction. Fitted to its own output, the
+    weights would fit only the budget ceiling and the relist uplift."""
+    skewed = {**WEIGHTS, "code_surface": 0.40, "blast_radius": 0.05, "test_coverage": 0.05}
+    report = calibrate(as_settled(synthetic(MIN_FOR_WEIGHTS + 4, rate="90", weights=skewed)))
+    assert report.current is not None
+    assert report.proposed is None
+    text = render(report)
+    assert "the engine's own output" in text
+    assert "self-consistency, not calibration" in text
+    assert "nothing is fitted" in text.lower()
+
+
+def test_one_settlement_among_scored_issues_still_fits_nothing() -> None:
+    rows = synthetic(MIN_FOR_WEIGHTS + 4, rate="90", weights=WEIGHTS)
+    report = calibrate(rows[:-1] + as_settled(rows[-1:]))
+    assert report.proposed is None
+
+
+def test_the_settled_report_says_so_when_printed_and_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        calibration, "load_settled", lambda: as_settled(synthetic(6, rate="100", weights=WEIGHTS))
+    )
+    out = tmp_path / "report.json"
+    assert main(["--settled", "--write", str(out)]) == 0
+    assert "self-consistency, not calibration" in capsys.readouterr().out
+    recorded = json.loads(out.read_text())
+    assert recorded["self_consistency"] is True and recorded["proposed"] is None
