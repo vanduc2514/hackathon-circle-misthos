@@ -259,6 +259,16 @@ simulated_escrow = Table(
     Column("fee_bps", Integer, nullable=False, server_default="0"),
 )
 
+# The simulated escrow's per-issue ceilings: the price a human approved, which the
+# escrow refuses to exceed (#34). Separate from the books because a ceiling exists
+# before any commitment does.
+simulated_escrow_ceilings = Table(
+    "simulated_escrow_ceilings",
+    metadata,
+    Column("issue_id", Id, primary_key=True),
+    Column("ceiling_base_units", BigInteger, nullable=False),
+)
+
 # A signed-in wallet and the role it chose (#70). One role per wallet.
 accounts = Table(
     "accounts",

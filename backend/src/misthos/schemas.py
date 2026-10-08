@@ -185,6 +185,13 @@ class EscrowReadback(BaseModel):
     status: Literal["none", "held", "released", "refunded"]
     publisher: str | None
     amount: dict[str, str | int]
+    escrow_ceiling: dict[str, str | int] | None = Field(
+        description=(
+            "The most the escrow will take for this issue: the price a human approved, "
+            "as the escrow holds it. None means the issue cannot be funded. Not the "
+            "affordability ceiling, which is the platform's estimate from the budget."
+        )
+    )
     deadline: datetime | None
     explorer_url: str
 

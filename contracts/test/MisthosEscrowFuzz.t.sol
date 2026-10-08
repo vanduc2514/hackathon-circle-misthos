@@ -271,7 +271,10 @@ contract MisthosEscrowFuzz is Test {
         return uint64(bound(seed, block.timestamp + 1, block.timestamp + 365 days));
     }
 
+    /// @dev The approved price becomes the ceiling first, as at the approval
+    ///      checkpoint: without one the escrow refuses every commitment.
     function _commit(uint256 amount, uint64 deadline) private {
+        if (escrow.ceiling(ISSUE) == 0) escrow.setCeiling(ISSUE, amount);
         vm.prank(PUBLISHER);
         escrow.commit(ISSUE, amount, deadline);
     }

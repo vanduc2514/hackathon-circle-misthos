@@ -689,7 +689,7 @@ Inference is roughly nine hundred times the settlement cost. Any optimisation ef
 
 These are unresolved. Each one has a real constraint behind it, and none should be quietly assumed away.
 
-**Spending policies are mainnet only.** Circle's wallet spending policies do not support testnet, and setting one triggers an email OTP. That means the agent-guardrail story cannot be demonstrated on testnet through Circle's own mechanism. Either the demo runs on mainnet with small real amounts, or `MisthosEscrow` implements the per-issue ceiling itself so the guardrail exists at both tiers. The second is more work and is the more honest design, because it puts the limit in the contract rather than in a policy tied to one vendor.
+**Spending policies are mainnet only.** Circle's wallet spending policies do not support testnet, and setting one triggers an email OTP. That means the agent-guardrail story cannot be demonstrated on testnet through Circle's own mechanism. `MisthosEscrow` therefore enforces the guardrail itself: an issue cannot be funded without a per-issue ceiling, the price a human approved, and a commitment above it reverts. The limit lives in the contract rather than in a policy tied to one vendor, so it holds on testnet and mainnet alike. See [contracts/README.md](../contracts/README.md).
 
 **Nanopayments require EOA signatures.** Gateway Nanopayments and x402 batch settlement do not support ERC-1271. If a contributor is paid to a smart contract account, Path B is unavailable to them. Path A is unaffected, which is another argument for keeping escrow as the primary rail.
 

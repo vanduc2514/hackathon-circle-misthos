@@ -168,6 +168,7 @@ async def get_escrow(issue_id: str) -> EscrowReadback:
     gateway, source = _escrow_source()
     try:
         held = await run_in_threadpool(gateway.commitment, issue_id)
+        ceiling = await run_in_threadpool(gateway.escrow_ceiling, issue_id)
     except ChainUnavailable as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return EscrowReadback(
@@ -179,6 +180,7 @@ async def get_escrow(issue_id: str) -> EscrowReadback:
         status=held.status.value if held else "none",  # type: ignore[arg-type]
         publisher=held.publisher if held else None,
         amount=money(held.amount if held else Usdc(0)),
+        escrow_ceiling=money(ceiling) if ceiling else None,
         deadline=held.deadline if held else None,
         explorer_url=f"{settings.explorer_url}/address/{ESCROW.address}",
     )

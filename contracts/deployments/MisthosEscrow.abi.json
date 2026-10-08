@@ -632,6 +632,11 @@
   },
   {
     "type": "error",
+    "name": "NoCeiling",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotAToken",
     "inputs": [
       {

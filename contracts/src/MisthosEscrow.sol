@@ -55,6 +55,7 @@ contract MisthosEscrow {
     error ZeroAddress();
     error ZeroAmount();
     error AmountMismatch();
+    error NoCeiling();
     error ExceedsCeiling(uint256 amount, uint256 ceiling);
     error FeeTooHigh(uint256 bps, uint256 max);
     error FeeRecipientNotSet();
@@ -111,8 +112,13 @@ contract MisthosEscrow {
 
     mapping(bytes32 => Commitment) public commitments;
 
-    /// @notice Optional per-issue ceiling. Zero means uncapped. A budget an agent
-    ///         cannot exceed is a contract, not a prompt.
+    /// @notice Per-issue ceiling: the most that may be committed for the issue.
+    ///         It is the price a human approved, recorded here at the approval
+    ///         checkpoint. An issue without one cannot be funded, so an agent
+    ///         holding the publisher's key can never commit more than a person
+    ///         agreed to. A budget an agent cannot exceed is a contract, not a
+    ///         prompt, and it holds on testnet, where Circle's spending policies
+    ///         do not exist.
     /// @dev In base units of the issue's token, which is always 6 decimals.
     mapping(bytes32 => uint256) public ceiling;
 
@@ -161,10 +167,10 @@ contract MisthosEscrow {
      * @notice Commit the price for an issue. One commitment per issue id.
      * @param issueId  keccak256 of the platform issue identifier.
      * @param amount   Total committed in 6-decimal base units of the issue's
-     *                 token: USDC, or EURC when the owner named it. The publisher
-     *                 pays the fix price and nothing else: the platform reviews
-     *                 the submission, so there is no reviewer fee to fund
-     *                 alongside it.
+     *                 token (USDC, or EURC when the owner named it), at most the
+     *                 issue's ceiling. The publisher pays the fix price and nothing
+     *                 else: the platform reviews the submission, so there is no
+     *                 reviewer fee to fund alongside it.
      * @param deadline Unix seconds after which the publisher can reclaim.
      */
     function commit(bytes32 issueId, uint256 amount, uint64 deadline) external {
@@ -174,7 +180,8 @@ contract MisthosEscrow {
         if (amount > type(uint96).max) revert AmountMismatch();
 
         uint256 cap = ceiling[issueId];
-        if (cap != 0 && amount > cap) revert ExceedsCeiling(amount, cap);
+        if (cap == 0) revert NoCeiling();
+        if (amount > cap) revert ExceedsCeiling(amount, cap);
 
         commitments[issueId] = Commitment({
             publisher: msg.sender,
@@ -254,7 +261,9 @@ contract MisthosEscrow {
 
     // ------------------------------------------------------------------ admin
 
-    /// @notice Cap what may be committed for an issue. Zero means no cap.
+    /// @notice Record the approved price as the most that may be committed for
+    ///         an issue. Zero removes it, which makes the issue unfundable again.
+    /// @dev Only a cap: it can stop money entering, never move money already held.
     function setCeiling(bytes32 issueId, uint256 cap) external onlyOwner {
         ceiling[issueId] = cap;
         emit CeilingUpdated(issueId, cap);

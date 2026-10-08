@@ -82,6 +82,42 @@ class TestEscrowReadback:
     def test_an_unknown_issue_is_404(self, client: TestClient) -> None:
         assert client.get(f"{API}/issues/ISS-9999/escrow").status_code == 404
 
+    def test_a_funded_issue_is_capped_at_its_approved_price(self, client: TestClient) -> None:
+        issue_id = self._first(client, "funded")
+        body = client.get(f"{API}/issues/{issue_id}/escrow").json()
+        issue = client.get(f"{API}/issues/{issue_id}").json()
+        assert body["escrow_ceiling"] == issue["proposal"]["recommended"]
+        assert body["amount"]["base_units"] <= body["escrow_ceiling"]["base_units"]
+
+    def test_an_issue_nobody_approved_has_no_ceiling(self, client: TestClient) -> None:
+        issue_id = self._first(client, "awaiting_approval")
+        assert client.get(f"{API}/issues/{issue_id}/escrow").json()["escrow_ceiling"] is None
+
+    def test_the_ceiling_is_the_escrow_s_not_a_copy_of_the_amount(
+        self, client: TestClient
+    ) -> None:
+        # Change the ceiling on the escrow alone: the readback must follow the escrow,
+        # which it could not if the ceiling were derived from the committed amount.
+        from datetime import UTC, datetime
+
+        from misthos.domain.money import Usdc
+
+        issue_id = self._first(client, "funded")
+        store.chain.set_ceiling(issue_id, Usdc(999_000_000), datetime.now(UTC))
+        body = client.get(f"{API}/issues/{issue_id}/escrow").json()
+        assert body["escrow_ceiling"]["base_units"] == 999_000_000
+        assert body["amount"]["base_units"] != 999_000_000
+
+    def test_approving_the_price_records_the_ceiling_before_committing(
+        self, client: TestClient
+    ) -> None:
+        issue_id = self._first(client, "awaiting_approval")
+        approved = client.get(f"{API}/issues/{issue_id}").json()["proposal"]["recommended"]
+        store.advance(issue_id)
+        body = client.get(f"{API}/issues/{issue_id}/escrow").json()
+        assert body["status"] == "held"
+        assert body["escrow_ceiling"] == approved
+
 
 class TestHealth:
     def test_health_reports_the_simulation(self, client: TestClient) -> None:
