@@ -6,6 +6,7 @@ import {
   relativeTime,
   shortHash,
   shortTime,
+  type EscrowReadback,
   type IssueOut,
   type TimelineEntry,
 } from '../lib/client'
@@ -21,6 +22,13 @@ export default function IssueDetail() {
   const { data: issue, isLoading, error } = useQuery({
     queryKey: ['issue', issueId],
     queryFn: async () => (await api.GET('/api/v1/issues/{issue_id}', { params: { path: { issue_id: issueId } } })).data as IssueOut | undefined,
+  })
+
+  // What the escrow itself reports, as opposed to the platform's record of it.
+  const { data: onChain } = useQuery({
+    queryKey: ['escrow', issueId],
+    queryFn: async () =>
+      (await api.GET('/api/v1/issues/{issue_id}/escrow', { params: { path: { issue_id: issueId } } })).data as EscrowReadback | undefined,
   })
 
   const { data: timeline } = useQuery({
@@ -261,6 +269,19 @@ export default function IssueDetail() {
                     <span className="chip accent">held</span>
                   )}
                 </dd>
+                {onChain && (
+                  <>
+                    <dt>Escrow says</dt>
+                    <dd>
+                      <a href={onChain.explorer_url} target="_blank" rel="noreferrer">
+                        {onChain.status}
+                      </a>{' '}
+                      <span className={onChain.source === 'chain' ? 'chip ok' : 'chip'}>
+                        {onChain.source === 'chain' ? 'read from the contract' : 'simulated'}
+                      </span>
+                    </dd>
+                  </>
+                )}
               </dl>
               <p className="stat-hint" style={{ marginTop: 12 }}>
                 Held by a contract, not by us. We are never in a position to keep it.

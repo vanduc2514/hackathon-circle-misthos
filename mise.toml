@@ -52,9 +52,9 @@ description = "Build and run the whole system: web, api, worker, edge, Postgres 
 run = "docker compose up --build"
 
 [tasks."contracts:deploy"]
-description = "Deploy MisthosEscrow to Arc testnet with the misthos-deployer keystore"
+description = "Deploy MisthosEscrow to Arc testnet with the misthos-deployer keystore, verify it, and record it"
 dir = "contracts"
-run = "forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast"
+run = "forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast --verify --verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/"
 
 [tasks."dev:edge"]
 description = "x402 gate and Circle CLI bridge on :8080"
@@ -118,7 +118,7 @@ run = "forge test -vvv"
 
 [tasks.lint]
 description = "Lint and typecheck"
-depends = ["lint:backend", "lint:web", "lint:edge"]
+depends = ["lint:backend", "lint:web", "lint:edge", "lint:contracts"]
 
 [tasks."lint:backend"]
 description = "Ruff over the backend"
@@ -129,6 +129,17 @@ run = "uv run ruff check src tests"
 description = "Typecheck the web app and its browser tests"
 dir = "frontend"
 run = "npx tsc --noEmit && npx tsc --noEmit -p tsconfig.e2e.json"
+
+[tasks."abi:contracts"]
+description = "Export MisthosEscrow's ABI next to its deployment records"
+dir = "contracts"
+run = "forge inspect MisthosEscrow abi --json > deployments/MisthosEscrow.abi.json"
+
+[tasks."lint:contracts"]
+description = "Fail if the committed MisthosEscrow ABI is stale"
+# The API reads the committed ABI; a contract change that forgets to re-export it
+# fails here rather than at the first real call.
+run = "mise run abi:contracts && git diff --exit-code contracts/deployments/"
 
 [tasks."lint:edge"]
 description = "Typecheck the edge service"

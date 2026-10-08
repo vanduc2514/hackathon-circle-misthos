@@ -127,7 +127,7 @@ from misthos.schemas import (
 )
 from misthos.services import metrics, reputation
 from misthos.services.billing import PaymentRail, SimulatedRail, build_rail
-from misthos.services.chain import ChainGateway, SimulatedChain
+from misthos.services.chain import ChainGateway, SimulatedChain, load_deployment
 from misthos.services.compliance import (
     IdentityProvider,
     ScreeningProvider,
@@ -161,8 +161,11 @@ def _demo_files(repo: str) -> list[ChangedFile]:
     ]
 
 
-# Recorded on every commitment. Set MISTHOS_ESCROW_CONTRACT to the deployed address.
-ESCROW_CONTRACT = settings.escrow_contract
+# Recorded on every commitment: the address `mise run contracts:deploy` recorded under
+# contracts/deployments/, or MISTHOS_ESCROW_CONTRACT. Only the simulation may run
+# without one, under a placeholder that is labelled as simulated wherever it shows.
+ESCROW = load_deployment(settings)
+ESCROW_CONTRACT = ESCROW.address
 CHAIN = settings.chain
 
 REPO_POOL = [

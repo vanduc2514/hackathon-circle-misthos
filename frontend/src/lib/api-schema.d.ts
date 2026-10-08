@@ -207,6 +207,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issues/{issue_id}/escrow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Escrow
+         * @description Read the commitment back from the escrow, so nobody has to take our word.
+         */
+        get: operations["get_escrow_api_v1_issues__issue_id__escrow_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/issues/{issue_id}/advance": {
         parameters: {
             query?: never;
@@ -1164,6 +1184,44 @@ export interface components {
              * @default false
              */
             refunded: boolean;
+        };
+        /**
+         * EscrowReadback
+         * @description A commitment as the escrow reports it, not as the platform remembers it.
+         */
+        EscrowReadback: {
+            /** Issue Id */
+            issue_id: string;
+            /**
+             * Issue Key
+             * @description bytes32 the contract stores the issue under
+             */
+            issue_key: string;
+            /** Contract */
+            contract: string;
+            /** Chain Id */
+            chain_id: number;
+            /**
+             * Source
+             * @description chain: read from MisthosEscrow; simulation: the simulated escrow's books
+             * @enum {string}
+             */
+            source: "chain" | "simulation";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "none" | "held" | "released" | "refunded";
+            /** Publisher */
+            publisher: string | null;
+            /** Amount */
+            amount: {
+                [key: string]: string | number;
+            };
+            /** Deadline */
+            deadline: string | null;
+            /** Explorer Url */
+            explorer_url: string;
         };
         /**
          * FileableItem
@@ -2345,6 +2403,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TimelineEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_escrow_api_v1_issues__issue_id__escrow_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EscrowReadback"];
                 };
             };
             /** @description Validation Error */

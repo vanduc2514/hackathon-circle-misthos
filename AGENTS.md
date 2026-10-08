@@ -99,7 +99,8 @@ mise run test:backend    # pytest
 mise run test:web        # vitest
 mise run test:edge       # node --test
 mise run test:contracts  # forge test
-mise run lint            # ruff + tsc for both TS packages
+mise run lint            # ruff + tsc for both TS packages + stale-ABI check
+mise run abi:contracts   # re-export MisthosEscrow's ABI after a contract change
 mise run codegen         # regenerate frontend API types from the live schema
 mise run reset           # restore the seeded simulation data
 ```

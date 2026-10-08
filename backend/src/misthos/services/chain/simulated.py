@@ -72,11 +72,17 @@ class SimulatedChain:
                 raise ChainRevert("NotHeld")
             return self._settle(issue_id, found[1], EscrowStatus.REFUNDED, at)
 
+    def commitment(self, issue_id: str) -> OnChain | None:
+        found = self._get(issue_id)
+        if found is None:
+            return None
+        return OnChain(status=found[2], amount=found[1], fee_bps=found[3], publisher=found[0])
+
     def commitments(self) -> dict[str, OnChain]:
         if self._engine is None:
             with self._guard:
                 return {
-                    k: OnChain(status=v[2], amount=v[1], fee_bps=v[3])
+                    k: OnChain(status=v[2], amount=v[1], fee_bps=v[3], publisher=v[0])
                     for k, v in self._books.items()
                 }
         with self._engine.connect() as conn:
@@ -86,6 +92,7 @@ class SimulatedChain:
                     status=EscrowStatus(r["status"]),
                     amount=Usdc(r["amount_base_units"]),
                     fee_bps=r["fee_bps"],
+                    publisher=r["publisher_wallet"],
                 )
                 for r in rows
             }

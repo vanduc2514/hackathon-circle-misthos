@@ -91,23 +91,33 @@ cast wallet import misthos-deployer --interactive
 export ARC_TESTNET_RPC_URL=https://rpc.testnet.arc.io
 # Optional: the attestor that may release funds; the deployer by default.
 export MISTHOS_ATTESTOR_ADDRESS=0x...
-forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast
+forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast \
+  --verify --verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/
 ```
 
 or `mise run contracts:deploy`, which runs the same command. Fund the deployer
-with testnet USDC from faucet.circle.com first: USDC is the gas token on Arc.
+with testnet USDC from faucet.circle.com first: USDC is the gas token on Arc. Arc's
+explorer runs Blockscout, so verifying needs no API key.
 
-The script prints the escrow's address. Set it for the API:
+A broadcast writes `contracts/deployments/5042002.json`: the escrow's address, its
+owner, attestor and USDC, and the block to scan logs from. Commit it; the API reads
+the address from it, so there is nothing to copy by hand. A dry run (without
+`--broadcast`) writes no record, and outside the simulation the API refuses a
+record whose address holds no code. `MISTHOS_ESCROW_CONTRACT` still pins an
+address explicitly and wins over the record.
 
-```bash
-MISTHOS_ESCROW_CONTRACT=0x...   # the address the script printed
-MISTHOS_CHAIN=arc-testnet
-MISTHOS_RPC_URL=https://rpc.testnet.arc.io
-```
-
-The API records it on every commitment today. Settling against it needs the chain
-client (#69); until that lands, `MISTHOS_SIMULATED` stays true and the simulated
+`GET /api/v1/issues/{id}/escrow` reads a commitment back: from the contract with
+`eth_call` when `MISTHOS_SIMULATED=false`, from the simulated escrow's books
+otherwise, and says which. Settling against the contract needs the chain client's
+signer (#69); until that lands, `MISTHOS_SIMULATED` stays true and the simulated
 escrow keeps the books. Report anything settled on testnet as testnet.
+
+After any change to the contract, run `mise run abi:contracts` and commit
+`contracts/deployments/MisthosEscrow.abi.json`; `mise run lint` fails while it is
+stale.
+
+The script refuses Arc mainnet (chain 5042) unless `MISTHOS_CONFIRM_MAINNET=5042`
+is set for that one command.
 
 Mainnet moves real USDC irreversibly. There is deliberately no mainnet task.
 

@@ -9,7 +9,22 @@ one the chain returned.
 
 from __future__ import annotations
 
+from misthos.services.chain.arc import ArcEscrow, ChainUnavailable
 from misthos.services.chain.base import ChainGateway, ChainRevert
+from misthos.services.chain.deployment import (
+    EscrowDeployment,
+    EscrowNotDeployed,
+    load_deployment,
+)
 from misthos.services.chain.simulated import SimulatedChain
 
-__all__ = ["ChainGateway", "ChainRevert", "SimulatedChain"]
+__all__ = [
+    "ArcEscrow",
+    "ChainGateway",
+    "ChainRevert",
+    "ChainUnavailable",
+    "EscrowDeployment",
+    "EscrowNotDeployed",
+    "SimulatedChain",
+    "load_deployment",
+]

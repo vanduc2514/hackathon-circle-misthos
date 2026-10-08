@@ -103,7 +103,7 @@ export default function IssueActions({
     mutationFn: (a: Act) => perform(issue.id, a),
     onSuccess: (updated) => {
       qc.setQueryData(['issue', issue.id], updated)
-      for (const key of ['issue', 'timeline', 'issues', 'metrics', 'decisions', 'loop', 'spend']) {
+      for (const key of ['issue', 'escrow', 'timeline', 'issues', 'metrics', 'decisions', 'loop', 'spend']) {
         qc.invalidateQueries({ queryKey: [key] })
       }
     },
