@@ -279,7 +279,13 @@ contract MisthosEscrow {
     /// @notice Set the take rate for an issue from the publisher's tier. Bounded
     ///         on chain, so a compromised owner key still cannot release at a rate
     ///         the published tier table forbids.
+    /// @dev Refused once the money is in, like the currency, and for the same reason:
+    ///      the publisher approved the price at this rate. Moving it afterwards would
+    ///      charge a rate they never saw, and the settlement record — which reads the
+    ///      rate back from here rather than from the publisher's plan — would stop
+    ///      matching what this contract does.
     function setFee(bytes32 issueId, uint256 bps) external onlyOwner {
+        if (commitments[issueId].status != Status.None) revert CommitmentStarted();
         if (bps > MAX_FEE_BPS) revert FeeTooHigh(bps, MAX_FEE_BPS);
         feeBps[issueId] = bps;
         emit FeeUpdated(issueId, bps);

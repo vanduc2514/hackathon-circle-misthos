@@ -249,6 +249,15 @@ contract MisthosEscrowTest is Test {
         assertEq(usdc.balanceOf(CONTRIBUTOR), odd - fee);
     }
 
+    /// The rate is fixed with the money, like the currency. The publisher approves the
+    /// price at this rate, so moving it afterwards would charge a rate they never saw.
+    function test_the_take_rate_is_fixed_once_a_commitment_exists() public {
+        _commit();
+
+        vm.expectRevert(MisthosEscrow.CommitmentStarted.selector);
+        escrow.setFee(ISSUE, 1200);
+    }
+
     /// A zero rate is a legal configuration and leaves the contributor whole.
     function test_a_zero_take_rate_leaves_the_contributor_whole() public {
         escrow.setFeeRecipient(FEE_RECIPIENT);

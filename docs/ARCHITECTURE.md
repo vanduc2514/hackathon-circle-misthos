@@ -16,7 +16,7 @@ The diagrams below describe the target system. This table is what is actually in
 | Edge | Express x402 gate and Circle CLI bridge | Built. The gate settles through Circle Gateway Nanopayments when `MISTHOS_SIMULATED=false`; simulated by default |
 | Core | FastAPI, lifecycle, pricing engine, review agent, decision log, money ledger | Built. Money moves through a chain gateway, simulated until #69. The review agent is Claude once `MISTHOS_ANTHROPIC_API_KEY` is set, and a rule reviewer otherwise |
 | Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
-| Contracts | `MisthosEscrow` | Built. 18 Foundry tests |
+| Contracts | `MisthosEscrow` | Built. Example, fuzz and invariant tests (#35) |
 | Data | Postgres, Redis | Built and optional. Postgres once `MISTHOS_DATABASE_URL` is set, memory otherwise. Redis once `MISTHOS_REDIS_URL` is set, for the per-issue lock, idempotency keys and rate limits across processes |
 | Compliance | Screening, identity at first payout, statements | Built against simulated providers. See [PRIVACY.md](./PRIVACY.md) |
 | GitHub | App authentication, read path, write path, webhooks | Built behind one gateway. Simulated until `MISTHOS_GITHUB_APP_ID` and `MISTHOS_GITHUB_APP_PRIVATE_KEY` are set; `backend/github-app-manifest.json` registers the App |
@@ -250,6 +250,11 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 5. The platform's take rate is carved out of the release in the same call, so the
    commission is a transfer rather than a reporting number, and a per-issue rate
    above the published 15 percent ceiling cannot be set at all.
+
+Those four are checked by the fuzz and invariant tests in
+[contracts/test/](contracts/test/): the campaign drives random sequences of commit,
+release, refund, ceiling updates and attestor rotations, and asserts the properties after
+every step. They run on every pull request with the rest of the Foundry suite.
 
 ### Circle primitives
 
