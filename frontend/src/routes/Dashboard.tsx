@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api, money, relativeTime, type Decision, type IssueSummaryOut, type MetricsOut } from '../lib/client'
+import { api, money, relativeTime, unwrap, type Decision, type IssueSummaryOut, type MetricsOut } from '../lib/client'
 import { Bar, Panel, Stat, StateBadge } from '../components/ui'
 
 export default function Dashboard() {
@@ -19,8 +19,9 @@ export default function Dashboard() {
     queryFn: async () => (await api.GET('/api/v1/issues')).data as IssueSummaryOut[] | undefined,
   })
 
+  // Refused with a reason where a database is configured and reset is not allowed.
   const reset = useMutation({
-    mutationFn: async () => (await api.POST('/api/v1/demo/reset')).data,
+    mutationFn: async () => unwrap(await api.POST('/api/v1/demo/reset')),
     onSuccess: () => qc.invalidateQueries(),
   })
 
@@ -46,6 +47,7 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+      {reset.error && <div className="error-box form-error">{reset.error.message}</div>}
 
       <div className="banner">
         Simulated build. The lifecycle, the pricing engine, the review agent and the

@@ -45,7 +45,7 @@ test('a publisher and a contributor take an issue from publication to payment', 
   browser,
   request,
 }) => {
-  await request.post('/api/v1/demo/reset')
+  expect((await request.post('/api/v1/demo/reset')).ok()).toBe(true)
   const errors: string[] = []
   const publisher = await (await browser.newContext()).newPage()
   const contributor = await (await browser.newContext()).newPage()

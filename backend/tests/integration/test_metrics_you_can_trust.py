@@ -42,6 +42,14 @@ def released() -> list:  # type: ignore[type-arg]
 
 
 class TestTheNorthStar:
+    def test_a_fresh_demo_has_settled_work_this_week(self) -> None:
+        """The dashboard leads with settlements this week. Both seeded payouts used to
+        land 19 and 28 days before the seed, so a fresh demo always showed 0."""
+        store.reset()
+        m = store.metrics()
+        assert m.settled_issues == 2
+        assert m.settled_issues_7d == 1
+
     def test_settled_issues_per_week_counts_releases_in_the_last_seven_days(self) -> None:
         before = store.metrics().settled_issues_7d
         paid = store.approve_and_accept("ISS-1006")
@@ -104,6 +112,38 @@ class TestPublisherDecline:
         assert store.advance(issue_id).state is IssueState.ACCEPTED  # passes again
         with pytest.raises(DeclineRefused):
             store.decline(issue_id, "Still no.")
+
+    def test_a_retried_decline_says_it_was_already_declined(self, client: TestClient) -> None:
+        """The state check used to run first, so the retry was told it could not move
+        the issue from REWORK to REWORK."""
+        issue_id = self.accepted()
+        store.decline(issue_id, "Not yet.")
+        with pytest.raises(DeclineRefused, match="already declined"):
+            store.decline(issue_id, "Not yet.")
+        r = client.post(f"{API}/issues/{issue_id}/decline", json={"reason": "Not yet."})
+        assert r.status_code == 409 and "already declined" in r.json()["detail"]
+
+    def test_a_decline_after_the_grace_period_is_refused_and_the_payout_releases(
+        self,
+    ) -> None:
+        """Past the grace window the sweeper owes the release. A decline in that window
+        used to send the work back and drop the payout that was due."""
+        issue_id = self.accepted()
+        verdict_at = store.get(issue_id).review.decided_at  # type: ignore[union-attr]
+        late = verdict_at + SILENT_PUBLISHER_GRACE + timedelta(minutes=1)
+
+        with pytest.raises(DeclineRefused, match="grace period"):
+            store.decline(issue_id, "Too late.", now=late)
+        assert store.get(issue_id).state is IssueState.ACCEPTED  # type: ignore[union-attr]
+
+        sweep_once(store, now=late)
+        assert store.get(issue_id).state is IssueState.PAID  # type: ignore[union-attr]
+
+    def test_a_decline_inside_the_grace_period_still_counts(self) -> None:
+        issue_id = self.accepted()
+        verdict_at = store.get(issue_id).review.decided_at  # type: ignore[union-attr]
+        in_time = verdict_at + SILENT_PUBLISHER_GRACE - timedelta(minutes=1)
+        assert store.decline(issue_id, "Not yet.", now=in_time).state is IssueState.REWORK
 
     def test_after_a_decline_the_grace_period_does_not_pay(self) -> None:
         issue_id = self.accepted()

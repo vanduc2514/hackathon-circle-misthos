@@ -6,12 +6,18 @@ rows follow the schema's rules. Proposals, submissions, verdicts and decisions a
 only ever inserted, the commitment mirror and the claim are updated in place, and an
 issue's current proposal, claim, submission and verdict are its newest rows.
 
+The simulation's reset swaps every row for the seed inside one transaction too, so a
+reader sees the old data or the seed and never the empty tables between. The version
+column carries on climbing across it rather than starting again at 1, so a copy loaded
+before the reset is still refused after it.
+
 The schema is brought to the latest migration before first use, so a fresh database
 needs no separate setup step and a deployment cannot run against an old schema.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import zlib
 from collections import defaultdict
@@ -41,6 +47,7 @@ from misthos.repositories.base import (
     AccountConflict,
     AppendOnlyViolation,
     PaymentAlreadyUsed,
+    Seed,
     StaleIssue,
 )
 from misthos.schemas import (
@@ -61,6 +68,23 @@ from misthos.schemas import (
 )
 
 Row = Mapping[str, Any]
+
+# The counter that remembers the highest version any issue reached before the last
+# reset. A reset keeps it while every other counter starts again, and an issue saved
+# for the first time starts above it.
+_VERSION_FLOOR = "issue_version_floor"
+
+# What a reset empties, children first. The simulated chain's books share the
+# database but belong to the chain gateway, which resets them itself, before a seed
+# is built against them.
+_RESET_TABLES = [
+    table for table in reversed(t.metadata.sorted_tables) if table is not t.simulated_escrow
+]
+# The order a reset locks them in under Postgres. Every save takes its issue row
+# before any other, so the reset takes issues first too and never holds a table a
+# save in flight still needs; publishers and contributors, which other rows point
+# at, come last, as they do in every transaction that touches them.
+_RESET_LOCK_ORDER = [t.issues, *(table for table in _RESET_TABLES if table is not t.issues)]
 
 
 def normalise_url(url: str) -> str:
@@ -92,11 +116,30 @@ class SqlRepository:
                 upgrade_to_head(self.engine)
                 self._schema_ready = True
 
-    def reset(self) -> None:
+    def reset(self, seed: Seed | None = None) -> None:
         self.migrate()
         with self.engine.begin() as conn:
-            for table in reversed(t.metadata.sorted_tables):
-                conn.execute(delete(table))
+            if conn.dialect.name == "postgresql":
+                # Writers wait for the reset rather than interleave with it, which
+                # deadlocked a save holding an issue the reset was about to delete.
+                # Readers are not held up, and see the old rows until the commit.
+                quote = conn.dialect.identifier_preparer.quote
+                names = ", ".join(quote(table.name) for table in _RESET_LOCK_ORDER)
+                conn.execute(text(f"LOCK TABLE {names} IN EXCLUSIVE MODE"))
+            floor = _version_floor(conn)
+            for table in _RESET_TABLES:
+                if table is t.issues:
+                    # The versions of the rows actually deleted, so one an action saved
+                    # a moment before the reset is counted too.
+                    gone = conn.execute(delete(table).returning(table.c.version)).scalars()
+                    floor = max([floor, *gone])
+                elif table is t.counters:
+                    conn.execute(delete(table).where(table.c.name != _VERSION_FLOOR))
+                else:
+                    conn.execute(delete(table))
+            _upsert(conn, t.counters, {"name": _VERSION_FLOOR}, {"value": floor})
+            if seed is not None:
+                _write_seed(conn, seed, floor)
 
     def is_empty(self) -> bool:
         self.migrate()
@@ -122,26 +165,8 @@ class SqlRepository:
 
     def save_publisher(self, publisher: Publisher) -> None:
         self.migrate()
-        values = {
-            "name": publisher.name,
-            "kind": publisher.kind,
-            "tier": publisher.tier,
-            "wallet_address": publisher.wallet.address,
-            "chain": publisher.wallet.chain,
-            "budget_remaining_base_units": _parse_usdc(publisher.budget_remaining_usdc).base_units,
-            "approval_threshold_base_units": (
-                _parse_usdc(publisher.approval_threshold_usdc).base_units
-                if publisher.approval_threshold_usdc is not None
-                else None
-            ),
-            "approvers": list(publisher.approvers),
-            "category_limits": {
-                label: _parse_usdc(limit).base_units
-                for label, limit in publisher.category_limits.items()
-            },
-        }
         with self.engine.begin() as conn:
-            _upsert(conn, t.publishers, {"id": publisher.id}, values)
+            _upsert(conn, t.publishers, {"id": publisher.id}, _publisher_values(publisher))
 
     def get_publisher(self, publisher_id: str) -> Publisher | None:
         self.migrate()
@@ -161,19 +186,8 @@ class SqlRepository:
 
     def save_contributor(self, contributor: Contributor) -> None:
         self.migrate()
-        values = {
-            "handle": contributor.handle,
-            "wallet_address": contributor.wallet.address,
-            "chain": contributor.wallet.chain,
-            "reputation": contributor.reputation,
-            "settled_issues": contributor.settled_issues,
-            "earned_base_units": _parse_usdc(contributor.earned_usdc).base_units,
-            "identity_status": contributor.identity_status,
-            "identity_reference": contributor.identity_reference,
-            "identity_verified_at": contributor.identity_verified_at,
-        }
         with self.engine.begin() as conn:
-            _upsert(conn, t.contributors, {"id": contributor.id}, values)
+            _upsert(conn, t.contributors, {"id": contributor.id}, _contributor_values(contributor))
 
     def get_contributor(self, contributor_id: str) -> Contributor | None:
         self.migrate()
@@ -462,11 +476,11 @@ class SqlRepository:
     def save_issues(self, *records: IssueRecord) -> None:
         self.migrate()
         with self.engine.begin() as conn:
-            for rec in records:
-                _save(conn, rec)
+            floor = _version_floor(conn) if any(r.version == 0 for r in records) else 0
+            versions = [_save(conn, rec, floor) for rec in records]
         # Only once the transaction has committed do the copies become current.
-        for rec in records:
-            rec.version += 1
+        for rec, version in zip(records, versions, strict=True):
+            rec.version = version
 
     def list_decisions(self, limit: int) -> list[Decision]:
         self.migrate()
@@ -507,7 +521,63 @@ class SqlRepository:
 # ------------------------------------------------------------------ saving
 
 
-def _save(conn: Connection, rec: IssueRecord) -> None:
+def _version_floor(conn: Connection) -> int:
+    found = conn.execute(
+        select(t.counters.c.value).where(t.counters.c.name == _VERSION_FLOOR)
+    ).scalar()
+    return int(found or 0)
+
+
+def _write_seed(conn: Connection, seed: Seed, floor: int) -> None:
+    for publisher in seed.publishers:
+        _upsert(conn, t.publishers, {"id": publisher.id}, _publisher_values(publisher))
+    for contributor in seed.contributors:
+        _upsert(conn, t.contributors, {"id": contributor.id}, _contributor_values(contributor))
+    for rec in seed.issues:
+        # New rows here, numbered from the floor like any issue saved for the first time.
+        _save(conn, dataclasses.replace(rec, version=0), floor)
+    for name, value in seed.counters.items():
+        if name != _VERSION_FLOOR:
+            _upsert(conn, t.counters, {"name": name}, {"value": value})
+
+
+def _publisher_values(publisher: Publisher) -> dict[str, Any]:
+    return {
+        "name": publisher.name,
+        "kind": publisher.kind,
+        "tier": publisher.tier,
+        "wallet_address": publisher.wallet.address,
+        "chain": publisher.wallet.chain,
+        "budget_remaining_base_units": _parse_usdc(publisher.budget_remaining_usdc).base_units,
+        "approval_threshold_base_units": (
+            _parse_usdc(publisher.approval_threshold_usdc).base_units
+            if publisher.approval_threshold_usdc is not None
+            else None
+        ),
+        "approvers": list(publisher.approvers),
+        "category_limits": {
+            label: _parse_usdc(limit).base_units
+            for label, limit in publisher.category_limits.items()
+        },
+    }
+
+
+def _contributor_values(contributor: Contributor) -> dict[str, Any]:
+    return {
+        "handle": contributor.handle,
+        "wallet_address": contributor.wallet.address,
+        "chain": contributor.wallet.chain,
+        "reputation": contributor.reputation,
+        "settled_issues": contributor.settled_issues,
+        "earned_base_units": _parse_usdc(contributor.earned_usdc).base_units,
+        "identity_status": contributor.identity_status,
+        "identity_reference": contributor.identity_reference,
+        "identity_verified_at": contributor.identity_verified_at,
+    }
+
+
+def _save(conn: Connection, rec: IssueRecord, floor: int) -> int:
+    """Write one issue and return the version it now has."""
     values = {
         "repo": rec.repo,
         "number": rec.number,
@@ -534,12 +604,14 @@ def _save(conn: Connection, rec: IssueRecord) -> None:
         exists = conn.execute(select(t.issues.c.id).where(t.issues.c.id == rec.id)).first()
         if exists is not None:
             raise StaleIssue(rec.id)
-        conn.execute(insert(t.issues).values(id=rec.id, version=1, **values))
+        version = floor + 1
+        conn.execute(insert(t.issues).values(id=rec.id, version=version, **values))
     else:
+        version = rec.version + 1
         written = conn.execute(
             update(t.issues)
             .where(t.issues.c.id == rec.id, t.issues.c.version == rec.version)
-            .values(version=rec.version + 1, **values)
+            .values(version=version, **values)
         )
         if written.rowcount != 1:
             raise StaleIssue(rec.id)
@@ -551,6 +623,7 @@ def _save(conn: Connection, rec: IssueRecord) -> None:
     _save_review(conn, rec)
     _save_decisions(conn, rec)
     _save_money_events(conn, rec)
+    return version
 
 
 def _save_proposal(conn: Connection, rec: IssueRecord) -> None:

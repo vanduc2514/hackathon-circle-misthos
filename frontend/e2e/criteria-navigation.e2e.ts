@@ -32,7 +32,7 @@ async function onboardPublisher(page: Page, name: string, login: string) {
 }
 
 test('the criteria box follows the issue, not the previous page', async ({ page, request }) => {
-  await request.post('/api/v1/demo/reset')
+  expect((await request.post('/api/v1/demo/reset')).ok()).toBe(true)
   const errors: string[] = []
   watchForErrors(page, errors)
 

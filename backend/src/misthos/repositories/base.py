@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -45,9 +46,30 @@ class PaymentAlreadyUsed(Exception):
     """A transaction pays for one subscription period, once."""
 
 
+@dataclass(frozen=True)
+class Seed:
+    """What the simulation's reset starts the repository from.
+
+    It is built in a repository of its own and handed over whole, so the one being
+    reset goes from its old contents to these in one step. The issues' versions are
+    not carried over: the repository being reset numbers them.
+    """
+
+    publishers: tuple[Publisher, ...]
+    contributors: tuple[Contributor, ...]
+    issues: tuple[IssueRecord, ...]
+    counters: Mapping[str, int]
+
+
 class Repository(Protocol):
-    def reset(self) -> None:
-        """Remove everything. The simulation's reset; never wired to production."""
+    def reset(self, seed: Seed | None = None) -> None:
+        """Remove everything, then hold `seed` if one is given, as one step.
+
+        A reader sees the old contents or the new ones, never the empty repository in
+        between. A copy of an issue loaded before the reset is stale after it, even
+        though the seed brings back an issue with the same id: versions never repeat.
+        The simulation's reset; never wired to production.
+        """
 
     def is_empty(self) -> bool: ...
 

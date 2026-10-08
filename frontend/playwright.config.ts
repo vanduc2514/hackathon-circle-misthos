@@ -34,6 +34,9 @@ export default defineConfig({
       env: {
         MISTHOS_SIMULATED: 'true',
         MISTHOS_SESSION_SECRET: 'e2e-only-session-secret-not-for-deployment',
+        // Each test starts from the seed. The data here is the tests' own to throw
+        // away, even when a database is configured in backend/.env.
+        MISTHOS_ALLOW_DEMO_RESET: 'true',
       },
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

@@ -272,7 +272,39 @@ class TestWebhooks:
 
 
 class TestReset:
-    def test_reset_restores_the_seed(self, client: TestClient) -> None:
+    def test_reset_restores_the_seed(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from misthos.config import settings
+
+        monkeypatch.setattr(settings, "database_url", "")  # the zero-config demo
+        client.post(f"{API}/issues/ISS-1006/advance")
+        assert client.post(f"{API}/demo/reset").json()["issues"] == 8
+        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"
+
+    def test_reset_is_refused_when_a_database_is_configured(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The README's durable setup sets only MISTHOS_DATABASE_URL, and there an
+        unauthenticated reset would delete every row of every table."""
+        from misthos.config import settings
+
+        monkeypatch.setattr(settings, "database_url", "postgresql://db.example/misthos")
+        monkeypatch.setattr(settings, "allow_demo_reset", False)
+        client.post(f"{API}/issues/ISS-1006/advance")
+
+        r = client.post(f"{API}/demo/reset")
+        assert r.status_code == 403
+        assert "MISTHOS_ALLOW_DEMO_RESET" in r.json()["detail"]
+        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "FUNDED"
+
+    def test_an_operator_can_allow_reset_on_a_throwaway_database(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from misthos.config import settings
+
+        monkeypatch.setattr(settings, "database_url", "postgresql://db.example/misthos")
+        monkeypatch.setattr(settings, "allow_demo_reset", True)
         client.post(f"{API}/issues/ISS-1006/advance")
         assert client.post(f"{API}/demo/reset").json()["issues"] == 8
         assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"
@@ -284,5 +316,6 @@ class TestReset:
         from misthos.config import settings
 
         monkeypatch.setattr(settings, "simulated", False)
+        monkeypatch.setattr(settings, "allow_demo_reset", True)  # not a way round it
         assert client.post(f"{API}/demo/reset").status_code == 403
         assert client.get(f"{API}/health").json()["seeded_issues"] == 8

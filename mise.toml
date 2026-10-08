@@ -139,5 +139,5 @@ description = "Regenerate the frontend API client from the live OpenAPI schema"
 run = "cd frontend && npm run codegen"
 
 [tasks.reset]
-description = "Reset the simulated data back to the seed"
-run = "curl -s -X POST http://127.0.0.1:8000/api/v1/demo/reset"
+description = "Reset the simulated data back to the seed (with a database, needs MISTHOS_ALLOW_DEMO_RESET=true)"
+run = "curl -sS --fail-with-body -X POST http://127.0.0.1:8000/api/v1/demo/reset"

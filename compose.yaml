@@ -27,6 +27,9 @@ x-backend: &backend
     MISTHOS_FINANCE_CONNECTIONS: ${MISTHOS_FINANCE_CONNECTIONS:-}
     MISTHOS_PLATFORM_WALLET: ${MISTHOS_PLATFORM_WALLET:-}
     MISTHOS_GITHUB_APP_SLUG: ${MISTHOS_GITHUB_APP_SLUG:-}
+    # Reset deletes every row of the database above, so it stays refused unless you
+    # opt in for a demo you mean to throw away.
+    MISTHOS_ALLOW_DEMO_RESET: ${MISTHOS_ALLOW_DEMO_RESET:-false}
   depends_on:
     postgres:
       condition: service_healthy

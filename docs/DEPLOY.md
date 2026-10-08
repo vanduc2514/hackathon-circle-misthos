@@ -29,8 +29,10 @@ docker compose up --build
 | `redis` | The per-issue lock, idempotency keys and rate limits | inside the network |
 
 The schema migrates itself on first start, and an empty database is seeded with the
-demo issues. `docker compose down --volumes` starts over. CI boots exactly this and
-fails the build if any service does not become healthy.
+demo issues. `docker compose down --volumes` starts over. The web app's Reset button
+is refused here, because a reset deletes every row in Postgres and needs no sign-in;
+pass `MISTHOS_ALLOW_DEMO_RESET=true` only for a demo you mean to throw away. CI boots
+exactly this and fails the build if any service does not become healthy.
 
 Pass real integrations through from your shell or a `.env` file next to
 `compose.yaml`: `MISTHOS_GITHUB_APP_ID`, `MISTHOS_GITHUB_APP_PRIVATE_KEY`,
