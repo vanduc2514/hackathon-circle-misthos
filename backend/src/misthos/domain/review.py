@@ -14,17 +14,27 @@ anyone can see which rule produced it.
 
 A criterion the reviewer could not judge does not block acceptance on its own, and
 the findings say it was not judged, so the publisher knows what to look at.
+
+Checks that have not reported are not failing checks. They may still be running, so
+a submission waits `CHECKS_WAIT` for them before it is reviewed; but a repository
+with no CI never reports, and reading that as failing would send its work back for
+rework forever. After the wait the work is judged on the criteria alone, and the
+findings say the checks had not reported.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from misthos.domain.money import Usdc
 
 MAX_REWORK_ROUNDS = 2
+# Long enough for a typical CI run to finish, short enough that a repository with no
+# CI is not kept waiting for its review much longer than it takes to read the diff.
+CHECKS_WAIT = timedelta(minutes=30)
 
 
 class Verdict(StrEnum):
@@ -53,7 +63,8 @@ class Submitted:
     title: str
     criteria: tuple[str, ...]
     files: tuple[ChangedFile, ...]
-    checks_passed: bool
+    checks_passed: bool | None
+    """None when the project's checks have not reported on this commit."""
 
 
 @dataclass(frozen=True)
@@ -84,10 +95,18 @@ class Decided:
     """The rule above that produced the verdict, for the decision log."""
 
 
+def ready_for_review(
+    checks_passed: bool | None, submitted_at: datetime | None, now: datetime
+) -> bool:
+    """Whether a submitted commit is reviewed now, or waits for its checks to report.
+    A submission whose time is not known has waited long enough."""
+    return checks_passed is not None or submitted_at is None or now >= submitted_at + CHECKS_WAIT
+
+
 def decide(
     judgement: Judgement,
     *,
-    checks_passed: bool,
+    checks_passed: bool | None,
     files_changed: int,
     rework_rounds: int,
 ) -> Decided:
@@ -95,12 +114,18 @@ def decide(
         return Decided(Verdict.REJECT, ["The pull request changes no files."], "empty_diff")
 
     findings = [_line(c) for c in judgement.checks]
-    if not checks_passed:
+    if checks_passed is False:
         findings.append("The project's own checks do not pass on this commit.")
+    elif checks_passed is None:
+        findings.append(
+            "The project's checks had not reported on this commit, so it was judged on the "
+            "criteria alone."
+        )
     unmet = [c.index for c in judgement.checks if c.met is False]
 
-    if not unmet and checks_passed:
-        return Decided(Verdict.ACCEPT, findings, "criteria_met")
+    if not unmet and checks_passed is not False:
+        rule = "criteria_met" if checks_passed else "criteria_met_checks_unreported"
+        return Decided(Verdict.ACCEPT, findings, rule)
     if rework_rounds >= MAX_REWORK_ROUNDS:
         findings.append(
             f"This is the end of {rework_rounds} rework rounds"

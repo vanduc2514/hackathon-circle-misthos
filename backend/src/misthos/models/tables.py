@@ -170,7 +170,7 @@ submissions = Table(
     Column("issue_id", Id, ForeignKey("issues.id"), nullable=False),
     Column("pr_number", Integer, nullable=False),
     Column("head_sha", String(64), nullable=False),
-    Column("checks_passed", Boolean, nullable=False),
+    Column("checks_passed", Boolean),  # NULL: the checks have not reported
     Column("files_changed", Integer, nullable=False),
     Column("additions", Integer, nullable=False),
     Column("deletions", Integer, nullable=False),

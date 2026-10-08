@@ -60,7 +60,14 @@ from misthos.domain.policy import (
     needs_approval,
 )
 from misthos.domain.pricing import WEIGHTS, ComplexitySignals, UnfundableIssue, effort, propose
-from misthos.domain.review import ChangedFile, Judgement, Submitted, Verdict, decide
+from misthos.domain.review import (
+    ChangedFile,
+    Judgement,
+    Submitted,
+    Verdict,
+    decide,
+    ready_for_review,
+)
 from misthos.domain.signals import read as read_signals
 from misthos.domain.timers import TimedAction
 from misthos.models.records import IssueRecord
@@ -1811,17 +1818,22 @@ class Store:
     # ------------------------------------------------------------- review
 
     @staticmethod
-    def _awaiting_review(rec: IssueRecord) -> bool:
-        """In review, and the commit under review has no verdict yet."""
+    def _awaiting_review(rec: IssueRecord, now: datetime) -> bool:
+        """In review, the commit under review has no verdict yet, and its checks have
+        reported or had their time to (`CHECKS_WAIT`)."""
         return (
             rec.state is IssueState.IN_REVIEW
             and rec.submission is not None
             and (rec.review is None or rec.review.head_sha != rec.submission.head_sha)
+            and ready_for_review(rec.submission.checks_passed, _submitted_at(rec), now)
         )
 
-    def reviews_due(self) -> list[str]:
+    def reviews_due(self, now: datetime | None = None) -> list[str]:
         self.ensure_ready()
-        return [r.id for r in self.list_issues({IssueState.IN_REVIEW}) if self._awaiting_review(r)]
+        now = now or _now()
+        return [
+            r.id for r in self.list_issues({IssueState.IN_REVIEW}) if self._awaiting_review(r, now)
+        ]
 
     def _submitted(self, rec: IssueRecord) -> Submitted:
         assert rec.submission is not None
@@ -1854,7 +1866,7 @@ class Store:
         rec = self.repo.get_issue(issue_id)
         if rec is None:
             raise KeyError(issue_id)
-        if not self._awaiting_review(rec):
+        if not self._awaiting_review(rec, now or _now()):
             return None
         submitted = self._submitted(rec)
         judgement, seconds = self._judge(self.reviewer, submitted)
@@ -1863,7 +1875,7 @@ class Store:
             fresh = self.repo.get_issue(issue_id)
             if (
                 fresh is None
-                or not self._awaiting_review(fresh)
+                or not self._awaiting_review(fresh, now or _now())
                 or fresh.submission is None
                 or fresh.submission.head_sha != submitted.head_sha
             ):
@@ -2494,11 +2506,18 @@ class Store:
     def disconnect_repositories(
         self, repos: list[str] | None = None, *, installation_id: int | None = None
     ) -> list[str]:
-        """The App was removed from these repositories, or uninstalled altogether."""
+        """The App was removed from these repositories, or uninstalled altogether. An
+        empty list removes nothing: it is not an uninstall."""
         self.ensure_ready()
-        targets = repos or [
-            c.repo for c in self.repo.list_connections() if c.installation_id == installation_id
-        ]
+        targets = (
+            repos
+            if repos is not None
+            else [
+                c.repo
+                for c in self.repo.list_connections()
+                if installation_id is not None and c.installation_id == installation_id
+            ]
+        )
         self.repo.delete_connections(targets)
         return [t.lower() for t in targets]
 
@@ -2650,8 +2669,9 @@ class Store:
                 {
                     "pr_number": pr.number,
                     "head_sha": pr.head_sha,
-                    # Unknown until the project's own checks finish; check_run says.
-                    "checks_passed": bool(self.github.checks_passed(rec.repo, pr.head_sha)),
+                    # None until the project's own checks finish, and check_run says
+                    # when they do. A repository with no CI never says.
+                    "checks_passed": self.github.checks_passed(rec.repo, pr.head_sha),
                     "files_changed": pr.files_changed,
                     "additions": pr.additions,
                     "deletions": pr.deletions,
@@ -2964,6 +2984,13 @@ def _rework_rounds(rec: IssueRecord) -> int:
         if (d.action == "verdict_issued" and d.outcome.startswith(Verdict.REWORK.value))
         or d.action == "publisher_declined"
     )
+
+
+def _submitted_at(rec: IssueRecord) -> datetime | None:
+    """When the commit under review was submitted: the decision log's latest
+    submission, which is the record of it."""
+    times = [d.created_at for d in rec.decisions if d.action in {"submitted", "resubmitted"}]
+    return max(times) if times else None
 
 
 def _disputed_since(rec: IssueRecord, verdict_at: datetime) -> bool:

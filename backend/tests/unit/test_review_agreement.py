@@ -49,3 +49,14 @@ def test_the_command_exits_non_zero_below_the_floor(
     assert main(["--corpus", str(corpus)]) == 1
     assert "BELOW FLOOR" in capsys.readouterr().out
     assert main([]) == 0
+
+
+def test_a_case_whose_checks_never_reported_is_judged_on_its_criteria(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus.json"
+    corpus.write_text(
+        '{"cases": [{"id": "no-ci", "band": "low", "expected": "accept", "criteria": ["A test."],'
+        ' "checks_passed": null, "files": [{"path": "tests/test_a.py"}]}]}'
+    )
+    (case,) = load(corpus)
+    assert case.submitted.checks_passed is None
+    assert replay(RuleReviewer(), [case]).agreed == 1

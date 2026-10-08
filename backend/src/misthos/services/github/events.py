@@ -12,12 +12,15 @@ module never writes state itself.
   are posted on it.
 - `issues` edited, labeled or unlabeled: `reprice`, a new proposal while the issue
   is unfunded.
-- `issue_comment` created with a command on its own line:
+- `issue_comment` created with commands, each on its own line:
   - `/misthos approve` from the publisher's linked login approves the criteria and
     the price, which commits the funds;
   - `/misthos criteria` followed by a list approves those criteria instead;
   - `/misthos claim` from a linked contributor takes the claim;
   - `/misthos help` lists the commands.
+  Every command line runs, in order, and the first one refused stops the rest, so a
+  refused `/misthos criteria` never falls through to the `/misthos approve` after
+  it. A line in a code block, a block quote or an HTML comment is not a command.
   GitHub signs the delivery, so the comment's author is who GitHub says it is.
 - `pull_request` opened, reopened or ready_for_review: `submit_pull_request`, which
   moves `CLAIMED` to `IN_REVIEW` for the claimant's pull request only.
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,8 +49,11 @@ from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.issue import IllegalTransition, IssueState
 from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import UnfundableIssue
+from misthos.models.records import IssueRecord
+from misthos.repositories import StaleIssue
 from misthos.schemas import PublishRequest
 from misthos.services.chain import ChainRevert
+from misthos.services.coordination import Busy
 from misthos.services.github.app import pull_request_from
 from misthos.services.github.base import GitHubError
 from misthos.store import (
@@ -69,10 +76,18 @@ HANDLED_EVENTS = {
     "ping": "acknowledged",
 }
 
-_COMMAND = re.compile(r"^\s*/misthos\s+([a-z]+)\b[^\n]*$", re.IGNORECASE | re.MULTILINE)
-_LIST_ITEM = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.+?)\s*$")
+# Matched against a line of the commenter's own prose, with its indentation removed.
+_COMMAND = re.compile(r"/misthos\s+([a-z]+)\b", re.IGNORECASE)
+_LIST_ITEM = re.compile(r"(?:[-*]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.+?)\s*$")
+_FENCE = re.compile(r"(`{3,}|~{3,})(.*)")
+_HTML_COMMENT = re.compile(r"<!--.*?-->")
+# A comment is a message from a person, not a script: more commands than this in one
+# is more likely a paste than an intention, and each one can move money.
+MAX_COMMANDS = 5
 HELP = (
-    "**Misthos commands**, each on its own line in a comment:\n\n"
+    "**Misthos commands**, each on its own line in a comment. They run in order, up to "
+    f"{MAX_COMMANDS} a comment, and the first one refused stops the rest. A command in a "
+    "code block, a quote or an HTML comment is not run.\n\n"
     "- `/misthos approve`: the publisher approves the criteria and the price, which "
     "commits the funds to escrow.\n"
     "- `/misthos criteria` followed by a list: the publisher approves these criteria "
@@ -290,6 +305,90 @@ def _reply(store: Store, repo: str, number: int, body: str) -> None:
         log.warning("could not reply on %s#%s: %s", repo, number, exc)
 
 
+@dataclass(frozen=True)
+class Command:
+    """One `/misthos` line of a comment."""
+
+    name: str
+    """Lower case, as written after `/misthos`."""
+    items: tuple[str, ...] = ()
+    """The list items on the lines after it, up to the next command: the criteria a
+    `/misthos criteria` approves."""
+
+
+def commands_in(body: str) -> list[Command]:
+    """The commands in a comment, in the order they were written.
+
+    Only the commenter's own prose counts. A line in a fenced or indented code block,
+    a block quote or an HTML comment is not a command: that is how a command is shown
+    as an example, quoted back by GitHub's "Quote reply" or left in a template, and
+    running one of those can commit a publisher's funds.
+    """
+    found: list[tuple[str, list[str]]] = []
+    for line in _prose(body):
+        if command := _COMMAND.match(line):
+            found.append((command.group(1).lower(), []))
+        elif found and (item := _LIST_ITEM.match(line)):
+            found[-1][1].append(item.group(1))
+    return [Command(name, tuple(items)) for name, items in found]
+
+
+def _prose(body: str) -> Iterator[str]:
+    """The comment's lines that a reader sees as the commenter's own words, unindented.
+
+    Where reading Markdown exactly would take a parser, this reads it the cautious
+    way: a fence opens at any indentation, a line indented four columns is code even
+    where Markdown would continue a paragraph with it, and the whole line that closes
+    an HTML comment is skipped. Erring that way costs a command typed again; erring
+    the other way can cost a publisher's money.
+    """
+    fence: tuple[str, int] | None = None  # the open fence, and how far it was indented
+    in_comment = False
+    for raw in body.splitlines():
+        line = raw.expandtabs(4)
+        if fence is not None:
+            if _closes(line, *fence):
+                fence = None
+            continue
+        if in_comment:
+            in_comment = "-->" not in line
+            continue
+        line = _HTML_COMMENT.sub("", line)
+        if "<!--" in line:
+            line, in_comment = line.split("<!--", 1)[0], True
+        text = line.lstrip(" ")
+        indent = len(line) - len(text)
+        if text.startswith(">"):
+            continue
+        opened = _FENCE.match(text)
+        # A backtick fence's info string cannot hold a backtick; ```x``` is inline code.
+        if opened and not (opened.group(1)[0] == "`" and "`" in opened.group(2)):
+            fence = (opened.group(1), indent)
+            continue
+        if indent < 4 and text.strip():
+            yield text
+
+
+def _closes(line: str, mark: str, opened_at: int) -> bool:
+    """Whether a line closes the fence `mark` opened: the same character, at least as
+    many, nothing else on the line, and not indented as code inside the fence."""
+    text = line.lstrip(" ")
+    closer = text.rstrip()
+    return (
+        len(line) - len(text) <= max(3, opened_at)
+        and len(closer) >= len(mark)
+        and set(closer) == {mark[0]}
+    )
+
+
+@dataclass(frozen=True)
+class _Ran:
+    ok: bool
+    """Whether the command did what it says. One that did not stops the rest."""
+    reply: str | None = None
+    """What to say back, or None when the platform already says it."""
+
+
 def _comment(store: Store, repo: str, action: str, payload: dict[str, Any]) -> Handled:
     if action != "created":
         return Handled(False, f"ignored: issue_comment {action}")
@@ -299,77 +398,135 @@ def _comment(store: Store, repo: str, action: str, payload: dict[str, Any]) -> H
         return Handled(False, "ignored: a bot's comment")
     if issue.get("pull_request"):
         return Handled(False, "ignored: a comment on a pull request")
-    found = _COMMAND.search(str(comment.get("body") or ""))
-    if found is None:
+    found = commands_in(str(comment.get("body") or ""))
+    if not found:
         return Handled(False, "ignored: not a command")
-    command, login, number = (
-        found.group(1).lower(),
-        str(author.get("login", "")),
-        int(issue["number"]),
-    )
-    rest = str(comment["body"])[found.end() :]
-    rec = store.find_open(repo, number)
-    reply = _command(store, rec, command, login, rest)
-    if reply:
-        _reply(store, repo, number, reply)
-    return Handled(
-        True, f"/misthos {command} from {login}" + (f": {reply.splitlines()[0]}" if reply else ""),
-        (rec.id,) if rec else (),
-    )  # fmt: skip
+    login, number = str(author.get("login", "")), int(issue["number"])
+
+    replies: list[str] = []
+    steps: list[str] = []
+    issue_ids: list[str] = []
+    run = found[:MAX_COMMANDS]
+    for position, command in enumerate(run):
+        # Read afresh for each command, because the one before may have changed the
+        # issue: an approve after a criteria must fund those criteria, not the draft.
+        rec = store.find_open(repo, number)
+        if rec is not None and rec.id not in issue_ids:
+            issue_ids.append(rec.id)
+        following = run[position + 1].name if position + 1 < len(run) else None
+        try:
+            ran = _command(store, rec, command, login, following)
+        except (Busy, StaleIssue):
+            if not steps:
+                raise  # nothing has run yet, so the whole delivery can be retried
+            # Retrying the delivery now would run the commands before this one again.
+            ran = _Ran(
+                False,
+                f"The issue was busy, so `/misthos {command.name}` was not run. Comment it again.",
+            )
+        if ran.reply:
+            replies.append(ran.reply)
+        if ran.ok:
+            steps.append(f"/misthos {command.name} ran")
+            continue
+        steps.append(f"/misthos {command.name} did not run: {(ran.reply or '-').splitlines()[0]}")
+        rest = found[position + 1 :]
+        if rest:
+            replies.append(
+                "The rest of this comment was not run: "
+                + _and([f"`/misthos {c.name}`" for c in rest]) + "."
+            )  # fmt: skip
+            steps.append(f"{len(rest)} after it not run")
+        break
+    else:
+        extra = len(found) - MAX_COMMANDS
+        if extra > 0:
+            replies.append(
+                f"Only the first {MAX_COMMANDS} commands in a comment are run, so the other "
+                f"{extra} {'was' if extra == 1 else 'were'} not."
+            )
+            steps.append(f"{extra} over the limit not run")
+    if replies:
+        _reply(store, repo, number, "\n\n".join(replies))
+    return Handled(True, f"from {login}: " + "; ".join(steps), tuple(issue_ids))
 
 
-def _command(store: Store, rec, command: str, login: str, rest: str) -> str | None:  # type: ignore[no-untyped-def]
-    """Run one command; what to say back, or None when the platform already says it."""
-    if command == "help":
-        return HELP.format(url=settings.public_url)
-    if command not in {"approve", "criteria", "claim"}:
-        return f"`/misthos {command}` is not a command. Comment `/misthos help` for the list."
+def _command(
+    store: Store, rec: IssueRecord | None, command: Command, login: str, following: str | None
+) -> _Ran:
+    """Run one command. `following` names the command after it in the same comment."""
+    name = command.name
+    if name == "help":
+        return _Ran(True, HELP.format(url=settings.public_url))
+    if name not in {"approve", "criteria", "claim"}:
+        return _Ran(
+            False, f"`/misthos {name}` is not a command. Comment `/misthos help` for the list."
+        )
     if rec is None:
-        return (
+        return _Ran(
+            False,
             f"This issue is not on Misthos. Add the `{settings.github_label}` label to have it "
-            "priced."
+            "priced.",
         )
     account = store.account_with_login(login)
     if account is None:
-        return (
+        return _Ran(
+            False,
             f"@{login}, sign in at {settings.public_url}/account and link this GitHub account "
-            "first."
+            "first.",
         )
     try:
-        if command == "claim":
+        if name == "claim":
             if account.role != "contributor":
-                return f"@{login}, only a contributor can claim an issue."
+                return _Ran(False, f"@{login}, only a contributor can claim an issue.")
             if rec.state is not IssueState.FUNDED:
-                return (
-                    f"@{login}, this issue is {rec.state.value.lower()}, so it cannot be claimed."
+                return _Ran(
+                    False,
+                    f"@{login}, this issue is {rec.state.value.lower()}, so it cannot be claimed.",
                 )
             store.claim(rec.id, account.party_id)
-            return (
+            return _Ran(
+                True,
                 f"Claimed by @{login}, who holds it for 72 hours. Open a pull request that says "
-                f"`Fixes #{rec.number}`; it is reviewed against the criteria above."
+                f"`Fixes #{rec.number}`; it is reviewed against the criteria above.",
             )
         if account.party_id != rec.publisher_id:
-            return f"@{login}, only the publisher of this issue can {command} it."
-        if command == "criteria":
-            items = [m.group(1) for line in rest.splitlines() if (m := _LIST_ITEM.match(line))]
-            if not items:
-                return "List the criteria under `/misthos criteria`, one per line, as `- ...`."
-            store.approve_criteria(rec.id, items, by=login)
-            return (
-                f"Criteria approved by @{login}:\n\n" + "\n".join(f"- {i}" for i in items)
-                + "\n\nComment `/misthos approve` to commit the funds."
+            return _Ran(False, f"@{login}, only the publisher of this issue can {name} it.")
+        if name == "criteria":
+            if not command.items:
+                return _Ran(
+                    False, "List the criteria under `/misthos criteria`, one per line, as `- ...`."
+                )
+            store.approve_criteria(rec.id, list(command.items), by=login)
+            # Say how to fund them, unless the next line of this comment does it.
+            then = (
+                ""
+                if following == "approve"
+                else "\n\nComment `/misthos approve` to commit the funds."
+            )
+            return _Ran(
+                True,
+                f"Criteria approved by @{login}:\n\n"
+                + "\n".join(f"- {i}" for i in command.items) + then,
             )  # fmt: skip
         # approve: the drafted criteria unless others were approved, then the price.
         if rec.criteria_approved_at is None:
             store.approve_criteria(rec.id, rec.acceptance_criteria, by=login)
         store.approve_price(rec.id, by=login)
-        return None  # funding posts the criteria and the price on the issue itself
+        return _Ran(True)  # funding posts the criteria and the price on the issue itself
     except UntestableCriteria as exc:
         lines = "\n".join(f"- Criterion {p.index} {p.reason}." for p in exc.problems)
-        return f"These criteria cannot be judged by a reviewer:\n\n{lines}"
+        return _Ran(False, f"These criteria cannot be judged by a reviewer:\n\n{lines}")
     except IllegalTransition:
-        return f"This issue is {rec.state.value.lower()}, so `/misthos {command}` does nothing now."
+        return _Ran(
+            False,
+            f"This issue is {rec.state.value.lower()}, so `/misthos {name}` does nothing now.",
+        )
     except (CriteriaNotApproved, ComplianceRefusal, PolicyRefusal) as exc:
-        return f"Refused: {exc}"
+        return _Ran(False, f"Refused: {exc}")
     except ChainRevert as exc:
-        return f"The escrow refused the commitment: {exc}"
+        return _Ran(False, f"The escrow refused the commitment: {exc}")
+
+
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}"

@@ -148,6 +148,12 @@ def test_a_huge_diff_is_truncated_and_says_so() -> None:
     assert len(prompt) < MAX_DIFF_CHARS + 2_000
 
 
+def test_the_prompt_says_the_checks_have_not_reported_rather_than_failed() -> None:
+    assert "checks pass on" in render(SUBMITTED)
+    prompt = render(Submitted(**{**SUBMITTED.__dict__, "checks_passed": None}))
+    assert "checks have not reported on" in prompt and "do not pass" not in prompt
+
+
 def test_the_model_is_used_only_when_a_key_is_set() -> None:
     kwargs = {"input_usd_per_mtok": 2.0, "output_usd_per_mtok": 10.0, "api_url": "https://x"}
     assert isinstance(build_reviewer("", "m", **kwargs), RuleReviewer)

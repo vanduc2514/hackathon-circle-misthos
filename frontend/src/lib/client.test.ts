@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ApiError, money, relativeTime, shortHash, unwrap } from './client'
+import { ApiError, checksChip, money, relativeTime, shortHash, unwrap } from './client'
 
 describe('money', () => {
   it('formats the decimal view the API returns', () => {
@@ -81,5 +81,16 @@ describe('unwrap', () => {
   it('joins validation errors into one sentence', () => {
     const error = { detail: [{ msg: 'field required' }, { msg: 'too long' }] }
     expect(() => unwrap({ error, response: response(422) })).toThrow('field required; too long')
+  })
+})
+
+describe('checksChip', () => {
+  it('says checks that have not reported are not reported, not failing', () => {
+    expect(checksChip(null)).toEqual({ label: 'not reported', tone: 'warn' })
+  })
+
+  it('says passing and failing checks as they are', () => {
+    expect(checksChip(true)).toEqual({ label: 'passing', tone: 'ok' })
+    expect(checksChip(false)).toEqual({ label: 'failing', tone: 'bad' })
   })
 })

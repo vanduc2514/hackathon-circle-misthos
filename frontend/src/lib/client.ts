@@ -101,3 +101,16 @@ export const relativeTime = (iso: string): string => {
 
 export const shortHash = (value: string): string =>
   value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value
+
+/**
+ * A submission's checks as the issue page shows them. Null is not failing: the
+ * project's checks are still running, or the repository has none, and the review
+ * judges the work on its criteria once it has waited for them.
+ */
+export const checksChip = (
+  passed: boolean | null,
+): { label: string; tone: 'ok' | 'bad' | 'warn' } => {
+  if (passed === true) return { label: 'passing', tone: 'ok' }
+  if (passed === false) return { label: 'failing', tone: 'bad' }
+  return { label: 'not reported', tone: 'warn' }
+}

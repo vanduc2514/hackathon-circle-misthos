@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -16,12 +17,14 @@ from misthos.api.v1.webhooks import signature_for
 from misthos.config import settings
 from misthos.domain.issue import IssueState
 from misthos.domain.ledger import MoneyEventKind
+from misthos.domain.review import CHECKS_WAIT, ChangedFile
 from misthos.domain.signals import IssueFacts, TreeCounts
 from misthos.main import app
 from misthos.models.records import IssueRecord
 from misthos.services.github import SimulatedGitHub
 from misthos.services.github.events import closed_issues
 from misthos.store import store
+from misthos.workers.sweeper import sweep_once
 
 API = "/api/v1"
 HOOK = f"{API}/webhooks/github"
@@ -185,7 +188,7 @@ class TestChecks:
     ) -> None:
         issue_id, repo, number, author = CLAIMED
         deliver(client, "pull_request", pull_request(repo, 501, author, body=f"Fixes #{number}"))
-        assert get(issue_id).submission.checks_passed is False  # type: ignore[union-attr]
+        assert get(issue_id).submission.checks_passed is None  # type: ignore[union-attr]
 
         github.put_checks(repo, "a" * 40, True)
         run = {
@@ -212,6 +215,56 @@ class TestChecks:
             "check_run": {"head_sha": "a" * 40},
         }
         assert deliver(client, "check_run", run)["handled"] is False
+
+
+class TestUnreportedChecks:
+    """None means the project's checks have not reported on the commit: still running,
+    or a repository with no CI at all. Neither is a failure."""
+
+    @pytest.fixture
+    def submitted(self, client: TestClient, github: SimulatedGitHub) -> str:
+        issue_id, repo, number, author = CLAIMED
+        github.put_files(repo, 501, [ChangedFile("src/parse.c", 20, 4),
+                                     ChangedFile("tests/fuzz/test_unterminated.c", 35),
+                                     ChangedFile("CHANGELOG.md", 1)])  # fmt: skip
+        deliver(client, "pull_request", pull_request(repo, 501, author, body=f"Fixes #{number}"))
+        return issue_id
+
+    def test_a_fresh_submission_is_served_as_unknown_not_failing(
+        self, client: TestClient, submitted: str
+    ) -> None:
+        assert get(submitted).submission.checks_passed is None  # type: ignore[union-attr]
+        shown = client.get(f"{API}/issues/{submitted}").json()
+        assert shown["submission"]["checks_passed"] is None
+
+    def test_the_review_waits_for_the_checks_and_runs_once_they_report(
+        self, client: TestClient, github: SimulatedGitHub, submitted: str
+    ) -> None:
+        assert submitted not in sweep_once(store).reviewed
+        assert get(submitted).state is IssueState.IN_REVIEW
+
+        _, repo, _, _ = CLAIMED
+        github.put_checks(repo, "a" * 40, True)
+        run = {"action": "completed", "repository": {"full_name": repo},
+               "check_run": {"head_sha": "a" * 40, "conclusion": "success"}}  # fmt: skip
+        deliver(client, "check_run", run)
+        assert sweep_once(store).reviewed.get(submitted) == "accept"
+
+    def test_a_repository_with_no_checks_is_reviewed_on_its_criteria_after_the_wait(
+        self, submitted: str
+    ) -> None:
+        at = get(submitted).decisions[-1].created_at  # when the pull request was submitted
+        early = sweep_once(store, now=at + CHECKS_WAIT - timedelta(minutes=1))
+        assert submitted not in early.reviewed
+
+        later = sweep_once(store, now=at + CHECKS_WAIT + timedelta(minutes=1))
+        assert later.reviewed.get(submitted) == "accept"
+        rec = get(submitted)
+        assert rec.review is not None and rec.review.findings[-1] == (
+            "The project's checks had not reported on this commit, so it was judged on the "
+            "criteria alone."
+        )
+        assert rec.decisions[-1].rule == "criteria_met_checks_unreported"
 
 
 class TestMergeIsAcceptance:

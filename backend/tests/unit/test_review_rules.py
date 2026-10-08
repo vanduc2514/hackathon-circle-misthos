@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from misthos.domain.review import (
+    CHECKS_WAIT,
     MAX_REWORK_ROUNDS,
     ChangedFile,
     CriterionCheck,
@@ -12,6 +15,7 @@ from misthos.domain.review import (
     Submitted,
     Verdict,
     decide,
+    ready_for_review,
 )
 from misthos.services.review.rules import RuleReviewer
 
@@ -40,6 +44,19 @@ class TestDecide:
         d = decide(judged(True), checks_passed=False, files_changed=2, rework_rounds=0)
         assert d.verdict is Verdict.REWORK and d.rule == "checks_failing"
 
+    def test_checks_that_never_reported_are_not_failing_and_the_findings_say_so(self) -> None:
+        """A repository with no CI would otherwise be sent back for rework forever."""
+        d = decide(judged(True), checks_passed=None, files_changed=2, rework_rounds=0)
+        assert d.verdict is Verdict.ACCEPT and d.rule == "criteria_met_checks_unreported"
+        assert d.findings[-1] == (
+            "The project's checks had not reported on this commit, so it was judged on the "
+            "criteria alone."
+        )
+
+    def test_unmet_criteria_are_still_rework_when_the_checks_never_reported(self) -> None:
+        d = decide(judged(False), checks_passed=None, files_changed=2, rework_rounds=0)
+        assert d.verdict is Verdict.REWORK and d.rule == "criteria_unmet"
+
     def test_rework_is_bounded(self) -> None:
         last = decide(
             judged(False), checks_passed=True, files_changed=2, rework_rounds=MAX_REWORK_ROUNDS
@@ -50,6 +67,21 @@ class TestDecide:
     def test_a_pull_request_that_changes_nothing_is_rejected(self) -> None:
         d = decide(judged(True), checks_passed=True, files_changed=0, rework_rounds=0)
         assert d.verdict is Verdict.REJECT and d.rule == "empty_diff"
+
+
+class TestWaitingForTheChecks:
+    AT = datetime(2026, 10, 8, 9, 0, tzinfo=UTC)
+
+    @pytest.mark.parametrize("checks", [True, False])
+    def test_checks_that_reported_are_reviewed_at_once(self, checks: bool) -> None:
+        assert ready_for_review(checks, self.AT, self.AT)
+
+    def test_checks_not_reported_wait_their_time_and_no_longer(self) -> None:
+        assert not ready_for_review(None, self.AT, self.AT + CHECKS_WAIT - timedelta(seconds=1))
+        assert ready_for_review(None, self.AT, self.AT + CHECKS_WAIT)
+
+    def test_a_submission_with_no_recorded_time_is_not_kept_waiting(self) -> None:
+        assert ready_for_review(None, None, self.AT)
 
 
 def submitted(criteria: list[str], paths: list[str]) -> Submitted:

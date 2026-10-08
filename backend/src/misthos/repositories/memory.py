@@ -138,7 +138,9 @@ class MemoryRepository:
 
     def save_connection(self, connection: RepoConnection) -> None:
         with self._guard:
-            self._connections[connection.repo.lower()] = connection.model_copy(deep=True)
+            # Stored lowercase, as the database stores it, so both hand back the same name.
+            repo = connection.repo.lower()
+            self._connections[repo] = connection.model_copy(update={"repo": repo}, deep=True)
 
     def delete_connections(self, repos: list[str]) -> None:
         with self._guard:

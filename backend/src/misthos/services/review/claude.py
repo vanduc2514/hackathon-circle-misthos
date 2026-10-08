@@ -84,7 +84,9 @@ TOOL = {
 def render(submitted: Submitted) -> str:
     """The user message: the criteria, the checks, and the diff within the budget."""
     criteria = "\n".join(f"{i}. {c}" for i, c in enumerate(submitted.criteria, start=1))
-    checks = "pass" if submitted.checks_passed else "do not pass"
+    checks = {True: "pass", False: "do not pass", None: "have not reported"}[
+        submitted.checks_passed
+    ]
     parts: list[str] = []
     used = 0
     truncated = False
