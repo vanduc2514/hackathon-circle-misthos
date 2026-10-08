@@ -13,7 +13,7 @@ The diagrams below describe the target system. This table is what is actually in
 | Layer | Component | State |
 | --- | --- | --- |
 | Web | Vite + React SPA, generated API client | Built. Sign-in, publishing and every lifecycle action, live against the API (#73); a Playwright test drives the whole loop in CI |
-| Edge | Express x402 gate and Circle CLI bridge | Built. Rails stubbed, the 402 handshake is real |
+| Edge | Express x402 gate and Circle CLI bridge | Built. The gate settles through Circle Gateway Nanopayments when `MISTHOS_SIMULATED=false`; simulated by default |
 | Core | FastAPI, lifecycle, pricing engine, review agent, decision log, money ledger | Built. Money moves through a chain gateway, simulated until #69. The review agent is Claude once `MISTHOS_ANTHROPIC_API_KEY` is set, and a rule reviewer otherwise |
 | Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
 | Contracts | `MisthosEscrow` | Built. 18 Foundry tests |

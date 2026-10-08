@@ -118,13 +118,14 @@ jobs:
           retention-days: 7
 
   edge:
-    name: edge - tsc
+    name: edge - tsc and node test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
       - run: mise run setup:edge
       - run: mise run lint:edge
+      - run: mise run test:edge
 
   contracts:
     name: contracts - forge test
