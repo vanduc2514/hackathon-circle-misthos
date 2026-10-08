@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import {
   api,
   money,
+  monthName,
   shortTime,
   unwrap,
   type FinanceOut,
@@ -126,20 +127,26 @@ export default function Spend() {
 
       {publisher?.approval_threshold_usdc && (
         <div className="banner">
-          Releases over ${publisher.approval_threshold_usdc} wait for{' '}
-          {(publisher.approvers ?? []).join(', ')}.
+          Releases over ${publisher.approval_threshold_usdc} wait for one of{' '}
+          {(publisher.approvers ?? []).map((a) => `@${a}`).join(', ')} to approve them, signed in
+          with an account that GitHub login is linked to.
         </div>
       )}
 
       <div className="grid k2">
         <Panel title="By category" flush>
+          {/* A limit is per calendar month, so the month's commitments sit beside it,
+              counted by the server the way funding counts them; the year's follow. */}
           <table className="table">
             <thead>
               <tr>
                 <th>Label</th>
-                <th style={{ textAlign: 'right' }}>Committed</th>
-                <th style={{ textAlign: 'right' }}>Released</th>
+                <th style={{ textAlign: 'right' }}>
+                  Committed in {s ? monthName(s.month) : 'the month'}
+                </th>
                 <th style={{ textAlign: 'right' }}>Monthly limit</th>
+                <th style={{ textAlign: 'right' }}>Committed in {s?.year ?? 'the year'}</th>
+                <th style={{ textAlign: 'right' }}>Released in {s?.year ?? 'the year'}</th>
               </tr>
             </thead>
             <tbody>
@@ -147,13 +154,16 @@ export default function Spend() {
                 <tr key={c.label}>
                   <td>{c.label}</td>
                   <td className="mono-num" style={{ textAlign: 'right' }}>
+                    ${money(c.committed_this_month)}
+                  </td>
+                  <td className="mono-num dim" style={{ textAlign: 'right' }}>
+                    {c.limit ? `$${money(c.limit)}` : '—'}
+                  </td>
+                  <td className="mono-num" style={{ textAlign: 'right' }}>
                     ${money(c.committed)}
                   </td>
                   <td className="mono-num" style={{ textAlign: 'right' }}>
                     ${money(c.released)}
-                  </td>
-                  <td className="mono-num dim" style={{ textAlign: 'right' }}>
-                    {c.limit ? `$${money(c.limit)}` : '—'}
                   </td>
                 </tr>
               ))}

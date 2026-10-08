@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ApiError, checksChip, money, relativeTime, shortHash, unwrap } from './client'
+import { ApiError, checksChip, money, monthName, relativeTime, shortHash, unwrap } from './client'
 
 describe('money', () => {
   it('formats the decimal view the API returns', () => {
@@ -30,6 +30,20 @@ describe('money', () => {
 
   it('does not lose the cent on a large amount', () => {
     expect(money({ usdc: '48350.05', base_units: 48350050000 })).toBe('48,350.05')
+  })
+})
+
+describe('monthName', () => {
+  it('names the month the server counted', () => {
+    expect(monthName('2026-10')).toBe('October 2026')
+  })
+
+  it('reads the month in UTC, so the first of the month is not the month before', () => {
+    expect(monthName('2026-01')).toBe('January 2026')
+  })
+
+  it('shows anything that is not a year and month as it came', () => {
+    expect(monthName('soon')).toBe('soon')
   })
 })
 

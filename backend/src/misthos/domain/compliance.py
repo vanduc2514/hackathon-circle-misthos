@@ -10,7 +10,10 @@ so they can be tested without a provider, a database or a chain:
 - Identity is verified when a contributor first earns, never at signup. Claiming and
   submitting work need no identity step; being paid does.
 - A listed party is never paid, whatever else is true. Sanctions are checked before
-  identity, and a block waits for a person, not for a retry.
+  identity. A payout held for a listing is screened again every
+  `PAYOUT_RETRY_INTERVAL` and released on its own once the wallet is no longer
+  listed; nobody has to clear it. A failed identity check is the hold that waits for a
+  person.
 
 The platform never holds identity documents. A provider does, and the platform keeps
 only the provider's reference and the outcome.

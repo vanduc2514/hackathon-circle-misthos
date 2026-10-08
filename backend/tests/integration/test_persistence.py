@@ -185,7 +185,7 @@ class TestSaving:
         saved = any_store.set_policy(
             "PUB-1",
             approval_threshold_usdc="1500",
-            approvers=["dana@acme.example"],
+            approvers=["dana-acme"],
             category_limits={"security": "12000.5"},
         )
         again = any_store.get_publisher("PUB-1")

@@ -282,6 +282,11 @@ export interface paths {
         /**
          * Approve Release
          * @description A named approver approves a release held over the organisation's threshold.
+         *
+         *     The approver is whoever is signed in, by the GitHub login linked to their account,
+         *     and the organisation must have named that login. A name in the request would let
+         *     anyone who knew an approver's name release the money, so it counts only in the
+         *     simulation, for a visitor who is not signed in, as the claim's does.
          */
         post: operations["approve_release_api_v1_issues__issue_id__approve_release_post"];
         delete?: never;
@@ -895,7 +900,7 @@ export interface components {
         /** ApproveReleaseRequest */
         ApproveReleaseRequest: {
             /** Approver */
-            approver: string;
+            approver?: string | null;
         };
         /**
          * AuditExport
@@ -1717,6 +1722,10 @@ export interface components {
             released: {
                 [key: string]: string | number;
             };
+            /** Committed This Month */
+            committed_this_month: {
+                [key: string]: string | number;
+            };
             /** Limit */
             limit?: {
                 [key: string]: string | number;
@@ -1733,6 +1742,8 @@ export interface components {
             name: string;
             /** Year */
             year: number;
+            /** Month */
+            month: string;
             /** Budget Remaining */
             budget_remaining: {
                 [key: string]: string | number;
@@ -2399,9 +2410,9 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
-                "application/json": components["schemas"]["ApproveReleaseRequest"];
+                "application/json": components["schemas"]["ApproveReleaseRequest"] | null;
             };
         };
         responses: {
@@ -2414,7 +2425,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssueOut"];
                 };
             };
-            /** @description Not one of the organisation's named approvers */
+            /** @description Not signed in with a GitHub login the organisation named, or the contributor being paid */
             403: {
                 headers: {
                     [name: string]: unknown;

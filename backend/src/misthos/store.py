@@ -56,8 +56,12 @@ from misthos.domain.money import Usdc
 from misthos.domain.policy import (
     PolicyRefusal,
     SpendingPolicy,
+    approves_own_payout,
     category_breaches,
+    committed_this_month,
+    login,
     may_approve,
+    month_start,
     needs_approval,
 )
 from misthos.domain.pricing import WEIGHTS, ComplexitySignals, UnfundableIssue, effort, propose
@@ -253,16 +257,28 @@ _HOLDS: dict[PayoutGate, tuple[str, str]] = {
         "the payout waits for {handle}'s identity verification, the only step a first "
         "payout needs",
     ),
+    # No person clears this one: the retry screens the wallet again, and pays once it
+    # is off the list (compliance.PAYOUT_RETRY_INTERVAL).
     PayoutGate.BLOCKED_SANCTIONS: (
         "sanctions_screening",
-        "{handle}'s wallet is on a sanctions list, so the payout is blocked until "
-        "compliance reviews it",
+        "{handle}'s wallet is on a sanctions list, so the payout is held; it is screened "
+        "again every hour and released once the wallet is no longer listed",
     ),
     PayoutGate.BLOCKED_IDENTITY: (
         "identity_at_first_payout",
         "{handle}'s identity verification failed, so the payout waits for a person to "
         "review it",
     ),
+}
+
+# What a new listing stops, in the words written on each open issue of the party. Only
+# what the code enforces: a publisher is screened at funding, not at payout.
+_FLAGGED: dict[PartyKind, str] = {
+    PartyKind.CONTRIBUTOR: "no payout is released to them while their wallet is listed, "
+    "since every payout screens it again",
+    PartyKind.PUBLISHER: "new commitments from them are refused while their wallet is "
+    "listed; the money already committed here is not held, and still goes to the "
+    "contributor on acceptance or back to the publisher at the deadline",
 }
 
 
@@ -1010,15 +1026,14 @@ class Store:
         policy = _policy(publisher)
         if not policy.category_limits:
             return
-        month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        committed: dict[str, Usdc] = {}
-        for other in self.repo.list_issues():
-            if other.publisher_id != publisher.id or other.id == rec.id:
-                continue
-            for event in other.money_events:
-                if event.kind is MoneyEventKind.COMMITTED and event.occurred_at >= month:
-                    for label in other.labels:
-                        committed[label] = committed.get(label, Usdc(0)) + event.amount
+        committed = committed_this_month(
+            (
+                (other.labels, other.money_events)
+                for other in self.repo.list_issues()
+                if other.publisher_id == publisher.id and other.id != rec.id
+            ),
+            now,
+        )
         breaches = category_breaches(
             policy, rec.labels, rec.proposal.recommended, committed
         )
@@ -1051,7 +1066,7 @@ class Store:
             return
         reason = (
             f"{publisher.name}'s wallet is on {screening.list_name}, so the commitment is "
-            "refused until compliance reviews it"
+            "refused while it is listed"
         )
         self._log(
             rec,
@@ -1068,8 +1083,10 @@ class Store:
         """Screen every live counterparty whose last check is a day old.
 
         Live means party to an issue with money committed and the work not settled. A
-        new hit is written on each of their open issues; the payout gate is what stops
-        the money, at the moment it would move.
+        new hit is written on each of their open issues, saying what it stops: the
+        payout gate stops a listed contributor's payout at the moment it would move,
+        and funding stops a listed publisher's next commitment. Money a listed
+        publisher has already committed is not held (ARCHITECTURE.md, Compliance).
         """
         self.ensure_ready()
         now = now or _now()
@@ -1110,8 +1127,7 @@ class Store:
                                 action="counterparty_flagged",
                                 rule="continuous_screening",
                                 outcome=f"the {kind.value} {party_id} is now on "
-                                f"{screening.list_name}; no money moves on this issue "
-                                "until compliance clears it",
+                                f"{screening.list_name}; {_FLAGGED[kind]}",
                                 when=now,
                             )
                             self.repo.save_issues(fresh)
@@ -2106,7 +2122,7 @@ class Store:
                         if approval_threshold_usdc
                         else None
                     ),
-                    "approvers": [a.strip() for a in approvers if a.strip()],
+                    "approvers": [login(a) for a in approvers if login(a)],
                     "category_limits": {
                         label.strip(): _display(Usdc.from_decimal(limit))
                         for label, limit in category_limits.items()
@@ -2124,7 +2140,11 @@ class Store:
         self, issue_id: str, approver: str, now: datetime | None = None
     ) -> IssueRecord:
         """A named approver approves a release held over the publisher's threshold,
-        and the release goes ahead at once if nothing else holds it."""
+        and the release goes ahead at once if nothing else holds it.
+
+        `approver` is a GitHub login the caller has proved, which the API takes from
+        the session (domain/policy.py says why), and it is what the log records.
+        """
         self.ensure_ready()
         with self._exclusive(issue_id), self._posting():
             rec = self.repo.get_issue(issue_id)
@@ -2135,16 +2155,22 @@ class Store:
             ):
                 raise lifecycle.IllegalTransition(rec.state, IssueState.PAID)
             publisher = self.repo.get_publisher(rec.publisher_id)
-            assert publisher is not None
+            assert publisher is not None and rec.contributor_id is not None
             if not may_approve(_policy(publisher), approver):
                 raise PolicyRefusal(f"{approver} is not one of {publisher.name}'s approvers")
+            # A contributor's handle is their linked GitHub login (link_github).
+            payee = self.repo.get_contributor(rec.contributor_id)
+            if payee is not None and approves_own_payout(approver, payee.handle):
+                raise PolicyRefusal(
+                    f"{approver} is the contributor and cannot approve their own payout"
+                )
             when = now or _now()
             self._log(
                 rec,
                 actor="publisher",
                 action="release_approved",
                 rule="named_approver",
-                outcome=f"{approver.strip()} approved the release of {self._committed(rec)}",
+                outcome=f"{login(approver)} approved the release of {self._committed(rec)}",
                 when=when,
             )
             self._pay(rec, when)
@@ -2155,14 +2181,21 @@ class Store:
         self, publisher_id: str, year: int | None = None, now: datetime | None = None
     ) -> SpendOut:
         """What a publisher budgeted, committed, released and refunded in a year, by
-        category, and the settled fixes a security review can file (#50)."""
+        category, and the settled fixes a security review can file (#50).
+
+        Each category also carries what was committed this calendar month, counted by
+        the function funding checks the monthly limit with, so the panel answers the
+        question the limit asks.
+        """
         self.ensure_ready()
         publisher = self.repo.get_publisher(publisher_id)
         if publisher is None:
             raise KeyError(publisher_id)
-        year = year or (now or _now()).year
+        now = now or _now()
+        year = year or now.year
         policy = _policy(publisher)
         mine = [r for r in self.repo.list_issues() if r.publisher_id == publisher_id]
+        this_month = committed_this_month(((r.labels, r.money_events) for r in mine), now)
 
         def total(kind: MoneyEventKind) -> Usdc:
             return Usdc(
@@ -2200,6 +2233,7 @@ class Store:
                     label=label,
                     committed=money(Usdc(tagged_total(MoneyEventKind.COMMITTED))),
                     released=money(Usdc(tagged_total(MoneyEventKind.RELEASED))),
+                    committed_this_month=money(this_month.get(label, Usdc(0))),
                     limit=money(limit) if limit is not None else None,
                 )
             )
@@ -2227,6 +2261,7 @@ class Store:
             publisher_id=publisher.id,
             name=publisher.name,
             year=year,
+            month=f"{month_start(now):%Y-%m}",
             budget_remaining=money(_budget(publisher)),
             committed_held=money(held),
             committed=money(total(MoneyEventKind.COMMITTED)),

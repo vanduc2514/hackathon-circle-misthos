@@ -85,6 +85,22 @@ export const shortTime = (iso: string): string =>
     minute: '2-digit',
   })
 
+/**
+ * The month a server figure counts, as `YYYY-MM`, in words: "October 2026". Read in
+ * UTC, because that is the month the server counted; a reader west of Greenwich would
+ * otherwise see the month before. Anything else is shown as it came.
+ */
+export const monthName = (yearMonth: string): string => {
+  const found = /^(\d{4})-(\d{2})$/.exec(yearMonth)
+  if (!found) return yearMonth
+  const [, year, month] = found
+  return new Date(Date.UTC(Number(year), Number(month) - 1, 1)).toLocaleString('en-US', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
+}
+
 export const relativeTime = (iso: string): string => {
   const diff = Date.now() - new Date(iso).getTime()
   const future = diff < 0
