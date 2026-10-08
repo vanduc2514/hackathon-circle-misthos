@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api, shortHash, unwrap, type Account } from '../lib/client'
 import { signIn, signOut, useHealth, useMe } from '../lib/session'
 import { browserProvider, browserWallet, demoWallet, type Signer } from '../lib/wallet'
+import { setUpWallet } from '../lib/circle-wallet'
 import { Panel } from '../components/ui'
 
 /**
@@ -131,6 +132,7 @@ export default function AccountPage() {
             {account?.role === 'publisher' && account.github_login && (
               <Repositories publisherId={account.party_id} />
             )}
+            {account && <PayoutWallet account={account} />}
             {!account && <ChooseSide onDone={changed} />}
             {account && !account.github_login && (
               <LinkGitHub account={account} simulated={simulated} onDone={changed} />
@@ -187,6 +189,53 @@ function Repositories({ publisherId }: { publisherId: string }) {
           </a>
         </div>
       )}
+    </Panel>
+  )
+}
+
+/**
+ * The party's own Circle wallet. A contributor is paid into it; a publisher funds
+ * from it. Setting it up opens Circle's frame for a PIN the platform never sees.
+ */
+function PayoutWallet({ account }: { account: Account }) {
+  const qc = useQueryClient()
+  const party = account.role as 'publisher' | 'contributor'
+  const path = { params: { path: { party, party_id: account.party_id } } }
+  const setUp = useMutation({
+    mutationFn: () =>
+      setUpWallet(
+        async () => unwrap(await api.POST('/api/v1/wallets/{party}/{party_id}/session', path)),
+        async () => unwrap(await api.POST('/api/v1/wallets/{party}/{party_id}/link', path)),
+      ),
+    onSuccess: () => {
+      for (const key of ['me', 'contributors', 'publishers']) {
+        qc.invalidateQueries({ queryKey: [key] })
+      }
+    },
+  })
+
+  return (
+    <Panel title="Your Circle wallet">
+      <p className="dim" style={{ marginBottom: 12 }}>
+        {party === 'contributor'
+          ? 'Your payouts are released to this wallet.'
+          : 'The wallet you fund issues from.'}{' '}
+        It is yours: you set a PIN in Circle's own window, and neither Misthos nor Circle can
+        move the money in it without you.
+      </p>
+      <div className="btn-row">
+        <button className="btn primary" onClick={() => setUp.mutate()} disabled={setUp.isPending}>
+          {setUp.isPending ? 'Waiting for Circle…' : 'Set up or reconnect your wallet'}
+        </button>
+      </div>
+      {setUp.data && (
+        <p className="stat-hint" style={{ marginTop: 10 }}>
+          {setUp.data === 'created'
+            ? 'Your wallet was created and linked.'
+            : 'Your wallet is linked.'}
+        </p>
+      )}
+      {setUp.error && <div className="error-box form-error">{setUp.error.message}</div>}
     </Panel>
   )
 }
