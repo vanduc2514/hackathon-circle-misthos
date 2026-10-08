@@ -20,6 +20,12 @@ interface IERC20 {
  * this contract expects. That removes the failure mode that ended the previous
  * attempt in this category.
  *
+ * The one thing the platform is paid from this contract is its take rate, and it
+ * is carved out inside the same `release` call rather than accumulated here. The
+ * rate and its recipient are set by the owner and bounded on chain, so a fee can
+ * never be raised above the published ceiling (docs/misthos/06) or sent somewhere
+ * the owner did not name.
+ *
  * Arc notes:
  *  - USDC is the native gas token AND an ERC-20 at a fixed predeploy address.
  *    The two views are the same balance. This contract only ever touches the
@@ -50,6 +56,8 @@ contract MisthosEscrow {
     error ZeroAmount();
     error AmountMismatch();
     error ExceedsCeiling(uint256 amount, uint256 ceiling);
+    error FeeTooHigh(uint256 bps, uint256 max);
+    error FeeRecipientNotSet();
     error TransferFailed();
 
     // ------------------------------------------------------------------ types
@@ -73,14 +81,19 @@ contract MisthosEscrow {
     event Committed(
         bytes32 indexed issueId, address indexed publisher, uint256 amount, uint64 deadline
     );
+    /// @param contributorAmount What the contributor actually received: the
+    ///        commitment less the take rate. The fee is reported separately.
     event Released(
         bytes32 indexed issueId,
         address indexed contributor,
-        uint256 fixAmount
+        uint256 contributorAmount
     );
+    event PlatformFeePaid(bytes32 indexed issueId, address indexed recipient, uint256 amount);
     event Refunded(bytes32 indexed issueId, address indexed publisher, uint256 amount);
     event CeilingUpdated(bytes32 indexed issueId, uint256 ceiling);
     event IssueTokenSet(bytes32 indexed issueId, address indexed token);
+    event FeeUpdated(bytes32 indexed issueId, uint256 bps);
+    event FeeRecipientUpdated(address indexed previousRecipient, address indexed newRecipient);
     event AttestorUpdated(address indexed previousAttestor, address indexed newAttestor);
 
     // ------------------------------------------------------------------ state
@@ -108,6 +121,20 @@ contract MisthosEscrow {
     ///         the commitment, and refused unless it has 6 decimals: the escrow
     ///         holds ERC-20 amounts only, never the 18-decimal native view.
     mapping(bytes32 => address) public issueToken;
+
+    /// @notice The platform's take rate for an issue, in basis points, set from
+    ///         the publisher's tier before the work is accepted. Zero means the
+    ///         contributor receives the whole commitment.
+    mapping(bytes32 => uint256) public feeBps;
+
+    /// @notice Where the take rate goes on release. A platform treasury address,
+    ///         never a balance this contract accumulates.
+    address public feeRecipient;
+
+    /// @notice The published ceiling on the take rate, in basis points. Above 15
+    ///         percent the tier table in docs/misthos/06 says the rate is
+    ///         renegotiated, so the contract refuses to carry one.
+    uint256 public constant MAX_FEE_BPS = 1500;
 
     // ------------------------------------------------------------- modifiers
 
@@ -182,14 +209,20 @@ contract MisthosEscrow {
     // ------------------------------------------------------------ attestation
 
     /**
-     * @notice Release the commitment on acceptance.
+     * @notice Release the commitment on acceptance, carving out the platform's
+     *         take rate.
      *
-     * Pays the contributor in one transfer, in the issue's token. The platform
-     * performs the review, so there is no second party holding a verdict and
-     * nothing to split: the whole commitment is the fix price. The attestor
-     * decides nothing about quality; it only records that acceptance happened,
-     * whether that was the publisher's merge or the silent-publisher grace
+     * Pays the contributor in the issue's own token, less the platform's take rate.
+     * The publisher paid the fix price and nothing else, so the fee is taken out of
+     * the commitment rather than added to it: the contributor receives the remainder
+     * and the platform's wallet receives the rate, from the same balance. The fee is
+     * integer division on basis points and rounds down, which leaves the extra base
+     * unit with the contributor.
+     *
+     * The attestor decides nothing about quality; it only records that acceptance
+     * happened, whether that was the publisher's merge or the silent-publisher grace
      * period expiring.
+
      */
     function release(bytes32 issueId, address contributor, uint256 fixAmount)
         external
@@ -201,10 +234,22 @@ contract MisthosEscrow {
         if (contributor == address(0)) revert ZeroAddress();
         if (fixAmount != c.amount) revert AmountMismatch();
 
-        c.status = Status.Released;
-        emit Released(issueId, contributor, fixAmount);
+        uint256 fee = (fixAmount * feeBps[issueId]) / 10_000;
+        address recipient = feeRecipient;
+        // A rate with nowhere to send the money would strand it in this contract,
+        // where nobody has a claim on it. Refuse instead.
+        if (fee != 0 && recipient == address(0)) revert FeeRecipientNotSet();
 
-        if (!IERC20(tokenOf(issueId)).transfer(contributor, fixAmount)) revert TransferFailed();
+        uint256 contributorAmount = fixAmount - fee;
+        c.status = Status.Released;
+        emit Released(issueId, contributor, contributorAmount);
+        if (fee != 0) emit PlatformFeePaid(issueId, recipient, fee);
+
+        // The issue's own token: an issue held in EURC settles in EURC (#30), and the
+        // fee comes out of the same balance.
+        IERC20 token = IERC20(tokenOf(issueId));
+        if (!token.transfer(contributor, contributorAmount)) revert TransferFailed();
+        if (fee != 0 && !token.transfer(recipient, fee)) revert TransferFailed();
     }
 
     // ------------------------------------------------------------------ admin
@@ -229,6 +274,23 @@ contract MisthosEscrow {
         if (tokenDecimals != 6) revert WrongDecimals(token, tokenDecimals);
         issueToken[issueId] = token;
         emit IssueTokenSet(issueId, token);
+    }
+
+    /// @notice Set the take rate for an issue from the publisher's tier. Bounded
+    ///         on chain, so a compromised owner key still cannot release at a rate
+    ///         the published tier table forbids.
+    function setFee(bytes32 issueId, uint256 bps) external onlyOwner {
+        if (bps > MAX_FEE_BPS) revert FeeTooHigh(bps, MAX_FEE_BPS);
+        feeBps[issueId] = bps;
+        emit FeeUpdated(issueId, bps);
+    }
+
+    /// @notice Point the take rate at a platform treasury address. Rotating it
+    ///         does not move fees already paid.
+    function setFeeRecipient(address next) external onlyOwner {
+        if (next == address(0)) revert ZeroAddress();
+        emit FeeRecipientUpdated(feeRecipient, next);
+        feeRecipient = next;
     }
 
     function setAttestor(address next) external onlyOwner {

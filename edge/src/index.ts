@@ -14,14 +14,17 @@
  */
 
 import express, { type Request, type Response } from 'express'
-import { paymentRequirements, verifyAndSettle, type PaymentProof } from './x402-gate.js'
+import { createGate, settlementOf } from './x402-gate.js'
 import { walletStatus, type WalletOp } from './circle-cli.js'
+import { createWalletService } from './circle-wallets.js'
+import { walletRouter } from './wallet-routes.js'
 
 const app = express()
 app.use(express.json({ limit: '512kb' }))
 
 const PORT = Number(process.env.EDGE_PORT ?? 8080)
 const CORE_URL = process.env.CORE_API_URL ?? 'http://127.0.0.1:8000'
+const gate = createGate()
 
 /** Health, used by the compose file and by `mise run dev` sanity checks. */
 app.get('/health', (_req: Request, res: Response) => {
@@ -30,51 +33,31 @@ app.get('/health', (_req: Request, res: Response) => {
     service: 'misthos-edge',
     role: 'x402-gate',
     core: CORE_URL,
-    simulated: true,
+    simulated: gate.config.simulated,
+    networks: gate.config.networks,
+    facilitator: gate.config.simulated ? null : gate.config.facilitatorUrl,
   })
 })
 
 /**
- * The unpaid probe. An agent that calls this without payment gets the machine
- * readable price list x402 specifies, so it can pick a rail and retry.
+ * A metered endpoint. Unpaid, it answers 402 with the machine-readable price
+ * list x402 specifies, so an agent can pick a rail, sign and retry. Paid, the
+ * gate has already settled before this handler runs.
  */
-app.get('/paid/pricing-report', (req: Request, res: Response) => {
-  const paid = Boolean(req.header('X-PAYMENT'))
-  if (!paid) {
-    res.status(402).json({
-      error: 'payment required',
-      accepts: paymentRequirements('/paid/pricing-report', '0.25'),
-    })
-    return
-  }
-
-  const proof: PaymentProof = {
-    raw: req.header('X-PAYMENT') ?? '',
-    resource: '/paid/pricing-report',
-  }
-
-  void verifyAndSettle(proof).then((result) => {
-    if (!result.settled) {
-      res.status(402).json({ error: result.reason, accepts: paymentRequirements('/paid/pricing-report', '0.25') })
-      return
-    }
-    // Forward the paid request to the Python core, which is unchanged by any of
-    // this. The gate is the only thing the edge service adds.
-    void fetch(`${CORE_URL}/api/v1/metrics`)
-      .then((r) => r.json())
-      .then((metrics) =>
-        res.json({
-          settled: true,
-          payer: result.payer,
-          rail: result.rail,
-          metrics,
-        }),
-      )
-      .catch((err: unknown) =>
-        res.status(502).json({ error: 'core unavailable', detail: String(err) }),
-      )
-  })
+app.get('/paid/pricing-report', gate.require('0.25'), (_req: Request, res: Response) => {
+  const settlement = settlementOf(res)
+  // Forward the paid request to the Python core, which is unchanged by any of
+  // this. The gate is the only thing the edge service adds.
+  void fetch(`${CORE_URL}/api/v1/metrics`)
+    .then((r) => r.json())
+    .then((metrics) => res.json({ settled: true, ...settlement, metrics }))
+    .catch((err: unknown) =>
+      res.status(502).json({ error: 'core unavailable', detail: String(err) }),
+    )
 })
+
+/** Circle user-controlled wallets for publishers and contributors. Core only. */
+app.use('/wallets', walletRouter(createWalletService()))
 
 /** Wallet operations the Python core delegates here because the CLI is Node. */
 app.get('/wallet/status', async (_req: Request, res: Response) => {
@@ -95,7 +78,11 @@ if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
     console.log(`misthos-edge listening on http://localhost:${PORT}`)
     console.log(`  core: ${CORE_URL}`)
-    console.log('  simulated: no chain is contacted')
+    console.log(
+      gate.config.simulated
+        ? '  simulated: no chain is contacted'
+        : `  x402 settles through ${gate.config.facilitatorUrl} on ${gate.config.networks.join(', ')}`,
+    )
   })
 }
 
