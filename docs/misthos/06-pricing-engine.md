@@ -137,6 +137,24 @@ Publishers will trust a system that tells them no. A system that always finds a 
 | Two accounts colluding to farm a payout | The publisher and the contributor must be distinct identities, and payout wallets are screened |
 | Publisher merges without accepting to avoid payment | A merge triggers acceptance and releases the payment |
 
+### What the first calibration found
+
+The first comparison against real money (#41) used thirty GitHub issues that carried a bounty priced up front and paid on acceptance, from sixteen organisations, at most three each. Each worth is the amount the bounty platform's bot announced as paid, with the URL of that announcement; each issue's six signals are the engine's own reading of it (`domain/signals.read`), not a hand score. `mise run pricing:calibrate` replays it; `services/bounties.py` rebuilds it, and `calibration-report.json` beside the corpus is the run recorded here.
+
+| | Rate | Worth inside the band | Median error |
+| --- | --- | --- | --- |
+| The engine as it stands | $90/h | 3.3% | 1,599% |
+| The fit to these bounties | $8.09/h | 46.7% | 52% |
+
+The paid bounties have a median of $100 (from $15 to $2,000); the engine recommends a median of $1,667 for the same issues. Nine of the thirty paid less than the Open tier's $55 floor.
+
+**The weights were not changed, and the fitted ones should not be adopted.** Two reasons, both in the data rather than in a preference:
+
+- The fit is degenerate. It puts 70% of the weight on blast radius, but twenty-seven of the thirty issues carry the same blast-radius score, because almost none of them is labelled. A weight on a signal that barely varies is fitting the rate, not the signal.
+- A bounty is a different market. It is a price posted to many competing hunters, often as marketing, and a third of it sits below the floor at which the platform's own review pays for itself. Pricing to it would move the engine to a price the business cannot carry, for contributors it is not built for.
+
+What the comparison does establish is that the engine's absolute level is untested against professional work, and that requirement clarity, code surface and prior attempts vary enough across real issues to be fitted once a corpus of buyer-valued work exists: consultancy invoices, or a buyer's own engineer's estimate (assumption 1 below). Until then this corpus stays as the floor of the market, and as a regression set the calibration is replayed against.
+
 ### What is not in the model yet
 
 No reputation-priced component. A contributor with twenty accepted patches in a repository should eventually be able to charge more than a stranger for the same work, and a publisher with a bad payment record should pay more. Both are straightforward once there is transaction history, and neither is worth building before that.
