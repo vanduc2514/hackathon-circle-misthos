@@ -31,8 +31,10 @@ from misthos.domain.pricing import (
     ComplexitySignals,
     effort,
     min_fix_price,
+    platform_fee,
     propose,
     relist,
+    take_rate_bps,
 )
 
 
@@ -140,6 +142,28 @@ class TestPricing:
 
     def test_the_floor_rises_as_the_take_rate_thins(self) -> None:
         assert min_fix_price("open") < min_fix_price("team") < min_fix_price("enterprise")
+
+    def test_the_platform_fee_is_the_tier_rate_of_the_fix_price(self) -> None:
+        """The commission comes out of the price the publisher already approved."""
+        price = Usdc.from_decimal("500")
+        assert platform_fee(price, "open") == Usdc.from_decimal("60")
+        assert platform_fee(price, "team") == Usdc.from_decimal("50")
+        assert platform_fee(price, "enterprise") == Usdc.from_decimal("40")
+
+    def test_the_platform_fee_floors_like_the_escrow_does(self) -> None:
+        """Basis points and integer division, so the recorded fee is the transfer."""
+        odd = Usdc(55_555_555)
+        assert take_rate_bps("open") == 1200
+        assert platform_fee(odd, "open").base_units == odd.base_units * 1200 // 10_000
+
+    def test_every_tier_rate_fits_the_escrows_ceiling(self) -> None:
+        """`MisthosEscrow.MAX_FEE_BPS` is 1500; a higher tier could never be set."""
+        assert all(0 < take_rate_bps(tier) <= 1500 for tier in TAKE_RATE_BY_TIER)
+
+    def test_the_fee_never_takes_the_whole_commitment(self) -> None:
+        commitment = Usdc.from_decimal("55")
+        for tier in TAKE_RATE_BY_TIER:
+            assert platform_fee(commitment, tier) < commitment
 
     def test_the_floor_is_applied_at_the_publisher_tier(self) -> None:
         """A price that clears the Open floor can still fail the Enterprise one."""

@@ -64,7 +64,14 @@ from misthos.domain.policy import (
     month_start,
     needs_approval,
 )
-from misthos.domain.pricing import WEIGHTS, ComplexitySignals, UnfundableIssue, effort, propose
+from misthos.domain.pricing import (
+    WEIGHTS,
+    ComplexitySignals,
+    UnfundableIssue,
+    effort,
+    propose,
+    take_rate_bps,
+)
 from misthos.domain.review import (
     ChangedFile,
     Judgement,
@@ -665,7 +672,12 @@ class Store:
         at = when or _now()
         committed = rec.proposal.recommended
         deadline = at + lifecycle.ESCROW_TERM
-        tx = self.chain.commit(rec.id, publisher.wallet.address, committed, deadline, at)
+        # The rate is fixed here, with the money. The escrow enforces the rate it was
+        # given on release, so reading the publisher's plan at settlement time instead
+        # would let a plan that lapses mid-flight move the fee after the price was
+        # approved, and the record would stop matching the transfer (#32).
+        fee_bps = take_rate_bps(publisher.tier)
+        tx = self.chain.commit(rec.id, publisher.wallet.address, committed, deadline, at, fee_bps)
         self._book(rec, MoneyEventKind.COMMITTED, committed, publisher.id, tx, at)
         rec.escrow = EscrowCommitment(
             issue_id=rec.id,
@@ -674,6 +686,7 @@ class Store:
             tx_hash=tx,
             amount=money(committed),
             deadline=deadline,
+            fee_bps=fee_bps,
         )
         rec.deadline = rec.escrow.deadline
         criteria = _criteria_comment(rec)
@@ -762,14 +775,22 @@ class Store:
         tx = self.chain.release(rec.id, contributor.wallet.address, amount, at)
         self._book(rec, MoneyEventKind.RELEASED, amount, contributor.id, tx, at)
         rec.escrow.released = True
-        rec.paid = amount
+        # The fee comes out of the commitment rather than being added to it: the
+        # publisher paid the fix price and nothing else. The rate is the one the escrow
+        # holds for this issue, read back so the recorded fee is the transfer.
+        held = self.chain.commitments().get(rec.id)
+        rate = held.fee_bps if held is not None else rec.escrow.fee_bps
+        fee = Usdc(amount.base_units * rate // 10_000)
+        rec.platform_fee = fee
+        rec.paid = amount - fee
         rec.paid_at = at
         rec.payout_tx_hash = tx
         rec.payout_hold = None
         # Public: the amount and who earned it, as the issue's price already was. The
-        # transfer and the wallet stay private (docs/PRIVACY.md).
+        # transfer and the wallet stay private (docs/PRIVACY.md). What the contributor
+        # received is the commitment less the platform's fee.
         note = (
-            f"Paid **{amount} USDC** to @{contributor.handle}. The payment was released "
+            f"Paid **{rec.paid} USDC** to @{contributor.handle}. The payment was released "
             f"from escrow on {CHAIN} when the work was accepted."
         )
         self._post(
@@ -784,7 +805,9 @@ class Store:
             actor="system",
             action="released",
             rule=rule,
-            outcome=f"released {rec.paid} to contributor",
+            outcome=(
+                f"released {rec.paid} to contributor and {fee} platform fee at {rate} bps"
+            ),
             cost="0.01",
             when=when,
         )
@@ -2940,6 +2963,7 @@ class Store:
             review=rec.review,
             contributor_id=rec.contributor_id,
             paid_usdc=str(rec.paid.decimal) if rec.paid else None,
+            platform_fee_usdc=str(rec.platform_fee.decimal) if rec.platform_fee else None,
             github_url=rec.github_url,
             criteria_approved_at=rec.criteria_approved_at,
             awaiting_approver=rec.payout_hold == PayoutGate.AWAIT_APPROVER.value,

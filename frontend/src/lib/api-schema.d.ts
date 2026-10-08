@@ -1150,6 +1150,11 @@ export interface components {
              */
             deadline: string;
             /**
+             * Fee Bps
+             * @default 0
+             */
+            fee_bps: number;
+            /**
              * Released
              * @default false
              */
@@ -1281,6 +1286,8 @@ export interface components {
             contributor_id?: string | null;
             /** Paid Usdc */
             paid_usdc?: string | null;
+            /** Platform Fee Usdc */
+            platform_fee_usdc?: string | null;
             /** Github Url */
             github_url: string;
             /** Criteria Approved At */
@@ -1394,6 +1401,8 @@ export interface components {
             repeat_publisher_rate: number;
             /** Matched Volume Usdc */
             matched_volume_usdc: string;
+            /** Platform Fees Usdc */
+            platform_fees_usdc: string;
             /** Median Hours To Payout */
             median_hours_to_payout: number | null;
             /**

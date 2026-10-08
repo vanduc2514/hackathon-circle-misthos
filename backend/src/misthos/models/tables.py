@@ -99,6 +99,7 @@ issues = Table(
     Column("created_at", Timestamp, nullable=False),
     Column("deadline", Timestamp),
     Column("paid_base_units", BigInteger),
+    Column("platform_fee_base_units", BigInteger),
     Column("paid_at", Timestamp),
     Column("payout_tx_hash", String(80)),
     Column("accepted_by", String(16)),
@@ -140,6 +141,8 @@ escrow_commitments = Table(
     Column("tx_hash", String(80), nullable=False, unique=True),
     Column("amount_base_units", BigInteger, nullable=False),
     Column("deadline", Timestamp, nullable=False),
+    # The take rate the escrow holds for this issue, in basis points (#32).
+    Column("fee_bps", Integer, nullable=False, server_default="0"),
     Column("released", Boolean, nullable=False),
     Column("refunded", Boolean, nullable=False),
 )
@@ -251,6 +254,9 @@ simulated_escrow = Table(
     Column("amount_base_units", BigInteger, nullable=False),
     Column("status", String(16), nullable=False),
     Column("last_tx_hash", String(80), nullable=False),
+    # The take rate the simulated escrow holds, so the fee a settlement records is the
+    # rate the escrow enforced (#32).
+    Column("fee_bps", Integer, nullable=False, server_default="0"),
 )
 
 # A signed-in wallet and the role it chose (#70). One role per wallet.

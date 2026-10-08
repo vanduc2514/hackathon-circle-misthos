@@ -15,7 +15,7 @@ from misthos.domain.money import Usdc
 from misthos.main import app
 from misthos.models.records import IssueRecord
 from misthos.services.chain import ChainRevert
-from misthos.store import store
+from misthos.store import _now, store
 from misthos.workers.sweeper import sweep_once
 
 API = "/api/v1"
@@ -52,14 +52,44 @@ class TestBooking:
             if rec.escrow is None:
                 assert rec.money_events == [], rec.id
 
-    def test_a_release_pays_the_contributor_the_whole_commitment(self) -> None:
+    def test_a_release_books_the_whole_commitment_and_splits_it(self) -> None:
+        """The escrow settles the whole commitment in two transfers, so the event is the
+        commitment and what the contributor received is the commitment less the take
+        rate (#32)."""
         rec = store.approve_and_accept("ISS-1006")
         assert rec.state is IssueState.PAID
         assert kinds(rec) == [MoneyEventKind.COMMITTED, MoneyEventKind.RELEASED]
         released = rec.money_events[-1]
+        committed = rec.money_events[0].amount
         assert released.counterparty_id == rec.contributor_id
         assert released.tx_hash == rec.payout_tx_hash
-        assert released.amount == rec.paid == rec.money_events[0].amount
+        assert released.amount == committed
+        assert rec.escrow is not None and rec.platform_fee is not None
+        assert rec.paid is not None
+        assert rec.received == rec.paid
+        assert rec.paid + rec.platform_fee == committed
+        assert rec.platform_fee.base_units == committed.base_units * rec.escrow.fee_bps // 10_000
+
+    def test_a_plan_that_lapses_after_the_commitment_does_not_move_the_fee(self) -> None:
+        """#53 lets a tier move mid-flight. The escrow holds this issue's rate from the
+        commitment, so a settlement cannot charge a rate the publisher never approved."""
+        rec = store.approve_and_accept("ISS-1006")
+        assert rec.escrow is not None
+        assert rec.platform_fee is not None
+        rate = rec.escrow.fee_bps
+        fee = rec.platform_fee
+
+        # Put the publisher on a different tier after the money is in.
+        publisher = store.get_publisher(rec.publisher_id)
+        assert publisher is not None
+        other = "enterprise" if publisher.tier != "enterprise" else "open"
+        store.set_contract_plan(rec.publisher_id, other, _now() + timedelta(days=30))
+
+        again = get(rec.id)
+        assert again.escrow is not None
+        assert again.escrow.fee_bps == rate
+        assert again.platform_fee == fee
+        assert again.received == again.paid
 
     def test_a_refund_returns_the_commitment_to_the_publisher(self) -> None:
         funded = get("ISS-1001")

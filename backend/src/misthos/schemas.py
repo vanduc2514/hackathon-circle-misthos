@@ -164,6 +164,10 @@ class EscrowCommitment(BaseModel):
     tx_hash: str
     amount: dict[str, str | int]
     deadline: datetime
+    fee_bps: int = 0
+    """The platform's take rate for this issue, in basis points, fixed when the money
+    was committed. The escrow enforces this rate, not the publisher's tier at the
+    moment of release, so a plan that lapses mid-flight cannot move it."""
     released: bool = False
     refunded: bool = False
 
@@ -227,6 +231,9 @@ class IssueOut(BaseModel):
     review: Review | None = None
     contributor_id: str | None = None
     paid_usdc: str | None = None
+    """What the contributor received: the commitment less the platform's take rate."""
+    platform_fee_usdc: str | None = None
+    """The platform's commission on this settlement, at the publisher's tier rate."""
     github_url: str
     criteria_approved_at: datetime | None = None
     """When the publisher approved the acceptance criteria; funding waits for it (#21)."""
@@ -268,6 +275,8 @@ class MetricsOut(BaseModel):
     repeat_publisher_rate: float
     """Publishers who funded a second issue within 60 days of an earlier one."""
     matched_volume_usdc: str
+    platform_fees_usdc: str
+    """The take-rate revenue actually collected across settled issues."""
     median_hours_to_payout: float | None
     refund_rate: float = 0.0
     """Of the commitments that closed, the share refunded rather than paid."""

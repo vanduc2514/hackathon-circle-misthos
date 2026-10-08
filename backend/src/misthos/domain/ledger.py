@@ -55,6 +55,9 @@ class OnChain:
 
     status: EscrowStatus
     amount: Usdc
+    fee_bps: int = 0
+    """The platform's take rate the escrow holds for this issue. Read back rather than
+    assumed, so the fee a settlement records is the rate the escrow enforced."""
 
 
 @dataclass(frozen=True)

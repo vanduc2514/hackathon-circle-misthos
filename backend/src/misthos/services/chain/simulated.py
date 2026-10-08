@@ -38,20 +38,28 @@ class SimulatedChain:
         self._engine = engine
         # Re-entrant, because a call holds it across its own read and write.
         self._guard = threading.RLock()
-        self._books: dict[str, tuple[str, Usdc, EscrowStatus]] = {}
+        self._books: dict[str, tuple[str, Usdc, EscrowStatus, int]] = {}
 
     # ------------------------------------------------------------ the escrow
 
     def commit(
-        self, issue_id: str, publisher: str, amount: Usdc, deadline: datetime, at: datetime
+        self,
+        issue_id: str,
+        publisher: str,
+        amount: Usdc,
+        deadline: datetime,
+        at: datetime,
+        fee_bps: int = 0,
     ) -> str:
         if amount.base_units <= 0:
             raise ChainRevert("ZeroAmount")
+        if fee_bps < 0:
+            raise ChainRevert("FeeTooHigh")
         with self._guard:
             if self._get(issue_id) is not None:
                 raise ChainRevert("AlreadyExists")
             tx = _tx()
-            self._put(issue_id, publisher, amount, EscrowStatus.HELD, tx, insert_new=True)
+            self._put(issue_id, publisher, amount, EscrowStatus.HELD, tx, fee_bps, insert_new=True)
             return tx
 
     def release(self, issue_id: str, contributor: str, amount: Usdc, at: datetime) -> str:
@@ -67,12 +75,17 @@ class SimulatedChain:
     def commitments(self) -> dict[str, OnChain]:
         if self._engine is None:
             with self._guard:
-                return {k: OnChain(status=v[2], amount=v[1]) for k, v in self._books.items()}
+                return {
+                    k: OnChain(status=v[2], amount=v[1], fee_bps=v[3])
+                    for k, v in self._books.items()
+                }
         with self._engine.connect() as conn:
             rows = conn.execute(select(t.simulated_escrow)).mappings()
             return {
                 r["issue_id"]: OnChain(
-                    status=EscrowStatus(r["status"]), amount=Usdc(r["amount_base_units"])
+                    status=EscrowStatus(r["status"]),
+                    amount=Usdc(r["amount_base_units"]),
+                    fee_bps=r["fee_bps"],
                 )
                 for r in rows
             }
@@ -89,7 +102,7 @@ class SimulatedChain:
         """Move a commitment without the platform, as a compromised key would. Tests only."""
         found = self._get(issue_id)
         assert found is not None, issue_id
-        self._put(issue_id, found[0], found[1], status, _tx(), insert_new=False)
+        self._put(issue_id, found[0], found[1], status, _tx(), found[3], insert_new=False)
 
     # ---------------------------------------------------------------- books
 
@@ -101,10 +114,10 @@ class SimulatedChain:
             if amount != found[1]:
                 raise ChainRevert("AmountMismatch")
             tx = _tx()
-            self._put(issue_id, found[0], found[1], status, tx, insert_new=False)
+            self._put(issue_id, found[0], found[1], status, tx, found[3], insert_new=False)
             return tx
 
-    def _get(self, issue_id: str) -> tuple[str, Usdc, EscrowStatus] | None:
+    def _get(self, issue_id: str) -> tuple[str, Usdc, EscrowStatus, int] | None:
         if self._engine is None:
             with self._guard:
                 return self._books.get(issue_id)
@@ -118,7 +131,12 @@ class SimulatedChain:
             )
         if row is None:
             return None
-        return row["publisher_wallet"], Usdc(row["amount_base_units"]), EscrowStatus(row["status"])
+        return (
+            row["publisher_wallet"],
+            Usdc(row["amount_base_units"]),
+            EscrowStatus(row["status"]),
+            row["fee_bps"],
+        )
 
     def _put(
         self,
@@ -127,12 +145,13 @@ class SimulatedChain:
         amount: Usdc,
         status: EscrowStatus,
         tx: str,
+        fee_bps: int,
         *,
         insert_new: bool,
     ) -> None:
         if self._engine is None:
             with self._guard:
-                self._books[issue_id] = (party, amount, status)
+                self._books[issue_id] = (party, amount, status, fee_bps)
             return
         values = {"status": status.value, "last_tx_hash": tx}
         with self._engine.begin() as conn:
@@ -142,6 +161,7 @@ class SimulatedChain:
                         issue_id=issue_id,
                         publisher_wallet=party,
                         amount_base_units=amount.base_units,
+                        fee_bps=fee_bps,
                         **values,
                     )
                 )

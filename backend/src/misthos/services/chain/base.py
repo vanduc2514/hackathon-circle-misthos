@@ -17,9 +17,21 @@ class ChainGateway(Protocol):
     name: str
 
     def commit(
-        self, issue_id: str, publisher: str, amount: Usdc, deadline: datetime, at: datetime
+        self,
+        issue_id: str,
+        publisher: str,
+        amount: Usdc,
+        deadline: datetime,
+        at: datetime,
+        fee_bps: int = 0,
     ) -> str:
-        """Hold `amount` for this issue. Returns the transaction reference."""
+        """Hold `amount` for this issue at the platform's `fee_bps` rate.
+
+        The rate is fixed here, with the money, and the escrow enforces it on release.
+        Reading it from the publisher's plan at release time instead would let a plan
+        that lapses mid-flight move the fee after the publisher approved the price.
+        Returns the transaction reference.
+        """
 
     def release(self, issue_id: str, contributor: str, amount: Usdc, at: datetime) -> str:
         """Pay the whole commitment to the contributor. Returns the transaction reference."""

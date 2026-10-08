@@ -241,12 +241,15 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 | `Memo` (predeployed) | Attaches the issue and PR reference to every money movement, so reconciliation is on-chain |
 | `Multicall3From` (predeployed) | Batches payouts while preserving the original sender as `msg.sender` |
 
-`MisthosEscrow` is the only contract we write. Its job is to make four things true:
+`MisthosEscrow` is the only contract we write. Its job is to make five things true:
 
 1. Money for an issue is visibly committed before a contributor starts.
 2. Release requires an acceptance attestation from a key the contributor cannot obtain.
 3. Refund happens on a deadline without requiring anyone to act.
 4. A per-issue ceiling is enforced here, so an agent with a compromised key cannot drain a budget.
+5. The platform's take rate is carved out of the release in the same call, so the
+   commission is a transfer rather than a reporting number, and a per-issue rate
+   above the published 15 percent ceiling cannot be set at all.
 
 ### Circle primitives
 
@@ -324,7 +327,7 @@ flowchart LR
     end
 ```
 
-**Path A carries the work payment.** A publisher commits USDC into `MisthosEscrow` against a specific issue. The contract holds it. On acceptance it releases to the contributor, on deadline it refunds. This is the path that satisfies C1, because the platform is never a custodian, and C7, because an Arc transfer costs about a cent.
+**Path A carries the work payment.** A publisher commits USDC into `MisthosEscrow` against a specific issue. The contract holds it. On acceptance it releases to the contributor with the platform's take rate carved out of the same commitment, on deadline it refunds in full. This is the path that satisfies C1, because the platform is never a custodian, and C7, because an Arc transfer costs about a cent.
 
 **Path B carries everything metered.** Paying our own review agents per invocation, a publisher buying a pricing report, or any endpoint we expose for agents to consume. No escrow, no commitment, no state. The agent pays per request and gets a result.
 

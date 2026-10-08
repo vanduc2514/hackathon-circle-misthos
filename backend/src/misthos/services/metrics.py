@@ -95,9 +95,9 @@ def earnings(
 ) -> dict[str, int]:
     """Base units paid to each contributor, optionally only since a moment."""
     paid: dict[str, int] = defaultdict(int)
-    for _, event in released:
+    for rec, event in released:
         if since is None or event.occurred_at >= since:
-            paid[event.counterparty_id] += event.amount.base_units
+            paid[event.counterparty_id] += rec.received.base_units
     return dict(paid)
 
 
@@ -151,6 +151,7 @@ def compute(records: list[IssueRecord], now: datetime) -> MetricsOut:
     for r in records:
         by_state[r.state.value] = by_state.get(r.state.value, 0) + 1
 
+    fees = sum(r.platform_fee.base_units for r in records if r.platform_fee)
     return MetricsOut(
         settled_issues=len(released),
         settled_issues_7d=sum(1 for _, e in released if e.occurred_at >= now - WEEK),
@@ -162,6 +163,7 @@ def compute(records: list[IssueRecord], now: datetime) -> MetricsOut:
         ),
         repeat_publisher_rate=_rate(repeat, publishers),
         matched_volume_usdc=f"{Usdc(sum(e.amount.base_units for _, e in released)).decimal:.2f}",
+        platform_fees_usdc=f"{Usdc(fees).decimal:.2f}",
         median_hours_to_payout=round(float(median_hours), 1) if median_hours is not None else None,
         refund_rate=_rate(len(refunded), len(released) + len(refunded)),
         dispute_rate=_rate(
