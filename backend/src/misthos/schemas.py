@@ -25,6 +25,23 @@ def money(amount: Usdc) -> dict[str, str | int]:
 class Wallet(BaseModel):
     address: str
     chain: str = "arc-testnet"
+    circle_user_id: str | None = Field(
+        default=None, description="Set once the address was read from the party's Circle wallet"
+    )
+
+
+class WalletSessionOut(BaseModel):
+    """What the browser needs to run Circle's PIN challenge for its own wallet."""
+
+    party: Literal["publisher", "contributor"]
+    party_id: str
+    circle_user_id: str
+    app_id: str
+    user_token: str
+    encryption_key: str
+    challenge_id: str | None = Field(description="None when the wallet already exists")
+    wallet: Wallet | None
+    simulated: bool
 
 
 class Publisher(BaseModel):

@@ -839,6 +839,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/wallets/{party}/{party_id}/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Session
+         * @description Start a Circle wallet session for a publisher or contributor.
+         *
+         *     Returns the user token and, when the party has no Arc wallet yet, the PIN
+         *     challenge their browser runs. The platform never sees the PIN or the key.
+         *     An address that already exists is linked straight away.
+         */
+        post: operations["start_session_api_v1_wallets__party___party_id__session_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wallets/{party}/{party_id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link
+         * @description After the challenge completes, read the address back from Circle and keep it.
+         */
+        post: operations["link_api_v1_wallets__party___party_id__link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1932,6 +1976,40 @@ export interface components {
              * @default arc-testnet
              */
             chain: string;
+            /**
+             * Circle User Id
+             * @description Set once the address was read from the party's Circle wallet
+             */
+            circle_user_id?: string | null;
+        };
+        /**
+         * WalletSessionOut
+         * @description What the browser needs to run Circle's PIN challenge for its own wallet.
+         */
+        WalletSessionOut: {
+            /**
+             * Party
+             * @enum {string}
+             */
+            party: "publisher" | "contributor";
+            /** Party Id */
+            party_id: string;
+            /** Circle User Id */
+            circle_user_id: string;
+            /** App Id */
+            app_id: string;
+            /** User Token */
+            user_token: string;
+            /** Encryption Key */
+            encryption_key: string;
+            /**
+             * Challenge Id
+             * @description None when the wallet already exists
+             */
+            challenge_id: string | null;
+            wallet: components["schemas"]["Wallet"] | null;
+            /** Simulated */
+            simulated: boolean;
         };
     };
     responses: never;
@@ -3345,6 +3423,70 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_session_api_v1_wallets__party___party_id__session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                party: "publisher" | "contributor";
+                party_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    link_api_v1_wallets__party___party_id__link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                party: "publisher" | "contributor";
+                party_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Wallet"];
                 };
             };
             /** @description Validation Error */

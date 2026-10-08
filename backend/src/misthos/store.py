@@ -1324,6 +1324,23 @@ class Store:
 
     # ---------------------------------------------------------------- actions
 
+    def link_wallet(self, party: str, party_id: str, wallet: Wallet) -> Wallet:
+        """Record the address a party's own Circle wallet reported. Payouts go there.
+
+        The party's own wallet, read back from Circle rather than typed into a form,
+        so a payout cannot be redirected by whoever can call the route.
+        """
+        if party == "publisher":
+            publisher = self.repo.get_publisher(party_id)
+            if publisher is None:
+                raise KeyError(party_id)
+            self.repo.save_publisher(publisher.model_copy(update={"wallet": wallet}))
+        else:
+            contributor = self.repo.get_contributor(party_id)
+            if contributor is None:
+                raise KeyError(party_id)
+            self.repo.save_contributor(contributor.model_copy(update={"wallet": wallet}))
+        return wallet
     def advance(self, issue_id: str) -> IssueRecord:
         """Move an issue one step forward along the demo path.
 

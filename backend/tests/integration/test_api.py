@@ -4,13 +4,32 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from siwe_wallet import Wallet
 
+from misthos.config import settings
 from misthos.domain.issue import IssueState
 from misthos.main import app
 from misthos.repositories import StaleIssue
+from misthos.services.wallets import simulated_address
 from misthos.store import store
 
 API = "/api/v1"
+
+
+def sign_in(client: TestClient, seed: int, role: str, name: str, login: str) -> dict:
+    """A signed-in account with a role and a linked GitHub login, for the guards."""
+    wallet = Wallet(seed)
+    nonce = client.post(f"{API}/auth/nonce").json()["nonce"]
+    message = wallet.message(nonce)
+    verified = client.post(
+        f"{API}/auth/verify", json={"message": message, "signature": wallet.sign(message)}
+    )
+    assert verified.status_code == 200, verified.text
+    account = client.post(f"{API}/auth/role", json={"role": role, "name": name})
+    assert account.status_code == 201, account.text
+    linked = client.post(f"{API}/auth/github/simulate", json={"login": login})
+    assert linked.status_code == 200, linked.text
+    return linked.json()
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +79,79 @@ class TestIssues:
         rows = client.get(f"{API}/issues/ISS-1002/timeline").json()
         assert rows
         assert {"actor", "action", "outcome"} <= rows[0].keys()
+
+
+class TestWallets:
+    def test_a_session_links_the_contributor_wallet(self, client: TestClient) -> None:
+        body = client.post(f"{API}/wallets/contributor/CON-1/session").json()
+        assert body["simulated"] is True
+        assert body["challenge_id"] is None
+        linked = body["wallet"]
+        assert body["circle_user_id"] == "misthos-contributor-CON-1"
+        assert linked["address"] == simulated_address("contributor", "CON-1")
+
+        # The party's own record. The public listing carries no wallet on purpose: a
+        # wallet next to a GitHub handle is the link 08 says must never be published.
+        held = store.get_contributor("CON-1")
+        assert held is not None and held.wallet.address == linked["address"]
+        profiles = {c["id"]: c for c in client.get(f"{API}/contributors").json()}
+        assert "wallet" not in profiles["CON-1"]
+
+    def test_link_reads_the_address_back_for_a_publisher(self, client: TestClient) -> None:
+        wallet = client.post(f"{API}/wallets/publisher/PUB-1/link").json()
+        publishers = {p["id"]: p for p in client.get(f"{API}/publishers").json()}
+        assert publishers["PUB-1"]["wallet"] == wallet
+
+    def test_an_unknown_party_or_id_is_refused(self, client: TestClient) -> None:
+        assert client.post(f"{API}/wallets/contributor/CON-999/session").status_code == 404
+        assert client.post(f"{API}/wallets/admin/1/session").status_code == 422
+
+    def test_only_the_party_itself_may_link_its_wallet(self, client: TestClient) -> None:
+        account = sign_in(client, 61, "contributor", "erin", "erin-dev")
+        own = account["party_id"]
+        assert client.post(f"{API}/wallets/contributor/{own}/session").status_code == 200
+        # Someone else's wallet is not this account's to link, because what the route
+        # records is where that party's payouts go.
+        assert client.post(f"{API}/wallets/contributor/CON-1/session").status_code == 403
+
+    def test_the_wrong_kind_of_party_is_refused(self, client: TestClient) -> None:
+        account = sign_in(client, 62, "publisher", "Acme", "acme-co")
+        own = account["party_id"]
+        assert client.post(f"{API}/wallets/contributor/{own}/session").status_code == 403
+        assert client.post(f"{API}/wallets/publisher/{own}/session").status_code == 200
+
+    def test_a_wallet_needs_a_signed_in_party_outside_the_simulation(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "simulated", False)
+        assert client.post(f"{API}/wallets/contributor/CON-1/session").status_code == 401
+        assert client.post(f"{API}/wallets/publisher/PUB-1/link").status_code == 401
+
+    def test_a_release_pays_the_linked_wallet(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        accepted = client.get(f"{API}/issues", params={"state": "in_review"}).json()[0]
+        issue = client.get(f"{API}/issues/{accepted['id']}").json()
+        cid = issue["contributor_id"]
+        wallet = client.post(f"{API}/wallets/contributor/{cid}/session").json()["wallet"]
+
+        # Watch where the escrow is told to send the money, rather than reading it back
+        # out of the public record: the decision log names the contributor, and the
+        # wallet stays private.
+        paid_to: list[str] = []
+        release = store.chain.release
+        monkeypatch.setattr(
+            store.chain,
+            "release",
+            lambda *args, **kwargs: (paid_to.append(args[1]), release(*args, **kwargs))[1],
+        )
+
+        client.post(f"{API}/issues/{accepted['id']}/complete")
+        timeline = client.get(f"{API}/issues/{accepted['id']}/timeline").json()
+        released = [d for d in timeline if d["action"] == "released"]
+        assert released
+        assert paid_to == [wallet["address"]]
+        assert wallet["address"] not in released[0]["outcome"]
 
 
 class TestLifecycleThroughTheApi:
