@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     # recovery and a nonce the store has to remember, so it is budgeted like publish.
     rate_limit_signin_per_minute: int = 20
 
+    # The name of the acceptance attestation key in the managed secret store. A
+    # reference, never the key: see docs/runbooks/attestor-rotation.md.
+    attestor_secret_ref: str = ""
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

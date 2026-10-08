@@ -14,6 +14,10 @@ from misthos.config import settings
 from misthos.observability import logs
 from misthos.observability.metrics import exported
 from misthos.observability.middleware import RequestContext
+from misthos.services.attestor import (
+    assert_key_is_not_in_the_environment,
+    assert_secrets_are_configured,
+)
 from misthos.store import store
 from misthos.workers.sweeper import run_forever
 
@@ -59,6 +63,11 @@ def create_app() -> FastAPI:
     # included, is left alone until startup.
     if logs.uvicorn_configured():
         logs.configure(json_lines=settings.log_json, level=settings.log_level)
+    # Key material in the environment means the boundary has already been crossed,
+    # so the process refuses to start rather than serving with a key an agent can read.
+    assert_key_is_not_in_the_environment()
+    assert_secrets_are_configured(settings.simulated, settings.attestor_secret_ref)
+
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
