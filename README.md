@@ -227,6 +227,13 @@ corpus, by complexity band:
 mise run review:harness
 ```
 
+And how well it agrees with maintainers on 36 real pull requests they already
+decided, which is the harder test (the rule reviewer manages 31%):
+
+```bash
+mise run review:history
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
