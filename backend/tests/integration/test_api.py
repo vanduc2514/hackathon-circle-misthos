@@ -82,6 +82,59 @@ class TestEscrowReadback:
     def test_an_unknown_issue_is_404(self, client: TestClient) -> None:
         assert client.get(f"{API}/issues/ISS-9999/escrow").status_code == 404
 
+    def test_funding_waits_for_the_publishers_own_commitment(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # On Arc the escrow refuses to book funding the publisher has not committed
+        # from their wallet; the web app recognises this refusal by its name.
+        from misthos.services.chain import ChainRevert
+
+        issue_id = self._first(client, "awaiting_approval")
+        client.post(f"{API}/issues/{issue_id}/criteria", json={
+            "criteria": client.get(f"{API}/issues/{issue_id}").json()["acceptance_criteria"]
+        })
+
+        def not_yet(*_: object) -> str:
+            raise ChainRevert("NotCommitted: the publisher has not committed this issue yet")
+
+        monkeypatch.setattr(store.chain, "commit", not_yet)
+        refused = client.post(f"{API}/issues/{issue_id}/fund")
+        assert refused.status_code == 409
+        assert "NotCommitted" in refused.json()["detail"]
+        assert client.get(f"{API}/issues/{issue_id}").json()["state"] == "AWAITING_APPROVAL"
+        # The ceiling was recorded before the refusal: the commitment can now be sent.
+        assert client.get(f"{API}/issues/{issue_id}/escrow").json()["escrow_ceiling"]
+
+        monkeypatch.undo()
+        funded = client.post(f"{API}/issues/{issue_id}/fund")
+        assert funded.status_code == 200, funded.text
+        assert funded.json()["state"] == "FUNDED"
+
+    def test_the_publisher_is_told_exactly_what_their_wallet_sends(
+        self, client: TestClient
+    ) -> None:
+        from misthos.domain.escrow import approve_call, commit_call
+        from misthos.domain.money import Usdc
+
+        issue_id = self._first(client, "awaiting_approval")
+        plan = client.get(f"{API}/issues/{issue_id}/commitment").json()
+        amount = Usdc(plan["amount"]["base_units"])
+
+        assert plan["escrow"] == client.get(f"{API}/issues/{issue_id}/escrow").json()["contract"]
+        approve, commit = plan["calls"]
+        # First the USDC allowance, then the commitment, to the addresses that hold them.
+        assert (approve["to"], approve["data"]) == (
+            plan["usdc"],
+            approve_call(plan["escrow"], amount),
+        )
+        assert (commit["to"], commit["data"]) == (
+            plan["escrow"],
+            commit_call(issue_id, amount, plan["deadline"]),
+        )
+        assert amount.base_units == client.get(f"{API}/issues/{issue_id}").json()["proposal"][
+            "recommended"
+        ]["base_units"]
+
     def test_a_funded_issue_is_capped_at_its_approved_price(self, client: TestClient) -> None:
         issue_id = self._first(client, "funded")
         body = client.get(f"{API}/issues/{issue_id}/escrow").json()

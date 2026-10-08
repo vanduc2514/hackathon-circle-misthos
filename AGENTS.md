@@ -32,8 +32,10 @@ agent reviews the pull request against the acceptance criteria, and payment sett
 ### Current status
 
 A scaffold with a working simulation. The lifecycle, pricing engine, escrow contract,
-decision log, money ledger and its timers are real code; the money is fake — no chain
-is contacted, and the escrow is a simulated one behind the chain gateway. GitHub is
+decision log, money ledger and its timers are real code; by default the money is
+fake — no chain is contacted, and the escrow is a simulated one behind the chain
+gateway. With `MISTHOS_SIMULATED=false` the same gateway settles against the deployed
+`MisthosEscrow` on Arc (docs/DEPLOY.md §3). GitHub is
 simulated too unless a GitHub App is configured (`MISTHOS_GITHUB_APP_ID`), in which
 case issues are read and pull request events move the lifecycle for real. State is in memory unless `MISTHOS_DATABASE_URL` points at Postgres, and the
 per-issue lock, idempotency keys and rate limits are per process unless

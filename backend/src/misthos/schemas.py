@@ -172,6 +172,28 @@ class EscrowCommitment(BaseModel):
     refunded: bool = False
 
 
+class WalletCall(BaseModel):
+    """One transaction for the user's own wallet to send. The platform does not sign it."""
+
+    label: str
+    to: str
+    data: str
+
+
+class CommitmentPlan(BaseModel):
+    """How a publisher funds an issue from their own wallet, in the order to send."""
+
+    issue_id: str
+    chain_id: int
+    escrow: str
+    usdc: str
+    amount: dict[str, str | int]
+    deadline: int = Field(
+        description="Unix seconds. Commit within the hour: the escrow term starts at approval"
+    )
+    calls: list[WalletCall]
+
+
 class EscrowReadback(BaseModel):
     """A commitment as the escrow reports it, not as the platform remembers it."""
 

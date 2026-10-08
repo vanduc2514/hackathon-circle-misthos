@@ -21,7 +21,7 @@ The diagrams below describe the target system. This table is what is actually in
 | Compliance | Screening, identity at first payout, statements | Built against simulated providers. See [PRIVACY.md](./PRIVACY.md) |
 | GitHub | App authentication, read path, write path, webhooks | Built behind one gateway. Simulated until `MISTHOS_GITHUB_APP_ID` and `MISTHOS_GITHUB_APP_PRIVATE_KEY` are set; `backend/github-app-manifest.json` registers the App |
 | Sign-in | Sign-In with Ethereum, a role per wallet, GitHub account linking, explicit lifecycle actions | Built. Linking is simulated until `MISTHOS_GITHUB_OAUTH_CLIENT_ID` is set. Outside the simulation every write needs a signed-in account |
-| Integrations | Circle wallets, Arc settlement | Not built. Faked behind the same interfaces |
+| Integrations | Circle wallets, Arc settlement | Arc settlement built behind the chain gateway (`services/chain/arc.py`), simulated by default; Circle wallet sessions built, the browser step pending |
 
 Everything marked not built has its interface in place, which is why the missing pieces are listed here as work rather than as risk.
 
