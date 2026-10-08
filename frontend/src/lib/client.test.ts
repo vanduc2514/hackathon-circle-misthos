@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { money, relativeTime, shortHash } from './client'
+import { ApiError, checksChip, money, monthName, relativeTime, shortHash, unwrap } from './client'
 
 describe('money', () => {
   it('formats the decimal view the API returns', () => {
@@ -8,6 +8,14 @@ describe('money', () => {
 
   it('formats a plain string, which is what the metrics endpoints return', () => {
     expect(money('1473.63')).toBe('1,473.63')
+  })
+
+  it('reads a figure that arrives already grouped', () => {
+    expect(money('48,500.00')).toBe('48,500.00')
+  })
+
+  it('renders an em dash rather than NaN for a string that is not a number', () => {
+    expect(money('n/a')).toBe('—')
   })
 
   it('formats a number', () => {
@@ -22,6 +30,20 @@ describe('money', () => {
 
   it('does not lose the cent on a large amount', () => {
     expect(money({ usdc: '48350.05', base_units: 48350050000 })).toBe('48,350.05')
+  })
+})
+
+describe('monthName', () => {
+  it('names the month the server counted', () => {
+    expect(monthName('2026-10')).toBe('October 2026')
+  })
+
+  it('reads the month in UTC, so the first of the month is not the month before', () => {
+    expect(monthName('2026-01')).toBe('January 2026')
+  })
+
+  it('shows anything that is not a year and month as it came', () => {
+    expect(monthName('soon')).toBe('soon')
   })
 })
 
@@ -53,5 +75,36 @@ describe('shortHash', () => {
 
   it('leaves a short value alone', () => {
     expect(shortHash('ISS-1001')).toBe('ISS-1001')
+  })
+})
+
+describe('unwrap', () => {
+  const response = (status: number) => new Response(null, { status, statusText: 'Conflict' })
+
+  it('returns the body of a successful call', () => {
+    expect(unwrap({ data: { id: 'ISS-1' }, response: response(200) })).toEqual({ id: 'ISS-1' })
+  })
+
+  it('throws the reason the API gave', () => {
+    const call = () =>
+      unwrap({ error: { detail: 'fund after approving the criteria' }, response: response(409) })
+    expect(call).toThrow(ApiError)
+    expect(call).toThrow('fund after approving the criteria')
+  })
+
+  it('joins validation errors into one sentence', () => {
+    const error = { detail: [{ msg: 'field required' }, { msg: 'too long' }] }
+    expect(() => unwrap({ error, response: response(422) })).toThrow('field required; too long')
+  })
+})
+
+describe('checksChip', () => {
+  it('says checks that have not reported are not reported, not failing', () => {
+    expect(checksChip(null)).toEqual({ label: 'not reported', tone: 'warn' })
+  })
+
+  it('says passing and failing checks as they are', () => {
+    expect(checksChip(true)).toEqual({ label: 'passing', tone: 'ok' })
+    expect(checksChip(false)).toEqual({ label: 'failing', tone: 'bad' })
   })
 })

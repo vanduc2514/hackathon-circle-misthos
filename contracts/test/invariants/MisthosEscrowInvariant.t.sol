@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {MisthosEscrow} from "../../src/MisthosEscrow.sol";
+import {MockErc20} from "../support/MockErc20.sol";
 import {MockUsdcToken} from "../support/MockUsdcToken.sol";
 import {EscrowHandler} from "./EscrowHandler.sol";
 
@@ -29,40 +30,88 @@ contract MisthosEscrowInvariant is Test {
         targetContract(address(handler));
     }
 
-    /// The escrow holds exactly the commitments that are still held, and
-    /// nothing else: no settled issue leaves a residue behind, and a commitment
-    /// is never paid out of another issue's money.
+    /// The escrow holds exactly the commitments that are still held, and nothing
+    /// else: no settled issue leaves a residue behind, and a commitment is never paid
+    /// out of another issue's money. Per token, because an issue is held in one of
+    /// them and adding the two balances would count money that is not there.
     function invariant_the_escrow_holds_exactly_the_unsettled_commitments() public view {
-        uint256 expected;
-        for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
-            bytes32 issueId = handler.issues(i);
-            (uint96 amount, MisthosEscrow.Status status) = _amountAndStatus(issueId);
-            if (status == MisthosEscrow.Status.Held) expected += amount;
-        }
+        for (uint256 t = 0; t < handler.tokenCount(); t++) {
+            address token = handler.tokenAt(t);
+            uint256 expected;
+            for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
+                bytes32 issueId = handler.issues(i);
+                (uint96 amount, MisthosEscrow.Status status) = _amountAndStatus(issueId);
+                if (status == MisthosEscrow.Status.Held && escrow.tokenOf(issueId) == token) {
+                    expected += amount;
+                }
+            }
 
-        assertEq(
-            usdc.balanceOf(address(escrow)),
-            expected,
-            "the escrow balance is not the sum of the held commitments"
-        );
+            assertEq(
+                MockErc20(token).balanceOf(address(escrow)),
+                expected,
+                "the escrow balance is not the sum of the held commitments"
+            );
+        }
     }
 
-    /// Money is conserved: every base unit is in the escrow, with a publisher or
-    /// with a contributor. Nothing is minted to the contract, skimmed on the way
-    /// through, or stranded where no one can claim it.
-    function invariant_no_usdc_is_created_or_lost() public view {
-        uint256 accounted = usdc.balanceOf(address(escrow));
+    /// Money is conserved: every base unit is in the escrow, with a publisher, with a
+    /// contributor or with the platform's take-rate wallet. Nothing is minted to the
+    /// contract, skimmed on the way through, or stranded where no one can claim it.
+    /// The fee recipient is a party here for exactly that reason: it is where a take
+    /// rate goes, and leaving it out would make the fee look like money that vanished.
+    function invariant_no_token_is_created_or_lost() public view {
+        for (uint256 t = 0; t < handler.tokenCount(); t++) {
+            MockErc20 token = MockErc20(handler.tokenAt(t));
+            uint256 accounted = token.balanceOf(address(escrow));
 
-        for (uint256 i = 0; i < handler.PUBLISHER_COUNT(); i++) {
-            accounted += usdc.balanceOf(handler.publishers(i));
-        }
-        for (uint256 i = 0; i < handler.CONTRIBUTOR_COUNT(); i++) {
-            accounted += usdc.balanceOf(handler.contributors(i));
-        }
+            // Every treasury, not only the one new fees go to: rotating the recipient
+            // leaves earlier fees where they were paid.
+            for (uint256 i = 0; i < handler.TREASURY_COUNT(); i++) {
+                accounted += token.balanceOf(handler.treasuryAt(i));
+            }
 
-        assertEq(
-            accounted, handler.GRANT() * handler.PUBLISHER_COUNT(), "usdc appeared or vanished"
-        );
+            for (uint256 i = 0; i < handler.PUBLISHER_COUNT(); i++) {
+                accounted += token.balanceOf(handler.publisherAt(i));
+            }
+            for (uint256 i = 0; i < handler.CONTRIBUTOR_COUNT(); i++) {
+                accounted += token.balanceOf(handler.contributorAt(i));
+            }
+
+            assertEq(
+                accounted,
+                handler.GRANT() * handler.PUBLISHER_COUNT(),
+                "a token was created or lost"
+            );
+        }
+    }
+
+    /// A release pays what the escrow was told to pay: the contributor receives the
+    /// commitment less the rate the escrow holds for that issue, and the rate goes to
+    /// the recipient. The balances are held against the split the handler observed, so
+    /// a contract that took a different cut, or paid the wrong wallet, fails here.
+    function invariant_a_release_splits_the_commitment_at_the_rate() public view {
+        for (uint256 t = 0; t < handler.tokenCount(); t++) {
+            address token = handler.tokenAt(t);
+            uint256 toContributors;
+            for (uint256 i = 0; i < handler.CONTRIBUTOR_COUNT(); i++) {
+                toContributors += MockErc20(token).balanceOf(handler.contributorAt(i));
+            }
+
+            assertEq(
+                toContributors,
+                handler.contributorTotal(token),
+                "contributors were paid other than the commitment less the rate"
+            );
+            uint256 toTreasuries;
+            for (uint256 i = 0; i < handler.TREASURY_COUNT(); i++) {
+                toTreasuries += MockErc20(token).balanceOf(handler.treasuryAt(i));
+            }
+            assertEq(
+                toTreasuries,
+                handler.feeTotal(token),
+                "the take rate paid is not the rate the escrow holds"
+            );
+        }
     }
 
     /// A commitment settles at most once. The handler attempts every settlement
@@ -143,20 +192,29 @@ contract MisthosEscrowInvariant is Test {
         assertEq(escrow.owner(), handler.owner(), "the owner changed");
     }
 
-    /// What went in is what is still held plus what came out: a settlement moves
-    /// exactly the commitment, so no release can pay less than the publisher
-    /// committed (a skim) or more than the escrow holds (a hole).
+    /// What went in is what is still held plus what came out, per token: a settlement
+    /// moves exactly the commitment, so no release can pay less than the publisher
+    /// committed (a skim) or more than the escrow holds (a hole). The contributor's
+    /// share and the fee are both inside the amount that left, which is why this sums
+    /// the gross rather than the split.
     function invariant_the_money_that_left_matches_the_money_that_came_in() public view {
-        uint256 committed;
-        for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
-            committed += handler.committedAmount(handler.issues(i));
-        }
+        for (uint256 t = 0; t < handler.tokenCount(); t++) {
+            address token = handler.tokenAt(t);
+            uint256 committed;
+            for (uint256 i = 0; i < handler.ISSUE_COUNT(); i++) {
+                bytes32 issueId = handler.issues(i);
+                if (handler.committedToken(issueId) == token) {
+                    committed += handler.committedAmount(issueId);
+                }
+            }
 
-        assertEq(
-            usdc.balanceOf(address(escrow)) + handler.releasedTotal() + handler.refundedTotal(),
-            committed,
-            "the money that left the escrow is not the money that entered it"
-        );
+            assertEq(
+                MockErc20(token).balanceOf(address(escrow)) + handler.releasedByToken(token)
+                    + handler.refundedByToken(token),
+                committed,
+                "the money that left the escrow is not the money that entered it"
+            );
+        }
     }
 
     // ----------------------------------------------------------- internals

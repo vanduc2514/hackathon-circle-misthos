@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import {
   api,
@@ -9,34 +9,14 @@ import {
   type IssueOut,
   type TimelineEntry,
 } from '../lib/client'
-import { Bar, Panel, StateBadge, Stepper } from '../components/ui'
-
-/** The one step the demo runner can take from the current state. */
-function nextAction(state: string): { label: string; hint: string } | null {
-  switch (state) {
-    case 'AWAITING_APPROVAL':
-      return {
-        label: 'Approve price and commit funds',
-        hint: 'Human checkpoint: the agent cannot commit money.',
-      }
-    case 'FUNDED':
-      return { label: 'Claim the issue', hint: 'First claim wins, held for 72 hours.' }
-    case 'CLAIMED':
-      return { label: 'Submit a pull request', hint: 'Runs the project’s own checks.' }
-    case 'IN_REVIEW':
-      return { label: 'Issue the verdict', hint: 'The platform reviews; no human confirms it.' }
-    case 'REWORK':
-      return { label: 'Resubmit after rework', hint: 'Rework rounds are bounded.' }
-    case 'ACCEPTED':
-      return { label: 'Merge and release', hint: 'Merge is acceptance. Silence for 7 days releases too.' }
-    default:
-      return null
-  }
-}
+import { Bar, ChecksChip, Panel, StateBadge, Stepper } from '../components/ui'
+import IssueActions from '../components/IssueActions'
+import { useHealth, useMe } from '../lib/session'
 
 export default function IssueDetail() {
   const { issueId = '' } = useParams()
-  const qc = useQueryClient()
+  const me = useMe()
+  const health = useHealth()
 
   const { data: issue, isLoading, error } = useQuery({
     queryKey: ['issue', issueId],
@@ -49,26 +29,6 @@ export default function IssueDetail() {
       (await api.GET('/api/v1/issues/{issue_id}/timeline', { params: { path: { issue_id: issueId } } })).data as TimelineEntry[] | undefined,
   })
 
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['issue', issueId] })
-    qc.invalidateQueries({ queryKey: ['timeline', issueId] })
-    qc.invalidateQueries({ queryKey: ['issues'] })
-    qc.invalidateQueries({ queryKey: ['metrics'] })
-    qc.invalidateQueries({ queryKey: ['decisions'] })
-  }
-
-  const step = useMutation({
-    mutationFn: async () =>
-      (await api.POST('/api/v1/issues/{issue_id}/advance', { params: { path: { issue_id: issueId } } })).data,
-    onSuccess: invalidate,
-  })
-
-  const complete = useMutation({
-    mutationFn: async () =>
-      (await api.POST('/api/v1/issues/{issue_id}/complete', { params: { path: { issue_id: issueId } } })).data,
-    onSuccess: invalidate,
-  })
-
   if (isLoading) return <div className="empty">Loading…</div>
   if (error || !issue)
     return (
@@ -78,8 +38,6 @@ export default function IssueDetail() {
     )
 
   const p = issue.proposal
-  const action = nextAction(issue.state)
-  const isSettled = ['PAID', 'REFUNDED'].includes(issue.state)
   const signals = p ? Object.entries(p.signals) : []
 
   // Place the recommended price inside the band for the visual.
@@ -127,6 +85,11 @@ export default function IssueDetail() {
         {/* ------------------------------------------------------- left column */}
         <div className="col">
           <Panel title="Acceptance criteria">
+            <p className="stat-hint" style={{ marginBottom: 10 }}>
+              {issue.criteria_approved_at
+                ? `Approved by the publisher ${shortTime(issue.criteria_approved_at)}. The review judges the work against these.`
+                : 'Drafted by the agent. The publisher approves them before any money is committed.'}
+            </p>
             <ul className="criteria">
               {issue.acceptance_criteria.map((c) => (
                 <li key={c}>{c}</li>
@@ -145,11 +108,7 @@ export default function IssueDetail() {
                 </dd>
                 <dt>Checks</dt>
                 <dd>
-                  {issue.submission.checks_passed ? (
-                    <span className="chip ok">passing</span>
-                  ) : (
-                    <span className="chip bad">failing</span>
-                  )}
+                  <ChecksChip passed={issue.submission.checks_passed} />
                 </dd>
                 <dt>Commit</dt>
                 <dd className="muted">{shortHash(issue.submission.head_sha)}</dd>
@@ -239,8 +198,26 @@ export default function IssueDetail() {
 
               <div className="justify">{p.justification}</div>
               <div className="confidence-note">
-                Confidence: {p.confidence}. {p.comparables_note}
+                Confidence: {p.confidence}.{' '}
+                {p.comparables?.length
+                  ? 'Compared with settled issues of similar shape:'
+                  : p.comparables_note}
               </div>
+              {p.comparables && p.comparables.length > 0 && (
+                <ul className="comparables">
+                  {p.comparables.map((c) => (
+                    <li key={c.issue_id}>
+                      <Link to={`/issues/${c.issue_id}`}>
+                        <span className="cell-title">{c.title}</span>
+                        <span className="cell-repo">
+                          {c.repo} &middot; settled {shortTime(c.settled_at)}
+                        </span>
+                      </Link>
+                      <span className="mono-num">${money(c.price_usdc)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </Panel>
           ) : (
             <Panel title="Proposed price">
@@ -299,44 +276,26 @@ export default function IssueDetail() {
                   ${money(issue.paid_usdc)}
                 </span>
               </div>
+              {issue.platform_fee_usdc && (
+                <div className="price-total" style={{ marginTop: 8 }}>
+                  <span className="dim">Platform take rate</span>
+                  <span className="mono-num">${money(issue.platform_fee_usdc)}</span>
+                </div>
+              )}
             </Panel>
           )}
 
           <Panel title="Next step">
-            {isSettled ? (
-              <p className="dim">
-                This issue is closed. {issue.state === 'PAID' ? 'The contributor was paid.' : 'Funds returned to the publisher.'}
-              </p>
-            ) : action ? (
-              <>
-                <p className="dim" style={{ marginBottom: 12 }}>
-                  {action.hint}
-                </p>
-                <div className="btn-row">
-                  <button
-                    className="btn primary"
-                    onClick={() => step.mutate()}
-                    disabled={step.isPending}
-                  >
-                    {step.isPending ? 'Working…' : action.label}
-                  </button>
-                  <button
-                    className="btn"
-                    onClick={() => complete.mutate()}
-                    disabled={complete.isPending}
-                  >
-                    {complete.isPending ? 'Working…' : 'Run to settlement'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <p className="dim">Nothing to do from {issue.state}.</p>
-            )}
-            {(step.error || complete.error) && (
-              <div className="error-box" style={{ marginTop: 12 }}>
-                {String((step.error ?? complete.error) as Error)?.slice(0, 200)}
-              </div>
-            )}
+            // Keyed by issue id: React Router changes the `issue` prop without unmounting this
+          // component when only the id in the route changes, and every panel below seeds
+          // state from that prop. Without the key the criteria box, the pull request
+          // number and the decline reason all survive into the next issue.
+          <IssueActions
+            key={issue.id}
+            issue={issue}
+            me={me.data}
+            simulated={health.data?.simulated ?? false}
+          />
           </Panel>
 
           <Panel title="Parties">
