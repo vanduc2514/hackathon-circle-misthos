@@ -689,7 +689,7 @@ class Store:
         rec.escrow = EscrowCommitment(
             issue_id=rec.id,
             contract=ESCROW_CONTRACT,
-            chain=CHAIN,
+            chain=settings.chain,
             tx_hash=tx,
             amount=money(committed),
             deadline=deadline,
@@ -798,7 +798,7 @@ class Store:
         # received is the commitment less the platform's fee.
         note = (
             f"Paid **{rec.paid} USDC** to @{contributor.handle}. The payment was released "
-            f"from escrow on {CHAIN} when the work was accepted."
+            f"from escrow on {settings.chain} when the work was accepted."
         )
         self._post(
             f"settlement on {rec.repo}#{rec.number}",
@@ -1696,7 +1696,7 @@ class Store:
                 amount_usdc=f"{plan.monthly.decimal:.2f}",
                 pay_to=self._pay_to(),
                 payer=publisher.wallet.address,
-                chain=CHAIN,
+                chain=settings.chain,
                 chain_id=settings.chain_id,
                 usdc_address=settings.usdc_address,
                 expires_at=now + plans.PAYMENT_WINDOW,
@@ -2488,7 +2488,7 @@ class Store:
                     name=name,
                     kind="company",
                     tier="open",
-                    wallet=Wallet(address=address, chain=CHAIN),
+                    wallet=Wallet(address=address, chain=settings.chain),
                     budget_remaining_usdc=_display(budget),
                 )
             )
@@ -2498,7 +2498,7 @@ class Store:
                 Contributor(
                     id=party_id,
                     handle=name,
-                    wallet=Wallet(address=address, chain=CHAIN),
+                    wallet=Wallet(address=address, chain=settings.chain),
                     reputation=0,
                     settled_issues=0,
                     earned_usdc="0.00",
@@ -3189,7 +3189,7 @@ def _seed_publishers() -> dict[str, Publisher]:
             name=r[1],
             kind=r[2],  # type: ignore[arg-type]
             tier=r[3],  # type: ignore[arg-type]
-            wallet=Wallet(address=r[5], chain=CHAIN),
+            wallet=Wallet(address=r[5], chain=settings.chain),
             budget_remaining_usdc=r[4],
         )
         for r in rows
@@ -3209,7 +3209,7 @@ def _seed_contributors() -> dict[str, Contributor]:
         r[0]: Contributor(
             id=r[0],
             handle=r[1],
-            wallet=Wallet(address=f"0x{r[1].replace('.', ''):0<40}"[:42], chain=CHAIN),
+            wallet=Wallet(address=f"0x{r[1].replace('.', ''):0<40}"[:42], chain=settings.chain),
             reputation=r[2],
             settled_issues=r[3],
             earned_usdc=r[4],
