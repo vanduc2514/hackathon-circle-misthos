@@ -1,0 +1,46 @@
+# The nightly review. Every open pull request is read against main, the review is posted
+# with an explicit decision, and the ones it approves are squash-merged.
+#
+# The tool is backend/src/misthos/services/pr_review.py; this file only runs it, so the
+# part worth getting right — what may be merged and what may not — is tested in
+# backend/tests/unit/test_pr_review.py rather than written in shell here.
+#
+# Secrets:
+#   ANTHROPIC_API_KEY  the model that writes the review (required)
+#   NIGHTLY_TOKEN      optional. The default token can review and merge other people's
+#                      pull requests, but the ruleset bypass for one this repository's
+#                      owner wrote needs a token whose user may bypass the ruleset.
+#                      Without it those are reviewed and left unmerged.
+
+name: nightly
+
+on:
+  schedule:
+    # 00:00 in Asia/Ho_Chi_Minh, which is when "daily at midnight" means here.
+    - cron: "0 17 * * *"
+  # So it can be run by hand, and so the first run does not have to wait a day.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+# One run at a time: two of these merging at once would race on the same branches.
+concurrency:
+  group: nightly-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    name: review every open pull request, decide, and merge what passes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - run: mise run setup:backend
+      - name: Review, decide and merge
+        env:
+          GH_TOKEN: ${{ secrets.NIGHTLY_TOKEN || secrets.GITHUB_TOKEN }}
+          MISTHOS_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: mise run pr:review
