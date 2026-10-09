@@ -37,6 +37,11 @@ description = "Migrate MISTHOS_DATABASE_URL to the latest schema"
 dir = "backend"
 run = "uv run alembic upgrade head"
 
+[tasks."pr:review"]
+description = "Review every open pull request, post the verdict, and merge what it approves"
+dir = "backend"
+run = "uv run python -m misthos.services.pr_review"
+
 [tasks."review:harness"]
 description = "Replay the review agent over the regression corpus and report agreement"
 dir = "backend"
