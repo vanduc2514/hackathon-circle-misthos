@@ -20,7 +20,7 @@ The diagrams below describe the target system. This table is what is actually in
 | Data | Postgres, Redis | Built and optional. Postgres once `MISTHOS_DATABASE_URL` is set, memory otherwise. Redis once `MISTHOS_REDIS_URL` is set, for the per-issue lock, idempotency keys and rate limits across processes |
 | Compliance | Screening, identity at first payout, statements | Built against simulated providers. See [PRIVACY.md](./PRIVACY.md) |
 | GitHub | App authentication, read path, write path, webhooks | Built behind one gateway. Simulated until `MISTHOS_GITHUB_APP_ID` and `MISTHOS_GITHUB_APP_PRIVATE_KEY` are set; `backend/github-app-manifest.json` registers the App |
-| Sign-in | Sign-In with Ethereum, a role per wallet, GitHub account linking, explicit lifecycle actions | Built. Linking is simulated until `MISTHOS_GITHUB_OAUTH_CLIENT_ID` is set. Outside the simulation every write needs a signed-in account |
+| Sign-in | Sign in with GitHub (OAuth) or with a wallet (Sign-In with Ethereum), a role per account, a wallet connected when money moves, GitHub account linking, explicit lifecycle actions | Built. GitHub sign-in and linking are simulated until `MISTHOS_GITHUB_OAUTH_CLIENT_ID` is set. Outside the simulation every write needs a signed-in account |
 | Integrations | Circle wallets, Arc settlement | Arc settlement built behind the chain gateway (`services/chain/arc.py`), simulated by default; Circle wallet sessions built, the browser step pending |
 
 Everything marked not built has its interface in place, which is why the missing pieces are listed here as work rather than as risk.
@@ -277,9 +277,10 @@ The platform's side of the same rules, in the store and the chain gateway:
 - **A merge stands whatever the chain says.** A release that reverts or cannot reach the
   RPC holds the payout (`release_failed`) and is tried again on the sweeper's next pass;
   the merge is saved as acceptance first, so it can no longer be declined (#125).
-- **A publisher funds from the wallet they sign in with.** Their Circle wallet is kept
-  beside it, never in its place; a contributor's Circle wallet is where they are paid
-  (#123).
+- **A publisher funds from the wallet they connected.** It is the one they signed in
+  with, or the one they connected after signing in with GitHub, and approving a price
+  waits for it (#131). Their Circle wallet is kept beside it, never in its place; a
+  contributor's Circle wallet is where they are paid, and lets them claim (#123).
 - **No escrow without a fee recipient.** The deploy script refuses one, approval refuses
   an escrow that has none before any money is committed, and the API reports it at
   startup (#127).
@@ -526,7 +527,7 @@ erDiagram
 
 | Entity | Key fields | Notes |
 | --- | --- | --- |
-| Publisher | GitHub org or user id, funding wallet, Circle wallet, tier, budget rules | Identity is the GitHub account. The funding wallet is the one they sign in with; the escrow takes their commitment from it alone |
+| Publisher | GitHub org or user id, funding wallet, Circle wallet, tier, budget rules | Identity is the GitHub account. The funding wallet is the one they connected, and none until they do; the escrow takes their commitment from it alone |
 | Issue | Repo, number, acceptance criteria, state, deadline, approved funding terms | State owned by the lifecycle service. The terms are what booking checks the commitment against |
 | PriceProposal | Band low, band high, recommended, signals, justification, confidence | Immutable once approved. An override is a new proposal |
 | EscrowCommitment | Issue id, amount, chain, tx hash, deadline | Mirrors on-chain state. The chain is the source of truth |
@@ -575,7 +576,7 @@ An organisation sets its own spending policy, and the store enforces it at the t
 
 - **Category limits.** A monthly cap per issue label. A commitment that would pass it is refused at funding, with the limit and the month's total in the reason.
 - **A release threshold with named approvers.** A payout above it is held as `await_approver` until one of them approves, whether the merge or the grace period triggered it. The approval is required, not requested.
-- **Approvers are GitHub logins, and the approval is the session's.** A login is what a session proves: the wallet signs in, and GitHub's OAuth links the login to it. So `POST /issues/{id}/approve-release` takes the approver from the signed-in account's linked login, never from the request, and the organisation must have named it. Holding the organisation's wallet confers nothing: its own account approves only if its own login is named. The contributor being paid never approves their own payout. A policy naming something that cannot be a login, such as an e-mail address, is refused, because no session could ever satisfy it. Only the simulation, for a visitor who is not signed in, accepts a name in the request, as it does for a claim.
+- **Approvers are GitHub logins, and the approval is the session's.** A login is what a session proves: GitHub's OAuth signs the account in, or links the login to a wallet that signed in. So `POST /issues/{id}/approve-release` takes the approver from the signed-in account's linked login, never from the request, and the organisation must have named it. Holding the organisation's wallet confers nothing: its own account approves only if its own login is named. The contributor being paid never approves their own payout. A policy naming something that cannot be a login, such as an e-mail address, is refused, because no session could ever satisfy it. Only the simulation, for a visitor who is not signed in, accepts a name in the request, as it does for a claim.
 
 `/publishers/{id}/spend` reports what was budgeted, committed, released and refunded in the year, by category, and beside each limit what was committed this calendar month, counted by the same function funding checks the limit with (#50). It also lists the settled compliance and security fixes a security review can file. `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are the organisation's alone: a signed-in publisher sees and sets its own, and only the simulation serves any.
 
@@ -622,12 +623,18 @@ flowchart TB
 
 ### Who may do what
 
-The line between T1 and T2 is a wallet signature. A wallet signs in with a Sign-In with Ethereum message (EIP-4361) that names this site's domain, an Arc chain and a single-use nonce, and the session is an HMAC-signed token in an HttpOnly, SameSite=Lax cookie, or a bearer header for an API client (`auth/`, #70). A wallet takes one role, publisher or contributor, and links one GitHub account through OAuth, keeping only the login (#80). The link is what ties a GitHub identity to a party: a publisher's issues and a contributor's pull requests must match it.
+The line between T1 and T2 is a proven identity: a GitHub account or a wallet (#131). An account is keyed by its party, and has a GitHub identity, a wallet, or both; each of those belongs to one account. The session is an HMAC-signed token in an HttpOnly, SameSite=Lax cookie, or a bearer header for an API client (`auth/`), whose subject is `github:<numeric user id>` or `wallet:<address>`. A token from before #131 names a bare address and is read as a wallet session.
+
+- **Sign in with GitHub** is the main way in. The OAuth state is kept in the coordinator under `gh-signin:` and in a ten-minute HttpOnly cookie scoped to `/api/v1/auth/github`. The callback refuses a state whose cookie does not match and issues no session, so nobody can finish a sign-in they started in someone else's browser (login CSRF). The account is found by the numeric GitHub id, which survives a renamed login; one linked before the id was kept is found once by its login, and its id is filled in. Without an OAuth App the simulation signs in a typed login as a made-up GitHub user whose id follows from it.
+- **Sign in with a wallet** stays: a Sign-In with Ethereum message (EIP-4361) that names this site's domain, an Arc chain and a single-use nonce (#70). That account links one GitHub account through OAuth before it publishes or claims (#80); the link's state is kept under `gh-link:`, and the callback finishes it only for the account that started it.
+- **A wallet is connected when money is about to move**, by signing the same kind of message over its own nonce. A publisher needs one to approve a price, because the approval names the wallet the escrow takes the commitment from; a contributor needs one, or a Circle wallet, to claim. Refused, each is a 409 naming the wallet to connect. Connecting a wallet another account has is a 409 too, except the wallet of a wallet-only account from before #131 that was never linked: from a GitHub sign-in with no account of its own, that account is joined to the GitHub user.
+
+The GitHub link is what ties a GitHub identity to a party: a publisher's issues and a contributor's pull requests must match it.
 
 | Action | Who | Refused with |
 | --- | --- | --- |
-| Publish, approve criteria, fund, decline, approve a release, set policy | The publishing organisation, linked to GitHub | 401 signed out, 403 anyone else |
-| Claim, submit, dispute | A contributor linked to GitHub; a submission must be a pull request it opened | 401 signed out, 403 anyone else |
+| Publish, approve criteria, fund, decline, approve a release, set policy | The publishing organisation, linked to GitHub; funding also needs its connected wallet | 401 signed out, 403 anyone else, 409 no wallet to fund from |
+| Claim, submit, dispute | A contributor linked to GitHub; claiming also needs a wallet, connected or Circle; a submission must be a pull request it opened | 401 signed out, 403 anyone else, 409 no wallet to be paid to |
 | Ask for a review now | The publisher or the claimant | 401, 403 |
 | Spend, audit export, statements, a publisher's budget and policy | The party itself | 401, 403 |
 | Everything else read-only | Anyone | |

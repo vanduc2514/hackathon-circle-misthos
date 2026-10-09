@@ -49,9 +49,11 @@ class Publisher(BaseModel):
     name: str
     kind: Literal["company", "maintainer"]
     tier: Tier
-    wallet: Wallet
-    """The wallet the publisher signs in with and funds from. The escrow takes their
-    commitment from it alone and refunds to it, so nothing replaces it (#123)."""
+    wallet: Wallet | None = None
+    """The wallet the publisher funds from: the one they signed in with, or connected
+    after signing in with GitHub (#131). The escrow takes their commitment from it
+    alone and refunds to it, so nothing replaces it (#123). None until one is
+    connected, and approving a price waits for it."""
     circle_wallet: Wallet | None = None
     """The publisher's own Circle wallet, when they set one up. Kept beside the funding
     wallet, never in its place."""
@@ -73,7 +75,8 @@ class PublisherListing(BaseModel):
     name: str
     kind: Literal["company", "maintainer"]
     tier: Tier
-    wallet: Wallet
+    wallet: Wallet | None = None
+    """The funding wallet, None until the publisher connects one."""
     budget_remaining_usdc: str | None = None
     approval_threshold_usdc: str | None = None
     approvers: list[str] = Field(default_factory=list)
@@ -87,7 +90,9 @@ class Contributor(BaseModel):
 
     id: str
     handle: str
-    wallet: Wallet
+    wallet: Wallet | None = None
+    """Where payouts are released: a connected wallet or their Circle wallet. None until
+    they have one, and claiming waits for it (#131)."""
     reputation: int
     settled_issues: int
     earned_usdc: str
@@ -380,15 +385,28 @@ Role = Literal["publisher", "contributor"]
 
 
 class Account(BaseModel):
-    """A signed-in wallet and the one role it chose (#70)."""
+    """A signed-in party and the one role it chose (#70). It signs in with a GitHub
+    account, a wallet, or either, once both are on it (#131)."""
 
-    address: str
-    """Lowercase. The wallet is the identity that matches the chain."""
+    address: str | None = Field(
+        default=None,
+        description="The connected wallet, lowercase: the one the account signed in with, "
+        "or connected after signing in with GitHub. Null until one is connected.",
+    )
     role: Role
-    party_id: str
-    """The Publisher or Contributor this wallet acts as."""
-    github_login: str | None = None
-    """Linked through GitHub OAuth (#80). Required before pricing or contributing."""
+    party_id: str = Field(
+        description="The Publisher or Contributor this account acts as, and the account's key"
+    )
+    github_id: int | None = Field(
+        default=None,
+        description="GitHub's numeric user id, which survives a renamed login. Null for an "
+        "account linked before #131 until its first GitHub sign-in fills it in.",
+    )
+    github_login: str | None = Field(
+        default=None,
+        description="Signed in with, or linked through, GitHub OAuth (#80). Publishing, "
+        "claiming and submitting need it.",
+    )
     created_at: datetime
 
 
@@ -405,27 +423,58 @@ class SignInRequest(BaseModel):
     signature: str = Field(max_length=200)
 
 
-class SessionOut(BaseModel):
-    address: str
-    token: str
-    account: Account | None
-
-
 class MeOut(BaseModel):
-    address: str
-    account: Account | None
+    """Who is signed in, how, and the account they act as (#131)."""
+
+    method: Literal["github", "wallet"] = Field(
+        description="How this session signed in: with GitHub, or by signing with a wallet"
+    )
+    address: str | None = Field(
+        description="The wallet, lowercase: the one this session signed in with, or the "
+        "account's connected wallet. Null when there is neither."
+    )
+    github_id: int | None = Field(
+        description="GitHub's numeric user id: the session's own, or the account's linked one"
+    )
+    github_login: str | None = Field(
+        description="The GitHub login: the account's linked one, or the session's own"
+    )
+    account: Account | None = Field(description="Null until a side is chosen")
+    wallet: Wallet | None = Field(
+        default=None,
+        description="The wallet this account's money moves through: a publisher's funding "
+        "wallet, or a contributor's payout wallet (connected or Circle). Null until there "
+        "is one; approving a price or claiming waits for it.",
+    )
+
+
+class SessionOut(MeOut):
+    """A session just started, and its token for an API client that cannot keep the
+    cookie."""
+
+    token: str
 
 
 class RoleRequest(BaseModel):
     role: Role
     name: str = Field(min_length=1, max_length=200)
-    """The organisation's name for a publisher; a working handle for a contributor
-    until their GitHub account is linked."""
+    """The organisation's name for a publisher. For a contributor, a working handle
+    until their GitHub account is linked; one signed in with GitHub is known by their
+    login instead."""
     budget_usdc: str = "5000"
     """A publisher's declared budget, which caps every price it is offered."""
 
 
 class GitHubLinkStart(BaseModel):
+    """Where to send the user to approve linking their GitHub account."""
+
+    authorize_url: str
+
+
+class GitHubSignInStart(BaseModel):
+    """Where to send the user to sign in with GitHub. The state in it is also set in a
+    short-lived HttpOnly cookie, which the callback checks."""
+
     authorize_url: str
 
 
@@ -439,6 +488,20 @@ class AlreadyPublished(BaseModel):
 
 class SimulatedLink(BaseModel):
     login: str = Field(min_length=1, max_length=39, pattern=r"^[A-Za-z0-9-]+$")
+
+
+class SimulatedSignIn(BaseModel):
+    """The simulation's GitHub sign-in: a typed login, standing in for OAuth."""
+
+    login: str = Field(min_length=1, max_length=39, pattern=r"^[A-Za-z0-9-]+$")
+
+
+class WalletConnectRequest(BaseModel):
+    """A Sign-In with Ethereum message over a nonce from `POST /auth/nonce`, and the
+    wallet's signature of it: the proof that the wallet being connected is yours."""
+
+    message: str = Field(max_length=4000)
+    signature: str = Field(max_length=200)
 
 
 class CriteriaRequest(BaseModel):

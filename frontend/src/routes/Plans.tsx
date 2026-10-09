@@ -97,7 +97,7 @@ export default function Plans() {
       {!pid && (
         <div className="banner">
           {account
-            ? 'Plans are for publishers. This wallet is a contributor.'
+            ? 'Plans are for publishers. This account is a contributor.'
             : 'Sign in as a publisher to choose a plan.'}{' '}
           {!account && (
             <Link to="/account" style={{ textDecoration: 'underline' }}>

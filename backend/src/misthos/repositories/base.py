@@ -39,7 +39,7 @@ class AppendOnlyViolation(Exception):
 
 
 class AccountConflict(Exception):
-    """A GitHub login can belong to one wallet only."""
+    """A wallet, a GitHub account and a GitHub login each belong to one account only."""
 
 
 class PaymentAlreadyUsed(Exception):
@@ -99,13 +99,20 @@ class Repository(Protocol):
     def purge_screenings(self, before: datetime) -> int:
         """Delete checks older than the retention period. Returns how many went."""
 
-    def get_account(self, address: str) -> Account | None: ...
+    def get_account(self, party_id: str) -> Account | None:
+        """The account of a publisher or contributor, by the party's id."""
+
+    def get_account_by_address(self, address: str) -> Account | None:
+        """The account a wallet is connected to, whatever the case of the address."""
+
+    def get_account_by_github_id(self, github_id: int) -> Account | None: ...
+
+    def get_account_by_github_login(self, login: str) -> Account | None:
+        """Whatever the case of the login, as GitHub matches it."""
 
     def save_account(self, account: Account) -> None:
-        """Create or update. A GitHub login already linked to another wallet is refused
-        with AccountConflict."""
-
-    def get_account_by_github_login(self, login: str) -> Account | None: ...
+        """Create or update, by party id. A wallet, GitHub id or GitHub login that
+        already belongs to another account is refused with AccountConflict."""
 
     def get_connection(self, repo: str) -> RepoConnection | None: ...
 

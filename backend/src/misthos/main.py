@@ -36,6 +36,15 @@ configured, and then pull request events drive the lifecycle. State is in memory
 unless `MISTHOS_DATABASE_URL` points at a database, and a sweeper applies claim
 expiry, deadline refunds and the silent-publisher release on its own.
 
+**Signing in.** Sign in with GitHub (`POST /auth/github/signin`, then GitHub's
+return to `/auth/github/callback`), or with a wallet (`POST /auth/nonce`, then
+`/auth/verify` with the signed message). Choose a side once (`/auth/role`). An
+account that signed in with GitHub connects a wallet before money moves
+(`/auth/wallet/connect`): a publisher before approving a price, and a contributor
+before claiming, for whom a Circle wallet does too. One that signed in with a
+wallet links GitHub (`/auth/github/start`) before publishing or claiming. The
+session is a cookie, or the returned token as `Authorization: Bearer`.
+
 Everything lives under `/api/v1`.
 """
 

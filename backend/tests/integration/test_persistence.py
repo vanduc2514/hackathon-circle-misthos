@@ -401,6 +401,93 @@ class TestMigrations:
         assert statuses == {"CON-A": "verified", "CON-B": "unverified"}
         repo.reset()
 
+    def test_every_account_is_kept_when_accounts_stop_being_wallets(
+        self, database_url: str
+    ) -> None:
+        """0015 (#131) keys an account by its party. An account linked to GitHub and a
+        wallet-only one, as 0014 held them, both come through and sign in as before;
+        the linked one gets its GitHub id at its first GitHub sign-in."""
+        from alembic import command
+        from alembic.config import Config
+        from sqlalchemy import DateTime, column, table
+
+        repo = SqlRepository(database_url)
+        config = Config()
+        config.set_main_option("script_location", "misthos:migrations")
+
+        def run(step: str, revision: str) -> None:
+            with repo.engine.begin() as conn:
+                config.attributes["connection"] = conn
+                getattr(command, step)(config, revision)
+
+        run("upgrade", "head")
+        repo.reset()
+        run("downgrade", "0014")
+        linked, wallet_only = "0x" + "a1" * 20, "0x" + "b2" * 20
+        with repo.engine.begin() as conn:
+            conn.execute(
+                insert(tables.publishers).values(
+                    id="PUB-L", name="Linked Co", kind="company", tier="open",
+                    wallet_address=linked, chain="arc-testnet",
+                    budget_remaining_base_units=5_000_000_000, approvers=[],
+                    category_limits={},
+                )
+            )  # fmt: skip
+            conn.execute(
+                insert(tables.contributors).values(
+                    id="CON-W", handle="wallet-only", wallet_address=wallet_only,
+                    chain="arc-testnet", reputation=0, settled_issues=0, earned_base_units=0,
+                    identity_status="unverified",
+                )
+            )  # fmt: skip
+            # The accounts table as 0014 has it, keyed by address and with no GitHub id.
+            accounts_0014 = table(
+                "accounts",
+                column("address"), column("role"), column("party_id"), column("github_login"),
+                column("created_at", DateTime(timezone=True)),
+            )  # fmt: skip
+            for address, role, party, login in (
+                (linked, "publisher", "PUB-L", "linked-maint"),
+                (wallet_only, "contributor", "CON-W", None),
+            ):
+                conn.execute(
+                    insert(accounts_0014).values(
+                        address=address, role=role, party_id=party, github_login=login,
+                        created_at=AT,
+                    )
+                )  # fmt: skip
+        run("upgrade", "head")
+
+        assert repo.get_account("PUB-L") == Account(
+            address=linked, role="publisher", party_id="PUB-L", github_login="linked-maint",
+            created_at=AT,
+        )  # fmt: skip
+        assert repo.get_account_by_address(wallet_only) == Account(
+            address=wallet_only, role="contributor", party_id="CON-W", created_at=AT
+        )
+        assert repo.get_account_by_github_login("Linked-Maint") == repo.get_account("PUB-L")
+        publisher = repo.get_publisher("PUB-L")
+        assert publisher is not None and publisher.wallet == Wallet(
+            address=linked, chain="arc-testnet"
+        )
+
+        store = Store(repo)
+        found = store.sign_in_with_github(4242, "linked-maint")
+        assert found is not None and found.party_id == "PUB-L" and found.github_id == 4242
+        assert store.account_by_github_id(4242) == found
+        # The wallet-only account still signs in with its wallet.
+        assert store.account_by_address(wallet_only.upper().replace("0X", "0x")) is not None
+        # And the new schema holds what the old one could not: an account with no wallet.
+        new = store.create_account(None, "contributor", "x", github_id=43, github_login="new-dev")
+        assert new.address is None
+        contributor = repo.get_contributor(new.party_id)
+        assert contributor is not None and contributor.wallet is None
+
+        # Which 0014 has no place for, so going back stops rather than drop it.
+        with pytest.raises(RuntimeError, match="rows without a wallet"):
+            run("downgrade", "0014")
+        repo.reset()
+
 
 class TestEscrowCeilings:
     def test_an_approved_ceiling_survives_a_restart(self, database_url: str) -> None:

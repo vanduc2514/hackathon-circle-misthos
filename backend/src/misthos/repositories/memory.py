@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import copy
 import threading
-from collections.abc import Collection, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -159,19 +159,53 @@ class MemoryRepository:
 
     # ------------------------------------------------------------ accounts
 
-    def get_account(self, address: str) -> Account | None:
+    def get_account(self, party_id: str) -> Account | None:
         with self._guard:
-            found = self._accounts.get(address.lower())
+            found = self._accounts.get(party_id)
             return found.model_copy(deep=True) if found else None
 
-    # ------------------------------------------------------- GitHub connections
+    def _find_account(self, matches: Callable[[Account], bool]) -> Account | None:
+        with self._guard:
+            found = next((a for a in self._accounts.values() if matches(a)), None)
+            return found.model_copy(deep=True) if found else None
+
+    def get_account_by_address(self, address: str) -> Account | None:
+        return self._find_account(
+            lambda a: a.address is not None and a.address.lower() == address.lower()
+        )
+
+    def get_account_by_github_id(self, github_id: int) -> Account | None:
+        return self._find_account(lambda a: a.github_id == github_id)
 
     def get_account_by_github_login(self, login: str) -> Account | None:
+        return self._find_account(
+            lambda a: a.github_login is not None and a.github_login.lower() == login.lower()
+        )
+
+    def save_account(self, account: Account) -> None:
         with self._guard:
-            for account in self._accounts.values():
-                if (account.github_login or "").lower() == login.lower():
-                    return account.model_copy(deep=True)
-            return None
+            others = [a for a in self._accounts.values() if a.party_id != account.party_id]
+            # The same three the database holds unique, so the test double refuses what
+            # Postgres would; the login case-insensitively, as GitHub treats it.
+            if account.address and any(
+                (o.address or "").lower() == account.address.lower() for o in others
+            ):
+                raise AccountConflict("that wallet belongs to another account")
+            if account.github_id is not None and any(
+                o.github_id == account.github_id for o in others
+            ):
+                raise AccountConflict("that GitHub account is linked to another account")
+            if account.github_login and any(
+                (o.github_login or "").lower() == account.github_login.lower() for o in others
+            ):
+                raise AccountConflict(f"{account.github_login} is linked to another account")
+            # Lowercase, as the database stores it, so both hand back the same address.
+            address = account.address.lower() if account.address else None
+            self._accounts[account.party_id] = account.model_copy(
+                update={"address": address}, deep=True
+            )
+
+    # ------------------------------------------------------- GitHub connections
 
     def get_connection(self, repo: str) -> RepoConnection | None:
         with self._guard:
@@ -223,17 +257,6 @@ class MemoryRepository:
                 for p in self._subscription_payments
                 if p.publisher_id == publisher_id
             ]
-
-    def save_account(self, account: Account) -> None:
-        with self._guard:
-            if account.github_login and any(
-                other.github_login
-                and other.github_login.lower() == account.github_login.lower()
-                and other.address != account.address
-                for other in self._accounts.values()
-            ):
-                raise AccountConflict(f"{account.github_login} is linked to another wallet")
-            self._accounts[account.address.lower()] = account.model_copy(deep=True)
 
     # ---------------------------------------------------------- deliveries
 

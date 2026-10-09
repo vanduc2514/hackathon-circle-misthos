@@ -264,53 +264,54 @@ class SqlRepository:
 
     # ------------------------------------------------------------ accounts
 
-    def get_account(self, address: str) -> Account | None:
+    def get_account(self, party_id: str) -> Account | None:
+        return self._account_where(t.accounts.c.party_id == party_id)
+
+    def get_account_by_address(self, address: str) -> Account | None:
+        # Stored lowercase, as the session names it.
+        return self._account_where(t.accounts.c.address == address.lower())
+
+    def get_account_by_github_id(self, github_id: int) -> Account | None:
+        return self._account_where(t.accounts.c.github_id == github_id)
+
+    def get_account_by_github_login(self, login: str) -> Account | None:
+        return self._account_where(func.lower(t.accounts.c.github_login) == login.lower())
+
+    def _account_where(self, condition: Any) -> Account | None:
         self.migrate()
         with self.engine.connect() as conn:
-            row = (
-                conn.execute(select(t.accounts).where(t.accounts.c.address == address.lower()))
-                .mappings()
-                .first()
-            )
-        if row is None:
-            return None
-        return Account(
-            address=row["address"],
-            role=row["role"],
-            party_id=row["party_id"],
-            github_login=row["github_login"],
-            created_at=_utc(row["created_at"]),
-        )
+            row = conn.execute(select(t.accounts).where(condition)).mappings().first()
+        return _account(row) if row else None
 
     def save_account(self, account: Account) -> None:
         self.migrate()
         values = {
             "role": account.role,
-            "party_id": account.party_id,
+            "address": account.address.lower() if account.address else None,
+            "github_id": account.github_id,
             "github_login": account.github_login,
             "created_at": account.created_at,
         }
         try:
             with self.engine.begin() as conn:
-                _upsert(conn, t.accounts, {"address": account.address.lower()}, values)
+                # GitHub treats a login case-insensitively and the unique constraint does
+                # not, so the case is checked here, as the memory repository does.
+                if account.github_login and conn.execute(
+                    select(t.accounts.c.party_id).where(
+                        func.lower(t.accounts.c.github_login) == account.github_login.lower(),
+                        t.accounts.c.party_id != account.party_id,
+                    )
+                ).first():
+                    raise AccountConflict(f"{account.github_login} is linked to another account")
+                _upsert(conn, t.accounts, {"party_id": account.party_id}, values)
         except IntegrityError as exc:
-            raise AccountConflict(f"{account.github_login} is linked to another wallet") from exc
+            # The store checks each of these first and says which; this is the race
+            # between two requests, which the unique constraints settle.
+            raise AccountConflict(
+                "that wallet or GitHub account belongs to another account"
+            ) from exc
 
     # ---------------------------------------------------------- GitHub connections
-
-    def get_account_by_github_login(self, login: str) -> Account | None:
-        self.migrate()
-        with self.engine.connect() as conn:
-            row = (
-                conn.execute(
-                    select(t.accounts.c.address).where(
-                        func.lower(t.accounts.c.github_login) == login.lower()
-                    )
-                )
-                .mappings()
-                .first()
-            )
-        return self.get_account(row["address"]) if row else None
 
     def get_connection(self, repo: str) -> RepoConnection | None:
         self.migrate()
@@ -548,8 +549,8 @@ def _publisher_values(publisher: Publisher) -> dict[str, Any]:
         "name": publisher.name,
         "kind": publisher.kind,
         "tier": publisher.tier,
-        "wallet_address": publisher.wallet.address,
-        "chain": publisher.wallet.chain,
+        "wallet_address": publisher.wallet.address if publisher.wallet else None,
+        "chain": publisher.wallet.chain if publisher.wallet else None,
         "circle_wallet_address": (
             publisher.circle_wallet.address if publisher.circle_wallet else None
         ),
@@ -571,8 +572,8 @@ def _publisher_values(publisher: Publisher) -> dict[str, Any]:
 def _contributor_values(contributor: Contributor) -> dict[str, Any]:
     return {
         "handle": contributor.handle,
-        "wallet_address": contributor.wallet.address,
-        "chain": contributor.wallet.chain,
+        "wallet_address": contributor.wallet.address if contributor.wallet else None,
+        "chain": contributor.wallet.chain if contributor.wallet else None,
         "reputation": contributor.reputation,
         "settled_issues": contributor.settled_issues,
         "earned_base_units": _parse_usdc(contributor.earned_usdc).base_units,
@@ -929,7 +930,7 @@ def _publisher(row: Row) -> Publisher:
         name=row["name"],
         kind=row["kind"],
         tier=row["tier"],
-        wallet=Wallet(address=row["wallet_address"], chain=row["chain"]),
+        wallet=_wallet(row["wallet_address"], row["chain"]),
         circle_wallet=(
             Wallet(address=row["circle_wallet_address"], chain=row["circle_wallet_chain"])
             if row["circle_wallet_address"]
@@ -949,11 +950,26 @@ def _publisher(row: Row) -> Publisher:
     )
 
 
+def _account(row: Row) -> Account:
+    return Account(
+        address=row["address"],
+        role=row["role"],
+        party_id=row["party_id"],
+        github_id=row["github_id"],
+        github_login=row["github_login"],
+        created_at=_utc(row["created_at"]),
+    )
+
+
+def _wallet(address: str | None, chain: str | None) -> Wallet | None:
+    return Wallet(address=address, chain=chain or "") if address else None
+
+
 def _contributor(row: Row) -> Contributor:
     return Contributor(
         id=row["id"],
         handle=row["handle"],
-        wallet=Wallet(address=row["wallet_address"], chain=row["chain"]),
+        wallet=_wallet(row["wallet_address"], row["chain"]),
         reputation=row["reputation"],
         settled_issues=row["settled_issues"],
         earned_usdc=format_usdc(Usdc(row["earned_base_units"])),

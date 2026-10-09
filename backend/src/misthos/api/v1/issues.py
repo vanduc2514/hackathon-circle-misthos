@@ -63,6 +63,7 @@ from misthos.store import (
     NotTheSubmission,
     UnreadableIssue,
     UntestableCriteria,
+    WalletRequired,
     store,
 )
 
@@ -109,7 +110,9 @@ def _demo_only(what: str = _STEPPER) -> None:
 
 
 def _who(account: Account | None, fallback: str) -> str:
-    return (account.github_login or account.address) if account else fallback
+    if account is None:
+        return fallback
+    return account.github_login or account.address or account.party_id
 
 
 def _refused(exc: Exception) -> HTTPException:
@@ -257,7 +260,10 @@ async def _act(step: Callable[..., IssueRecord], issue_id: str, *args: object) -
         DeclineRefused,
         CriteriaNotApproved,
         NotTheSubmission,
+        WalletRequired,
     ) as exc:
+        # A missing wallet is a 409 that says which to connect: the request is right,
+        # and works once the account has one (#131).
         raise _conflict(exc) from exc
     except (ComplianceRefusal, PolicyRefusal, NotSimulated) as exc:
         raise _refused(exc) from exc
@@ -400,14 +406,36 @@ async def approve_criteria(
     )
 
 
-@router.post("/issues/{issue_id}/fund", response_model=IssueOut, dependencies=[limit_actions])
+@router.post(
+    "/issues/{issue_id}/fund",
+    summary="Approve the price and commit the funds",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={
+        401: {"description": "Not signed in, outside the simulation"},
+        403: {
+            "description": "Not this issue's publisher, no linked GitHub account, or refused "
+            "by sanctions screening or the organisation's own policy"
+        },
+        409: {
+            "description": "The publisher has no wallet to fund from (the detail says to "
+            "connect one), the criteria are not approved, the issue is not awaiting "
+            "approval, or the escrow refused"
+        },
+    },
+)
 async def fund(
     issue_id: str,
     request: Request,
     idempotency_key: str | None = IDEMPOTENCY_KEY,
     account: Account | None = SIGNED_IN,
 ) -> Any:
-    """The publisher approves the price, and the money is committed to the escrow."""
+    """The publisher approves the price, and the money is committed to the escrow.
+
+    The approval names the publisher's funding wallet as the only one the escrow takes
+    the commitment from, so a publisher who signed in with GitHub connects a wallet
+    first; until then this is a 409 that says so (#131).
+    """
     rec = await _require(issue_id)
     require_owner_or_simulation(account, rec.publisher_id, "fund this issue")
     if account is not None:
@@ -418,7 +446,21 @@ async def fund(
     )
 
 
-@router.post("/issues/{issue_id}/claim", response_model=IssueOut, dependencies=[limit_actions])
+@router.post(
+    "/issues/{issue_id}/claim",
+    summary="Claim an issue",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={
+        400: {"description": "No such contributor (the simulation's anonymous claim)"},
+        401: {"description": "Not signed in as a contributor"},
+        403: {"description": "Not a contributor, or no linked GitHub account"},
+        409: {
+            "description": "The contributor has no wallet to be paid to (the detail says to "
+            "connect one or set up a Circle wallet), or the issue is not open to claim"
+        },
+    },
+)
 async def claim(
     issue_id: str,
     request: Request,
@@ -426,7 +468,12 @@ async def claim(
     idempotency_key: str | None = IDEMPOTENCY_KEY,
     account: Account | None = SIGNED_IN,
 ) -> Any:
-    """A contributor takes the exclusive, time-boxed claim. First claim wins."""
+    """A contributor takes the exclusive, time-boxed claim. First claim wins.
+
+    The work has to be paid somewhere, so a contributor claims only with a wallet: one
+    they connected, or their Circle wallet. Until then this is a 409 that says so
+    (#131).
+    """
     await _require(issue_id)
     if account is not None:
         require_role(account, "contributor", "claim an issue")

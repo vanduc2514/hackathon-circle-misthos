@@ -63,6 +63,7 @@ from misthos.store import (
     Store,
     UnreadableIssue,
     UntestableCriteria,
+    WalletRequired,
 )
 
 log = logging.getLogger("misthos.github.events")
@@ -94,7 +95,8 @@ HELP = (
     "- `/misthos criteria` followed by a list: the publisher approves these criteria "
     "instead of the drafted ones.\n"
     "- `/misthos claim`: a contributor takes the exclusive claim.\n\n"
-    "Sign in at {url}/account and link your GitHub account first."
+    "Sign in at {url}/account with this GitHub account first. Funding and claiming "
+    "also need a wallet, connected there."
 )
 
 _CLOSES = re.compile(
@@ -189,8 +191,8 @@ def _list_issue(store: Store, repo: str, number: int, payload: dict[str, Any]) -
             _reply(
                 store, repo, number,
                 f"Misthos is installed here by @{connection.installed_by}, who has not signed "
-                f"in as a publisher yet. Sign in at {settings.public_url}/account and link "
-                "this GitHub account, then label the issue again.",
+                f"in as a publisher yet. Sign in at {settings.public_url}/account with this "
+                "GitHub account, choose to publish, then label the issue again.",
             )  # fmt: skip
         return Handled(False, f"ignored: {repo} has no publisher")
     issue = payload["issue"]
@@ -478,7 +480,7 @@ def _command(
     if account is None:
         return _Ran(
             False,
-            f"@{login}, sign in at {settings.public_url}/account and link this GitHub account "
+            f"@{login}, sign in at {settings.public_url}/account with this GitHub account "
             "first.",
         )
     try:
@@ -530,6 +532,8 @@ def _command(
         )
     except (CriteriaNotApproved, ComplianceRefusal, PolicyRefusal) as exc:
         return _Ran(False, f"Refused: {exc}")
+    except WalletRequired as exc:
+        return _Ran(False, f"@{login}, refused: {exc} ({settings.public_url}/account).")
     except ChainRevert as exc:
         return _Ran(False, f"The escrow refused the commitment: {exc}")
 

@@ -92,6 +92,7 @@ from misthos.observability.metrics import (
     REVIEW_SECONDS,
 )
 from misthos.repositories import (
+    AccountConflict,
     MemoryRepository,
     PaymentAlreadyUsed,
     Repository,
@@ -225,7 +226,21 @@ class DisputeRefused(Exception):
 
 
 class AccountExists(Exception):
-    """A wallet chooses its role once."""
+    """A wallet or a GitHub account chooses its role once."""
+
+
+class NoAccountYet(Exception):
+    """The session has not chosen a side, so there is no account to change."""
+
+
+class WalletRequired(Exception):
+    """Money is about to move, and the party has no wallet for it to move through (#131).
+
+    A publisher may publish and be priced without one, but approving the price names
+    the wallet the escrow takes the commitment from. A contributor may look around
+    without one, but claiming starts work that has to be paid somewhere. The message
+    says which wallet to connect, and where.
+    """
 
 
 class CriteriaNotApproved(Exception):
@@ -716,7 +731,7 @@ class Store:
             or (
                 current.stand(at)
                 and current.amount == rec.proposal.recommended
-                and current.wallet.lower() == publisher.wallet.address.lower()
+                and current.wallet.lower() == _funding_wallet(publisher).lower()
             )
         ):
             return current
@@ -727,9 +742,9 @@ class Store:
             # would let a plan that lapses mid-flight move the fee after the price was
             # approved, and the record would stop matching the transfer (#32).
             fee_bps=take_rate_bps(publisher.tier),
-            # The wallet the publisher funds from, which signs in and commits in the
-            # browser; a Circle wallet they set up never replaces it (#123).
-            wallet=publisher.wallet.address,
+            # The wallet the publisher funds from, which commits in the browser; a
+            # Circle wallet they set up never replaces it (#123).
+            wallet=_funding_wallet(publisher),
             # Whole seconds, as the escrow holds it, so the plan, the escrow and the
             # booking all name the same instant.
             deadline=(at + lifecycle.ESCROW_TERM).replace(microsecond=0),
@@ -788,6 +803,12 @@ class Store:
         )
 
     def _claim(self, rec: IssueRecord, contributor_id: str, when: datetime | None = None) -> None:
+        contributor = self.repo.get_contributor(contributor_id)
+        if contributor is not None and contributor.wallet is None:
+            raise WalletRequired(
+                f"{contributor.handle} has no wallet to be paid to: connect one, or set up "
+                "a Circle wallet, on the Account page before claiming",
+            )
         self._move(rec, IssueState.CLAIMED)
         at = when or _now()
         rec.claim = Claim(
@@ -882,6 +903,8 @@ class Store:
         # transfer and the record of it.
         held = self.chain.commitment(rec.id)
         rate = held.fee_bps if held is not None else rec.escrow.fee_bps
+        # `_pay` holds a payout with nowhere to go before it gets here.
+        assert contributor.wallet is not None, f"{contributor.id} has no wallet"
         tx = self.chain.release(rec.id, contributor.wallet.address, amount, at)
         self._move(rec, IssueState.PAID)
         self._book(rec, MoneyEventKind.RELEASED, amount, contributor.id, tx, at)
@@ -1161,32 +1184,38 @@ class Store:
         assert rec.accepted_by is not None and rec.contributor_id is not None
         contributor = self.repo.get_contributor(rec.contributor_id)
         assert contributor is not None
-        screening = self._screen(
-            PartyKind.CONTRIBUTOR,
-            contributor.id,
-            contributor.wallet.address,
-            ScreeningReason.PAYOUT,
-            now,
-        )
-        identity = (
-            self._verify_identity(rec, contributor, now)
-            if screening.outcome is ScreeningOutcome.CLEAR
-            else IdentityStatus(contributor.identity_status)
-        )
-        gate = compliance.payout_gate(screening.outcome, identity)
-        rec.payout_checked_at = now
-
         publisher = self.repo.get_publisher(rec.publisher_id)
         assert publisher is not None
         policy = _policy(publisher)
-        if (
-            gate is PayoutGate.RELEASE
-            and needs_approval(policy, self._committed(rec))
-            and not any(d.action == "release_approved" for d in rec.decisions)
-        ):
-            gate = PayoutGate.AWAIT_APPROVER
-
         refused = ""
+        if contributor.wallet is None:
+            # Claiming needs a wallet (#131), so only a record from before that rule
+            # gets here. Nothing is released to nowhere: it is held like a release that
+            # did not land, and tried again on the next pass, once one is connected.
+            gate, refused = PayoutGate.RELEASE_FAILED, f"{contributor.handle} has no wallet"
+            rec.payout_checked_at = now
+        else:
+            screening = self._screen(
+                PartyKind.CONTRIBUTOR,
+                contributor.id,
+                contributor.wallet.address,
+                ScreeningReason.PAYOUT,
+                now,
+            )
+            identity = (
+                self._verify_identity(rec, contributor, now)
+                if screening.outcome is ScreeningOutcome.CLEAR
+                else IdentityStatus(contributor.identity_status)
+            )
+            gate = compliance.payout_gate(screening.outcome, identity)
+            rec.payout_checked_at = now
+            if (
+                gate is PayoutGate.RELEASE
+                and needs_approval(policy, self._committed(rec))
+                and not any(d.action == "release_approved" for d in rec.decisions)
+            ):
+                gate = PayoutGate.AWAIT_APPROVER
+
         if gate is PayoutGate.RELEASE:
             rule = (
                 "silent_publisher_grace_period"
@@ -1271,7 +1300,7 @@ class Store:
         screening = self._screen(
             PartyKind.PUBLISHER,
             publisher.id,
-            publisher.wallet.address,
+            _funding_wallet(publisher),
             ScreeningReason.FUNDING,
             now,
         )
@@ -1321,6 +1350,10 @@ class Store:
                 else self.repo.get_contributor(party_id)
             )
             assert party is not None
+            if party.wallet is None:
+                # Nothing to screen. Funding needs a wallet and screens it then, and a
+                # claim needs one, so no money is in flight for this party.
+                continue
             screening = self._screen(
                 kind, party_id, party.wallet.address, ScreeningReason.SCHEDULED, now
             )
@@ -1641,7 +1674,8 @@ class Store:
                     rec, now, "approved the criteria and the price, and committed funds"
                 )
             case IssueState.FUNDED:
-                contributors = [c.id for c in self.repo.list_contributors()]
+                # The demo claims as a contributor who can be paid.
+                contributors = [c.id for c in self.repo.list_contributors() if c.wallet]
                 cid = contributors[0]
                 self._claim(rec, cid)
                 self._log(
@@ -1952,6 +1986,11 @@ class Store:
                     "not bought here"
                 )
             self._refuse_self_serve_enterprise(publisher, sub)
+            if publisher.wallet is None:
+                raise WalletRequired(
+                    f"{publisher.name} has no wallet to pay for {plan.name} from: connect "
+                    "one on the Account page, and the payment is read from it",
+                )
             request = PaymentRequest(
                 plan=plan_id,  # type: ignore[arg-type]
                 amount_usdc=f"{plan.monthly.decimal:.2f}",
@@ -2804,21 +2843,48 @@ class Store:
 
     # ------------------------------------------------------------- accounts
 
+    def account(self, party_id: str) -> Account | None:
+        self.ensure_ready()
+        return self.repo.get_account(party_id)
+
+    def account_by_address(self, address: str) -> Account | None:
+        """The account a wallet session acts as: the one that wallet is connected to."""
+        self.ensure_ready()
+        return self.repo.get_account_by_address(address.lower())
+
+    def account_by_github_id(self, github_id: int) -> Account | None:
+        """The account a GitHub session acts as. By the numeric id, never the login: a
+        login can be renamed, and the next person to take it is someone else."""
+        self.ensure_ready()
+        return self.repo.get_account_by_github_id(github_id)
+
     def create_account(
         self,
-        address: str,
+        address: str | None,
         role: str,
         name: str,
         *,
+        github_id: int | None = None,
+        github_login: str | None = None,
         budget_usdc: str = "5000",
         now: datetime | None = None,
     ) -> Account:
-        """A wallet's first sign-in: it becomes a publisher or a contributor, once."""
+        """The first sign-in's one choice: the session becomes a publisher or a
+        contributor, once. A wallet session brings its wallet to the party; a GitHub
+        session brings its GitHub account and no wallet, which is connected later (#131).
+        """
         self.ensure_ready()
-        address = address.lower()
-        if self.repo.get_account(address) is not None:
+        if address is None and github_id is None:
+            raise ValueError("an account signs in with a wallet or a GitHub account")
+        address = address.lower() if address else None
+        if address is not None and self.repo.get_account_by_address(address) is not None:
             raise AccountExists(f"{address} already has a role")
+        if github_id is not None and self.repo.get_account_by_github_id(github_id) is not None:
+            raise AccountExists("this GitHub account already has a role")
+        if github_login is not None:
+            self._refuse_taken_login(github_login, party_id=None)
         name = name.strip()
+        wallet = Wallet(address=address, chain=settings.chain) if address else None
         if role == "publisher":
             try:
                 budget = Usdc.from_decimal(budget_usdc.replace(",", ""))
@@ -2831,7 +2897,7 @@ class Store:
                     name=name,
                     kind="company",
                     tier="open",
-                    wallet=Wallet(address=address, chain=settings.chain),
+                    wallet=wallet,
                     budget_remaining_usdc=_display(budget),
                 )
             )
@@ -2840,32 +2906,160 @@ class Store:
             self.repo.save_contributor(
                 Contributor(
                     id=party_id,
-                    handle=name,
-                    wallet=Wallet(address=address, chain=settings.chain),
+                    # A contributor's handle is their GitHub login once there is one, as
+                    # linking makes it; the typed name is only for a wallet without one.
+                    handle=github_login or name,
+                    wallet=wallet,
                     reputation=0,
                     settled_issues=0,
                     earned_usdc="0.00",
                 )
             )
         account = Account(
-            address=address, role=role, party_id=party_id, created_at=now or _now()  # type: ignore[arg-type]
+            address=address,
+            role=role,  # type: ignore[arg-type]
+            party_id=party_id,
+            github_id=github_id,
+            github_login=github_login,
+            created_at=now or _now(),
         )
         self.repo.save_account(account)
         return account
 
-    def link_github(self, address: str, login: str) -> Account:
-        """Link the wallet's GitHub account (#80). A contributor's handle is their login."""
-        self.ensure_ready()
-        account = self.repo.get_account(address)
-        if account is None:
-            raise KeyError(address)
-        linked = account.model_copy(update={"github_login": login})
+    def _refuse_taken_login(self, login: str, *, party_id: str | None) -> None:
+        """A login names one account. Checked before anything is written, to say which
+        is taken; the repository refuses the same on the save, for a race."""
+        holder = self.repo.get_account_by_github_login(login)
+        if holder is not None and holder.party_id != party_id:
+            raise AccountConflict(f"{login} is linked to another account")
+
+    def _set_github(self, account: Account, github_id: int | None, login: str) -> Account:
+        if github_id is not None:
+            holder = self.repo.get_account_by_github_id(github_id)
+            if holder is not None and holder.party_id != account.party_id:
+                raise AccountConflict("that GitHub account is linked to another account")
+        self._refuse_taken_login(login, party_id=account.party_id)
+        linked = account.model_copy(
+            update={"github_login": login, "github_id": github_id or account.github_id}
+        )
         self.repo.save_account(linked)
         if account.role == "contributor":
             contributor = self.repo.get_contributor(account.party_id)
             assert contributor is not None
             self.repo.save_contributor(contributor.model_copy(update={"handle": login}))
         return linked
+
+    def link_github(self, party_id: str, login: str, github_id: int | None = None) -> Account:
+        """Link a GitHub account to an account that signed in with a wallet (#80). A
+        contributor's handle is their login.
+
+        An account already linked to one GitHub user is not moved to another: its GitHub
+        sessions find it by that user's id, and they would be left signed in to nothing.
+        One linked before the id was kept (#131) takes it now.
+        """
+        self.ensure_ready()
+        account = self.repo.get_account(party_id)
+        if account is None:
+            raise KeyError(party_id)
+        if (
+            github_id is not None
+            and account.github_id is not None
+            and account.github_id != github_id
+        ):
+            raise AccountConflict(
+                f"this account is already linked to GitHub as {account.github_login}"
+            )
+        return self._set_github(account, github_id, login)
+
+    def sign_in_with_github(
+        self, github_id: int, login: str, *, by_login: bool = True
+    ) -> Account | None:
+        """The account a GitHub user signs in to, or None for someone new.
+
+        Found by the numeric id. An account linked before the id was kept has only the
+        login, so with `by_login` that is tried next, and the id is filled in so the
+        login is never needed again; an account whose id is already set is never found
+        by its login, because the login may since belong to someone else. A login that
+        changed on GitHub is updated, along with a contributor's handle.
+        """
+        self.ensure_ready()
+        account = self.repo.get_account_by_github_id(github_id)
+        if account is None and by_login:
+            legacy = self.repo.get_account_by_github_login(login)
+            if legacy is not None and legacy.github_id is None:
+                account = legacy
+        if account is None:
+            return None
+        if account.github_id == github_id and account.github_login == login:
+            return account
+        return self._set_github(account, github_id, login)
+
+    def connect_wallet(
+        self,
+        address: str,
+        *,
+        party_id: str | None,
+        github_id: int | None = None,
+        github_login: str | None = None,
+    ) -> Account:
+        """Connect a wallet the session proved it holds (#131).
+
+        It becomes the account's wallet and the party's: where a publisher funds from,
+        or where a contributor is paid, in place of a Circle wallet they set up. A
+        wallet belongs to one account, and an account keeps the wallet it has: changing
+        it would move where money comes from or goes to mid-flight.
+
+        One exception joins two accounts rather than refusing. A wallet-only account
+        from before GitHub sign-in, never linked to GitHub, proves here that this
+        GitHub user holds its wallet; when the GitHub user has no account of their own
+        yet, that account is linked to them and becomes theirs, history and all.
+        """
+        self.ensure_ready()
+        address = address.lower()
+        owner = self.repo.get_account_by_address(address)
+        account = self.repo.get_account(party_id) if party_id is not None else None
+        if account is None:
+            if github_id is None or github_login is None:
+                raise NoAccountYet("choose a side first, then connect a wallet")
+            if owner is None:
+                raise NoAccountYet(
+                    "choose a side first, then connect a wallet; a wallet already on an "
+                    "account from before GitHub sign-in is joined to you instead"
+                )
+            if owner.github_id is not None or owner.github_login is not None:
+                raise AccountConflict("that wallet belongs to another account")
+            return self._set_github(owner, github_id, github_login)
+        if owner is not None and owner.party_id != account.party_id:
+            raise AccountConflict("that wallet belongs to another account")
+        if account.address == address:
+            return account  # connected already; nothing moves
+        if account.address is not None:
+            raise AccountConflict(
+                f"this account's wallet is {account.address}; a wallet is connected once"
+            )
+        wallet = Wallet(address=address, chain=settings.chain)
+        if account.role == "publisher":
+            publisher = self.repo.get_publisher(account.party_id)
+            assert publisher is not None
+            self.repo.save_publisher(publisher.model_copy(update={"wallet": wallet}))
+        else:
+            contributor = self.repo.get_contributor(account.party_id)
+            assert contributor is not None
+            self.repo.save_contributor(contributor.model_copy(update={"wallet": wallet}))
+        connected = account.model_copy(update={"address": address})
+        self.repo.save_account(connected)
+        return connected
+
+    def wallet_of(self, account: Account) -> Wallet | None:
+        """Where this account's money moves through: a publisher's funding wallet, or a
+        contributor's payout wallet, connected or Circle."""
+        self.ensure_ready()
+        party = (
+            self.repo.get_publisher(account.party_id)
+            if account.role == "publisher"
+            else self.repo.get_contributor(account.party_id)
+        )
+        return party.wallet if party is not None else None
 
     # ------------------------------------------------------- explicit actions
 
@@ -2932,6 +3126,11 @@ class Store:
             raise CriteriaNotApproved(
                 f"{rec.id} cannot be funded until the publisher approves its acceptance criteria"
             )
+        # Before the screening, which screens this wallet, and before any terms are
+        # set: the approval names it as the only wallet the escrow takes the money from.
+        publisher = self.repo.get_publisher(rec.publisher_id)
+        assert publisher is not None
+        _funding_wallet(publisher)
         self._screen_publisher_for_funding(rec, now)
         # The limit is a sum over the publisher's other issues, so the read and the
         # commitment it authorises are one step under one lock. Without it two
@@ -3411,6 +3610,22 @@ class Store:
 
 
 # ------------------------------------------------------------------ policy
+
+
+def _funding_wallet(publisher: Publisher) -> str:
+    """The wallet the escrow takes this publisher's commitment from, or why there is none.
+
+    A publisher who signed in with GitHub publishes and is priced without one (#131),
+    and their Circle wallet does not stand in for it: the commitment is sent from the
+    browser, by the wallet the approval names (#123).
+    """
+    if publisher.wallet is None:
+        raise WalletRequired(
+            f"{publisher.name} has no wallet to fund from: connect one on the Account page "
+            "before approving the price, because the escrow takes the commitment from "
+            "that wallet alone",
+        )
+    return publisher.wallet.address
 
 
 def _policy(publisher: Publisher) -> SpendingPolicy:

@@ -65,9 +65,12 @@ mise run setup     # install every runtime's dependencies
 mise run dev       # API on :8000 and web app on :5173
 ```
 
-Open <http://localhost:5173>. The API reference is at <http://127.0.0.1:8000/docs>.
-To link your real GitHub account rather than a typed login, set up an OAuth App first:
-see [Linking your real GitHub account locally](#linking-your-real-github-account-locally).
+Open <http://localhost:5173> and sign in on **Account**. With nothing configured, the
+simulation takes a GitHub login you type as yours, and needs no wallet until you fund
+or claim; **Or sign in with a wallet** offers demo wallets kept in the browser. The
+API reference is at <http://127.0.0.1:8000/docs>. To sign in with your real GitHub
+account rather than a typed login, set up an OAuth App first: see
+[Signing in with your real GitHub account locally](#signing-in-with-your-real-github-account-locally).
 
 To run the two servers in separate terminals:
 
@@ -116,11 +119,12 @@ process:
 MISTHOS_REDIS_URL=redis://localhost:6379/0 mise run dev:api
 ```
 
-### Linking your real GitHub account locally
+### Signing in with your real GitHub account locally
 
-Publishing and claiming need a linked GitHub login. With nothing configured the
-Account page says linking is not set up here, and the simulation takes a login you
-type instead. To link your real account:
+**Sign in with GitHub** is the main way in, and publishing and claiming need a GitHub
+login either way. With nothing configured the Account page says GitHub sign-in is not
+set up here, and the simulation takes a login you type instead. To sign in with, or
+link, your real account:
 
 1. Create a GitHub OAuth App at <https://github.com/settings/developers> (OAuth Apps,
    New OAuth App).
@@ -138,8 +142,10 @@ type instead. To link your real account:
    ```
 
 4. Restart `mise run dev`, open <http://localhost:5173> (not 127.0.0.1: GitHub returns
-   to the address in `MISTHOS_PUBLIC_URL`, and your session lives on the one you
-   opened), sign in, choose a side and press **Link with GitHub**.
+   to the address in `MISTHOS_PUBLIC_URL`, and the sign-in's cookies live on the one
+   you opened) and press **Sign in with GitHub**. An account that signed in with a
+   wallet presses **Link with GitHub** instead, after choosing a side. Both use the
+   same OAuth App and the same callback.
 
 ### Connecting a real repository
 
@@ -171,11 +177,33 @@ against a real repository.
 
 ### Signing in
 
-Outside the simulation nothing is written anonymously. A wallet signs in with a
-Sign-In with Ethereum message (`POST /api/v1/auth/nonce`, then `/auth/verify`), takes
-a role once, publisher or contributor (`/auth/role`), and links its GitHub account
-(`/auth/github/start`). A publisher acts only on its own issues, and a contributor
-submits only a pull request it opened. The loop then runs through explicit actions:
+Outside the simulation nothing is written anonymously. There are two ways in:
+
+- **Sign in with GitHub** (`POST /api/v1/auth/github/signin`, then GitHub returns to
+  `/auth/github/callback`). The sign-in is bound to the browser that started it: the
+  OAuth state is also kept in a short-lived HttpOnly cookie, and a callback whose
+  state does not match it is refused without a session.
+- **Sign in with a wallet**, with a Sign-In with Ethereum message
+  (`POST /api/v1/auth/nonce`, then `/auth/verify`). That account links its GitHub
+  account (`/auth/github/start`) before it publishes or claims.
+
+Either way the account takes a role once, publisher or contributor (`/auth/role`),
+and `GET /auth/me` says how the session signed in. An account is not a wallet: it
+has a GitHub identity (the numeric user id, so a renamed login is the same person), a
+wallet, or both. A wallet is needed only when money is about to move, and is
+connected on **Account** by signing one message (`POST /auth/wallet/connect`):
+
+- A publisher publishes and gets a price without one, and connects one before
+  approving the price, because the escrow takes the commitment from that wallet
+  alone. A Circle wallet does not stand in for it.
+- A contributor connects one, or sets up a Circle wallet, before claiming, so no work
+  starts without somewhere to pay.
+- A wallet belongs to one account. The one exception is a wallet-only account from
+  before GitHub sign-in that was never linked: connecting its wallet from a GitHub
+  sign-in, before choosing a side, joins that account to the GitHub user.
+
+A publisher acts only on its own issues, and a contributor submits only a pull request
+it opened. The loop then runs through explicit actions:
 
 | Who | Action | Endpoint |
 | --- | --- | --- |
@@ -185,20 +213,22 @@ submits only a pull request it opened. The loop then runs through explicit actio
 | Either | Have the review agent judge it now rather than on the sweeper's next pass | `POST /issues/{id}/review` |
 | Publisher | Merge on GitHub, which releases the payment | The webhook |
 
-Linking needs a GitHub OAuth App (`MISTHOS_GITHUB_OAUTH_CLIENT_ID` and
-`MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`, see
-[Linking your real GitHub account locally](#linking-your-real-github-account-locally));
-without one the simulation links a typed login and a deployment links none. Set
-`MISTHOS_SESSION_SECRET` to keep sessions across a restart. The demo stepper
-(`/advance` and `/complete`) runs only in the simulation, because it fabricates the
-pull request and the merge.
+GitHub sign-in and linking need a GitHub OAuth App (`MISTHOS_GITHUB_OAUTH_CLIENT_ID`
+and `MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`, see
+[Signing in with your real GitHub account locally](#signing-in-with-your-real-github-account-locally));
+without one the simulation signs in or links a typed login
+(`/auth/github/simulate-signin`, `/auth/github/simulate`) and a deployment offers
+wallet sign-in alone. Set `MISTHOS_SESSION_SECRET` to keep sessions across a restart.
+The demo stepper (`/advance` and `/complete`) runs only in the simulation, because it
+fabricates the pull request and the merge.
 
 The web app does all of this from **Account** and each issue's page, which shows
-each party only the step that is theirs. In the simulation there is no need for a
-wallet extension: the demo publisher and contributor wallets are throwaway keys kept
-in the browser, and GitHub is simulated, so the contributor opens their pull request
-and the publisher merges it with a button. Use two browsers, or a private window, to
-be both sides at once.
+each party only the step that is theirs, and says which wallet is missing, with a
+link to **Account**, where funding or claiming needs one. In the simulation there is
+no need for a wallet extension: the demo wallets are throwaway keys kept in the
+browser, and GitHub is simulated, so the contributor opens their pull request and the
+publisher merges it with a button. Use two browsers, or a private window, to be both
+sides at once.
 
 ### Pricing from history and from the publisher's books
 

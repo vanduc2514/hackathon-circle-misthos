@@ -81,7 +81,7 @@ export default function Publish() {
           {!me.data
             ? 'Sign in as a publisher to publish an issue.'
             : account?.role === 'contributor'
-              ? 'This wallet is a contributor. Publishing needs a publisher wallet.'
+              ? 'This account is a contributor. Publishing needs a publisher account.'
               : 'Choose the publisher side and link your GitHub account first.'}{' '}
           <Link to="/account" style={{ textDecoration: 'underline' }}>
             Go to your account

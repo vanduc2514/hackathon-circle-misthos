@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 
 from misthos.observability.context import actor, correlation_id
@@ -33,6 +34,30 @@ class ContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.correlation_id = correlation_id.get() or "-"
         record.actor = actor.get() or "-"
+        return True
+
+
+# GitHub's return to the OAuth callback carries its one-time code and the state in the
+# query string, and uvicorn's access line is the whole URL. Neither belongs in a log:
+# the code is half of a sign-in, and the state is what the sign-in cookie must match.
+_CALLBACK = "/auth/github/callback?"
+_CALLBACK_SECRETS = re.compile(r"(?<=[?&])(code|state)=[^&\s\"]*")
+
+
+def redact_oauth(text: str) -> str:
+    if _CALLBACK not in text:
+        return text
+    return _CALLBACK_SECRETS.sub(lambda m: f"{m.group(1)}=[redacted]", text)
+
+
+class RedactOAuth(logging.Filter):
+    """Take the OAuth code and state out of the access line for the callback (#131)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == "uvicorn.access" and isinstance(record.args, tuple):
+            record.args = tuple(
+                redact_oauth(arg) if isinstance(arg, str) else arg for arg in record.args
+            )
         return True
 
 
@@ -66,6 +91,7 @@ def configure(*, json_lines: bool, level: str = "INFO") -> None:
     send uvicorn's loggers through it too, so one process writes one kind of line."""
     handler = logging.StreamHandler()
     handler.addFilter(ContextFilter())
+    handler.addFilter(RedactOAuth())
     handler.setFormatter(JsonFormatter() if json_lines else logging.Formatter(TEXT_FORMAT))
     root = logging.getLogger()
     root.handlers = [handler]

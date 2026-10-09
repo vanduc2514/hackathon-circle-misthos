@@ -30,6 +30,7 @@ from misthos.store import (
     NotSimulated,
     PaymentNotFound,
     PlanNotSelfServe,
+    WalletRequired,
     store,
 )
 
@@ -63,7 +64,7 @@ async def _call(step, *args):  # type: ignore[no-untyped-def]
         return await run_in_threadpool(step, *args)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"no publisher {args[0]}") from exc
-    except (PlanNotSelfServe, NoPaymentDue, PaymentAlreadyUsed, Busy) as exc:
+    except (PlanNotSelfServe, NoPaymentDue, PaymentAlreadyUsed, Busy, WalletRequired) as exc:
         detail = (
             "that transaction already paid for a period"
             if isinstance(exc, PaymentAlreadyUsed)
@@ -87,12 +88,22 @@ async def subscription(publisher_id: str, account: Account | None = SIGNED_IN) -
     return await _call(store.subscription, publisher_id)
 
 
-@router.post("/publishers/{publisher_id}/subscription", response_model=SubscriptionOut)
+@router.post(
+    "/publishers/{publisher_id}/subscription",
+    summary="Choose a plan",
+    response_model=SubscriptionOut,
+    responses={
+        409: {
+            "description": "The plan is agreed with us rather than bought here, or the "
+            "publisher has no wallet to pay from yet (the detail says to connect one)"
+        }
+    },
+)
 async def subscribe(
     publisher_id: str, payload: SubscribeRequest, account: Account | None = SIGNED_IN
 ) -> SubscriptionOut:
-    """Choose a plan. A paid plan answers with what to send and where; choosing Open
-    cancels at the end of the paid period."""
+    """Choose a plan. A paid plan answers with what to send and where, from the
+    publisher's funding wallet; choosing Open cancels at the end of the paid period."""
     require_owner_or_simulation(account, publisher_id, "change this plan")
     return await _call(store.subscribe, publisher_id, payload.plan)
 
