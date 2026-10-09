@@ -230,6 +230,11 @@ def verdict_for(pr: PullRequest, diff: str, client: httpx.Client, model: str) ->
     body: dict[str, Any] = {
         "model": model,
         "max_tokens": 4000,
+        # Reasoning off, as the issue reviewer asks: without this DeepSeek spends the
+        # whole budget on a thinking block and stops with `stop_reason: max_tokens`
+        # before any answer, which parses as no verdict at all. `disabled` is the one
+        # value both Anthropic and DeepSeek accept.
+        "thinking": {"type": "disabled"},
         "messages": [{"role": "user", "content": prompt_for(pr, diff)}],
     }
     try:

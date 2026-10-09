@@ -66,7 +66,8 @@ def test_asks_for_a_judgement_per_criterion_through_the_tool() -> None:
     reviewer(recorder).judge(SUBMITTED)
 
     request = recorder.sent[0]
-    assert request.url.path == "/v1/messages"
+    # Relative to the endpoint's own base, which may carry a path of its own.
+    assert request.url.path.endswith("/v1/messages")
     assert request.headers["x-api-key"] == "sk-test"
     assert request.headers["anthropic-version"] == "2023-06-01"
     body = json.loads(request.content)
@@ -76,9 +77,9 @@ def test_asks_for_a_judgement_per_criterion_through_the_tool() -> None:
     assert body["tool_choice"] == {"type": "auto"}
     assert body["tools"][0]["strict"] is True
     assert body["tools"][0]["name"] == "record_judgement"
-    # Thinking is on by default on this model and counts against max_tokens, so it
-    # is asked to happen between tool calls and the budget covers the judgement.
-    assert body["thinking"] == {"type": "between_tools"}
+    # Up-front thinking is asked off so the budget goes to the judgement, and
+    # `disabled` is the one value both Anthropic and DeepSeek accept.
+    assert body["thinking"] == {"type": "disabled"}
     assert body["max_tokens"] > 2048
     prompt = body["messages"][0]["content"]
     assert prompt.startswith(

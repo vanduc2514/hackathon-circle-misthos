@@ -11,13 +11,16 @@
 #                      pull requests, but the ruleset bypass for one this repository's
 #                      owner wrote needs a token whose user may bypass the ruleset.
 #                      Without it those are reviewed and left unmerged.
+# Variables:
+#   MISTHOS_ANTHROPIC_API_URL  optional. The Anthropic-compatible endpoint the key
+#                              belongs to; unset uses the built-in DeepSeek one.
 
 name: nightly
 
 on:
   schedule:
-    # 00:00 in Asia/Ho_Chi_Minh, which is when "daily at midnight" means here.
-    - cron: "0 17 * * *"
+    # 18:00 in Asia/Ho_Chi_Minh. UTC+7, so the cron is 11:00 UTC.
+    - cron: "0 11 * * *"
   # So it can be run by hand, and so the first run does not have to wait a day.
   workflow_dispatch:
 
@@ -43,4 +46,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.NIGHTLY_TOKEN || secrets.GITHUB_TOKEN }}
           MISTHOS_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Empty falls through to the endpoint the backend ships with.
+          MISTHOS_ANTHROPIC_API_URL: ${{ vars.MISTHOS_ANTHROPIC_API_URL || 'https://api.deepseek.com/anthropic' }}
         run: mise run pr:review

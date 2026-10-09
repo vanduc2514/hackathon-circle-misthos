@@ -36,8 +36,9 @@ exactly this and fails the build if any service does not become healthy.
 
 Pass real integrations through from your shell or a `.env` file next to
 `compose.yaml`: `MISTHOS_GITHUB_APP_ID`, `MISTHOS_GITHUB_APP_PRIVATE_KEY`,
-`MISTHOS_GITHUB_WEBHOOK_SECRET`, `MISTHOS_ANTHROPIC_API_KEY`, and for sign-in
-`MISTHOS_PUBLIC_URL`, `MISTHOS_SESSION_SECRET`, `MISTHOS_GITHUB_OAUTH_CLIENT_ID` and
+`MISTHOS_GITHUB_WEBHOOK_SECRET`, `MISTHOS_ANTHROPIC_API_KEY`,
+`MISTHOS_ANTHROPIC_API_URL`, and for sign-in `MISTHOS_PUBLIC_URL`,
+`MISTHOS_SESSION_SECRET`, `MISTHOS_GITHUB_OAUTH_CLIENT_ID` and
 `MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`. Every other setting is in
 `backend/.env.example`.
 
@@ -211,7 +212,7 @@ Every step lands in the issue's decision log in the web app.
 
 ## 5. The nightly review
 
-`.github/workflows/nightly.yml` runs at 00:00 in `Asia/Ho_Chi_Minh` and reviews every
+`.github/workflows/nightly.yml` runs at 18:00 in `Asia/Ho_Chi_Minh` and reviews every
 open pull request in this repository against `main`. It posts the review with an
 explicit decision — an approving review, or a request for changes — and squash-merges
 the ones it approved, and only those.
@@ -238,3 +239,8 @@ people's pull requests, but a pull request this repository's owner wrote cannot 
 *approved* by its author, so merging those unattended needs a token whose user may
 bypass the `main` ruleset. Without it they are reviewed, given a verdict in a comment,
 and left for a person to merge.
+
+The key is spent at `MISTHOS_ANTHROPIC_API_URL`, any Anthropic-compatible endpoint. It
+is unset by default, so the backend's built-in one is used; set the repository variable
+`MISTHOS_ANTHROPIC_API_URL` when the key belongs somewhere else, such as
+`https://api.anthropic.com`.
