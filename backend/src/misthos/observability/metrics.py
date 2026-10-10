@@ -70,6 +70,16 @@ SWEEP_FAILURES = Counter(
     "Issues whose timed action or review failed in a pass",
     registry=SWEEPER,
 )
+SUPPORT_OVERDUE = Gauge(
+    "misthos_support_overdue",
+    "Support requests past their first-response deadline and still unanswered (#53)",
+    registry=SWEEPER,
+)
+SUPPORT_OVERDUE_ALERTS = Counter(
+    "misthos_support_overdue_alerts_total",
+    "Support requests raised as overdue, once each",
+    registry=SWEEPER,
+)
 
 
 class _Joined:

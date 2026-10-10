@@ -770,6 +770,10 @@ button {
   font-size: 12.5px;
 }
 
+.error-text {
+  color: var(--bad);
+}
+
 .banner {
   border: 1px solid var(--accent-line);
   background: var(--accent-soft);

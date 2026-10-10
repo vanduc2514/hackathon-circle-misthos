@@ -930,6 +930,45 @@ class SsoOut(BaseModel):
     entitled: bool = Field(description="Whether the organisation's plan includes single sign-on")
 
 
+class SupportRequestIn(BaseModel):
+    severity: Literal["urgent", "normal"] = Field(
+        description="urgent: money cannot move, such as a held payout or a refused "
+        "commitment. normal: anything else."
+    )
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=5000)
+    issue_id: str | None = Field(default=None, max_length=32)
+
+
+class SupportRequest(BaseModel):
+    """One request to us under the Enterprise support commitment (#53)."""
+
+    id: str
+    publisher_id: str
+    severity: Literal["urgent", "normal"]
+    subject: str
+    body: str
+    issue_id: str | None = None
+    opened_by: str = Field(description="Who opened it: a work e-mail, a GitHub login or a wallet")
+    opened_at: datetime
+    respond_by: datetime = Field(description="When the first response is due")
+    first_response: str | None = None
+    responder: str | None = None
+    first_response_at: datetime | None = None
+    alerted_at: datetime | None = None
+    """When the sweeper raised it as overdue. Once per request."""
+    overdue: bool = Field(
+        default=False,
+        description="Unanswered past respond_by, or answered after it. Worked out when read.",
+    )
+
+
+class SupportOut(BaseModel):
+    commitment: str = Field(description="What the plan promises, in the plan's own words")
+    entitled: bool = Field(description="Whether the organisation's plan includes it")
+    requests: list[SupportRequest] = Field(description="Newest first")
+
+
 class RepositoriesOut(BaseModel):
     """A publisher's connected repositories, and how to connect more."""
 

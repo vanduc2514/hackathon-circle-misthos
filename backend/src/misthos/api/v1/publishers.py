@@ -1,6 +1,6 @@
 """An organisation's own controls and records: its spending policy, its spend, its
-audit export (epic #13), its single sign-on (#53), and its money as the pricing engine
-sees it (#43).
+audit export (epic #13), its single sign-on and support requests (#53), and its money
+as the pricing engine sees it (#43).
 
 These are the organisation's alone: a signed-in publisher sees and sets its own,
 and the simulation lets the demo see any. An operator exports the audit record with
@@ -13,16 +13,17 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
-from misthos.api.session import SESSION, SIGNED_IN, require_owner_or_simulation
+from misthos.api.session import SESSION, SIGNED_IN, require_owner_or_simulation, who
 from misthos.api.v1.auth import oidc_client, sso_callback_url
 from misthos.auth.sessions import Identity
 from misthos.config import settings
 from misthos.domain import plans
 from misthos.domain import sso as single_sign_on
 from misthos.domain.policy import PolicyRefusal
+from misthos.domain.support import COMMITMENT
 from misthos.repositories import SsoDomainTaken
 from misthos.schemas import (
     Account,
@@ -35,6 +36,9 @@ from misthos.schemas import (
     SsoConnection,
     SsoOut,
     SsoRequest,
+    SupportOut,
+    SupportRequest,
+    SupportRequestIn,
 )
 from misthos.services.audit import export, to_csv
 from misthos.services.sso import SsoError
@@ -202,6 +206,57 @@ async def remove_sso(publisher_id: str, account: Account | None = SIGNED_IN) -> 
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}") from exc
     return Response(status_code=204)
+
+
+@router.get("/{publisher_id}/support", response_model=SupportOut)
+async def support(publisher_id: str, account: Account | None = SIGNED_IN) -> SupportOut:
+    """The support commitment the plan makes, and every request with when its first
+    response was due and whether it came in time. Served after a plan lapses too: the
+    record of what was promised stays the organisation's."""
+    require_owner_or_simulation(account, publisher_id, "see these support requests")
+    try:
+        entitled = await run_in_threadpool(store.entitled, publisher_id, plans.Feature.SUPPORT)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}") from exc
+    return SupportOut(
+        commitment=COMMITMENT,
+        entitled=entitled,
+        requests=await run_in_threadpool(store.support_requests, publisher_id),
+    )
+
+
+@router.post(
+    "/{publisher_id}/support",
+    response_model=SupportRequest,
+    status_code=201,
+    responses={
+        402: {"description": "The plan does not include the support commitment"},
+        404: {"description": "No such publisher, or the issue named is not this publisher's"},
+    },
+)
+async def open_support(
+    publisher_id: str,
+    payload: SupportRequestIn,
+    request: Request,
+    account: Account | None = SIGNED_IN,
+) -> SupportRequest:
+    """Ask us for help. The answer names when the first response is due: urgent when
+    money cannot move, answered around the clock; otherwise by the next working day."""
+    require_owner_or_simulation(account, publisher_id, "ask for support")
+    await require_plan(publisher_id, plans.Feature.SUPPORT)
+    try:
+        return await run_in_threadpool(
+            lambda: store.open_support(
+                publisher_id,
+                severity=payload.severity,
+                subject=payload.subject,
+                body=payload.body,
+                issue_id=payload.issue_id,
+                by=who(request, account, "the publisher"),
+            )
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no such {exc.args[0]}") from exc
 
 
 @router.get("/{publisher_id}/spend", response_model=SpendOut)

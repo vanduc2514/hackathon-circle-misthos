@@ -26,6 +26,7 @@ import { setUpWallet } from '../lib/circle-wallet'
 import { linking } from '../lib/github-link'
 import { signedInAs } from '../lib/identity'
 import { parseDomains, ssoStep } from '../lib/sso'
+import { supportStatus } from '../lib/support'
 import { Panel } from '../components/ui'
 
 /**
@@ -140,6 +141,9 @@ export default function AccountPage() {
             )}
             {account?.role === 'publisher' && !me.data.sso_required && (
               <SingleSignOn me={me.data} publisherId={account.party_id} onDone={changed} />
+            )}
+            {account?.role === 'publisher' && !me.data.sso_required && (
+              <Support publisherId={account.party_id} />
             )}
             {!account && <ChooseSide github={me.data.method === 'github'} onDone={changed} />}
             {!account && me.data.method === 'github' && (
@@ -899,5 +903,119 @@ function SsoForm({
         {remove.error && <div className="error-box form-error">{remove.error.message}</div>}
       </form>
     </>
+  )
+}
+
+/**
+ * The Enterprise support commitment (#53): what the plan promises, a way to ask, and
+ * each request against its deadline. The record stays visible after a plan lapses.
+ */
+function Support({ publisherId }: { publisherId: string }) {
+  const qc = useQueryClient()
+  const path = { params: { path: { publisher_id: publisherId } } }
+  const [severity, setSeverity] = useState<'urgent' | 'normal'>('normal')
+  const [subject, setSubject] = useState('')
+  const [body, setBody] = useState('')
+  const support = useQuery({
+    queryKey: ['support', publisherId],
+    queryFn: async () => unwrap(await api.GET('/api/v1/publishers/{publisher_id}/support', path)),
+  })
+  const ask = useMutation({
+    mutationFn: async () =>
+      unwrap(
+        await api.POST('/api/v1/publishers/{publisher_id}/support', {
+          ...path,
+          body: { severity, subject: subject.trim(), body: body.trim() },
+        }),
+      ),
+    onSuccess: () => {
+      setSubject('')
+      setBody('')
+      qc.invalidateQueries({ queryKey: ['support', publisherId] })
+    },
+  })
+  const data = support.data
+  if (!data || (!data.entitled && !data.requests.length)) return null
+
+  return (
+    <Panel title="Support">
+      <p className="dim" style={{ marginBottom: 14 }}>
+        Your plan's commitment: {data.commitment}.
+      </p>
+      {data.entitled && (
+        <form
+          className="form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            ask.mutate()
+          }}
+        >
+          <div className="radio-row">
+            <label>
+              <input
+                type="radio"
+                checked={severity === 'urgent'}
+                onChange={() => setSeverity('urgent')}
+              />{' '}
+              Urgent: money cannot move
+            </label>
+            <label>
+              <input
+                type="radio"
+                checked={severity === 'normal'}
+                onChange={() => setSeverity('normal')}
+              />{' '}
+              Anything else
+            </label>
+          </div>
+          <label className="field">
+            <span>Subject</span>
+            <input
+              className="input"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              maxLength={200}
+              required
+            />
+          </label>
+          <label className="field">
+            <span>What is happening</span>
+            <textarea
+              className="input"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              maxLength={5000}
+              rows={4}
+              required
+            />
+          </label>
+          <div className="btn-row">
+            <button
+              className="btn primary"
+              type="submit"
+              disabled={ask.isPending || !subject.trim() || !body.trim()}
+            >
+              Ask for support
+            </button>
+          </div>
+          {ask.error && <div className="error-box form-error">{ask.error.message}</div>}
+        </form>
+      )}
+      {data.requests.length > 0 && (
+        <ul className="findings" style={{ marginTop: 14 }}>
+          {data.requests.map((r) => (
+            <li key={r.id}>
+              <strong>{r.id}</strong> {r.subject}{' '}
+              <span className={r.overdue ? 'error-text' : 'dim'}>· {supportStatus(r)}</span>
+              {r.first_response && (
+                <div className="stat-hint">
+                  {r.responder}: {r.first_response}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
   )
 }
