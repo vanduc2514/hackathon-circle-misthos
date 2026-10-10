@@ -155,8 +155,9 @@ only ones it is booked against, whatever the clock or the publisher's plan say b
 The escrow refuses a commitment from any other wallet or to a later deadline. A
 commitment the platform cannot book (another amount, or a deadline more than an hour
 early) goes back to the publisher once the approved deadline has passed. The funding
-wallet is the one the publisher signs in with; a Circle wallet they set up on the
-account page is kept beside it, never in its place. The demo seed is not written
+wallet is the one the publisher signed in with, or connected on the account page
+after signing in with GitHub (#131), and approving waits for it; a Circle wallet they
+set up there is kept beside it, never in its place. The demo seed is not written
 outside the simulation: it would fund made-up issues from made-up wallets.
 
 Every release must land before the escrow deadline, because `release` reverts after it.

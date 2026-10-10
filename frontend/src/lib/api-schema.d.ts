@@ -14,8 +14,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Nonce
-         * @description A one-time nonce, and what the sign-in message must say around it.
+         * A nonce for a wallet to sign
+         * @description A one-time nonce for a wallet to sign.
+         *
+         *     What the Sign-In with Ethereum message must say around it: this site's domain, the
+         *     Arc chain and the statement. Good for one sign-in, or one wallet connection, within
+         *     ten minutes.
          */
         post: operations["nonce_api_v1_auth_nonce_post"];
         delete?: never;
@@ -34,10 +38,87 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Verify
-         * @description Check the signed message, spend its nonce, and start a session.
+         * Sign in with a wallet
+         * @description Sign in with a wallet.
+         *
+         *     Checks the signed message, spends its nonce, and starts a wallet session, in the
+         *     cookie and as a bearer token. The account is the one this wallet is connected to,
+         *     whichever way it signed in first; null until a side is chosen.
          */
         post: operations["verify_api_v1_auth_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/github/signin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with GitHub
+         * @description Start signing in with GitHub.
+         *
+         *     Answers with the URL to send the browser to, and sets a short-lived HttpOnly cookie
+         *     holding the same state; GitHub sends the user back to `/auth/github/callback`, which
+         *     signs them in only if the two match. Needs no session.
+         */
+        post: operations["start_github_signin_api_v1_auth_github_signin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/github/simulate-signin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with a typed GitHub login (simulation only)
+         * @description Sign in as a GitHub login without OAuth: the simulation's demo only.
+         *
+         *     The login stands for a made-up GitHub user whose id follows from it, so the same
+         *     login signs in to the same account every time. It finds only accounts made that
+         *     way, never one linked to a real GitHub user or linked before ids were kept.
+         */
+        post: operations["simulate_github_signin_api_v1_auth_github_simulate_signin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/github/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where GitHub returns, for a sign-in or a link
+         * @description Where GitHub sends the user back, for a sign-in and for a link.
+         *
+         *     The state's slot says which. A sign-in must come back to the browser that started
+         *     it, by the state cookie; a link must be finished by the account that started it,
+         *     by the session. Either way the state is spent on first use, and the redirect goes
+         *     only to this app's own Account page.
+         */
+        get: operations["github_callback_api_v1_auth_github_callback_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -53,7 +134,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Logout */
+        /**
+         * Sign out
+         * @description Sign out: the session cookie is cleared. A bearer token lapses on its own.
+         */
         post: operations["logout_api_v1_auth_logout_post"];
         delete?: never;
         options?: never;
@@ -68,7 +152,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Me */
+        /**
+         * Who is signed in, and how
+         * @description Who is signed in.
+         *
+         *     How the session signed in (`github` or `wallet`), the GitHub login and id, the
+         *     wallet, the account once a side is chosen, and the wallet its money moves through.
+         *     Any of them may be null.
+         */
         get: operations["me_api_v1_auth_me_get"];
         put?: never;
         post?: never;
@@ -88,10 +179,43 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Choose Role
-         * @description The first sign-in's one choice: publisher or contributor.
+         * Choose a side, once
+         * @description Choose a side, once: publisher or contributor.
+         *
+         *     Signed in with GitHub, the account starts with that GitHub account and no wallet,
+         *     and a contributor is known by their login. Signed in with a wallet, the account
+         *     starts with that wallet and links GitHub next.
          */
         post: operations["choose_role_api_v1_auth_role_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/wallet/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect a wallet to the signed-in account
+         * @description Connect a wallet to the signed-in account.
+         *
+         *     Sign a message over a nonce from `/auth/nonce` with the wallet, as for signing in;
+         *     that proves it is yours. It becomes the account's wallet: where a publisher funds
+         *     from, or where a contributor is paid. A wallet belongs to one account, and an
+         *     account keeps the wallet it connected.
+         *
+         *     The exception: signed in with GitHub, before choosing a side, connecting the wallet
+         *     of an account that signed in with a wallet before GitHub sign-in existed, and was
+         *     never linked to GitHub, joins that account to you. You are then that account.
+         */
+        post: operations["connect_wallet_api_v1_auth_wallet_connect_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -108,8 +232,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Start Github Link
-         * @description Where to send the user to approve linking their GitHub account.
+         * Link a GitHub account to a wallet account
+         * @description Start linking a GitHub account to an account that signed in with a wallet.
+         *
+         *     Answers with the URL to send the browser to. GitHub sends the user back to
+         *     `/auth/github/callback`, which links the account only for the session that
+         *     started it.
          */
         post: operations["start_github_link_api_v1_auth_github_start_post"];
         delete?: never;
@@ -128,8 +256,11 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Simulate Github Link
-         * @description Link a GitHub login without OAuth, for the simulation's demo only.
+         * Link a typed GitHub login (simulation only)
+         * @description Link a GitHub login without OAuth: the simulation's demo only.
+         *
+         *     The login stands for the same made-up GitHub user a demo GitHub sign-in with it
+         *     does, so the account can sign in with it afterwards.
          */
         post: operations["simulate_github_link_api_v1_auth_github_simulate_post"];
         delete?: never;
@@ -373,8 +504,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Fund
+         * Approve the price and commit the funds
          * @description The publisher approves the price, and the money is committed to the escrow.
+         *
+         *     The approval names the publisher's funding wallet as the only one the escrow takes
+         *     the commitment from, so a publisher who signed in with GitHub connects a wallet
+         *     first; until then this is a 409 that says so (#131).
          */
         post: operations["fund_api_v1_issues__issue_id__fund_post"];
         delete?: never;
@@ -393,8 +528,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Claim
+         * Claim an issue
          * @description A contributor takes the exclusive, time-boxed claim. First claim wins.
+         *
+         *     The work has to be paid somewhere, so a contributor claims only with a wallet: one
+         *     they connected, or their Circle wallet. Until then this is a 409 that says so
+         *     (#131).
          */
         post: operations["claim_api_v1_issues__issue_id__claim_post"];
         delete?: never;
@@ -816,9 +955,9 @@ export interface paths {
         get: operations["subscription_api_v1_publishers__publisher_id__subscription_get"];
         put?: never;
         /**
-         * Subscribe
-         * @description Choose a plan. A paid plan answers with what to send and where; choosing Open
-         *     cancels at the end of the paid period.
+         * Choose a plan
+         * @description Choose a plan. A paid plan answers with what to send and where, from the
+         *     publisher's funding wallet; choosing Open cancels at the end of the paid period.
          */
         post: operations["subscribe_api_v1_publishers__publisher_id__subscription_post"];
         delete?: never;
@@ -936,19 +1075,34 @@ export interface components {
     schemas: {
         /**
          * Account
-         * @description A signed-in wallet and the one role it chose (#70).
+         * @description A signed-in party and the one role it chose (#70). It signs in with a GitHub
+         *     account, a wallet, or either, once both are on it (#131).
          */
         Account: {
-            /** Address */
-            address: string;
+            /**
+             * Address
+             * @description The connected wallet, lowercase: the one the account signed in with, or connected after signing in with GitHub. Null until one is connected.
+             */
+            address?: string | null;
             /**
              * Role
              * @enum {string}
              */
             role: "publisher" | "contributor";
-            /** Party Id */
+            /**
+             * Party Id
+             * @description The Publisher or Contributor this account acts as, and the account's key
+             */
             party_id: string;
-            /** Github Login */
+            /**
+             * Github Id
+             * @description GitHub's numeric user id, which survives a renamed login. Null for an account linked before #131 until its first GitHub sign-in fills it in.
+             */
+            github_id?: number | null;
+            /**
+             * Github Login
+             * @description Signed in with, or linked through, GitHub OAuth (#80). Publishing, claiming and submitting need it.
+             */
             github_login?: string | null;
             /**
              * Created At
@@ -1360,8 +1514,20 @@ export interface components {
              */
             note: string;
         };
-        /** GitHubLinkStart */
+        /**
+         * GitHubLinkStart
+         * @description Where to send the user to approve linking their GitHub account.
+         */
         GitHubLinkStart: {
+            /** Authorize Url */
+            authorize_url: string;
+        };
+        /**
+         * GitHubSignInStart
+         * @description Where to send the user to sign in with GitHub. The state in it is also set in a
+         *     short-lived HttpOnly cookie, which the callback checks.
+         */
+        GitHubSignInStart: {
             /** Authorize Url */
             authorize_url: string;
         };
@@ -1530,11 +1696,36 @@ export interface components {
             /** Github Url */
             github_url: string;
         };
-        /** MeOut */
+        /**
+         * MeOut
+         * @description Who is signed in, how, and the account they act as (#131).
+         */
         MeOut: {
-            /** Address */
-            address: string;
+            /**
+             * Method
+             * @description How this session signed in: with GitHub, or by signing with a wallet
+             * @enum {string}
+             */
+            method: "github" | "wallet";
+            /**
+             * Address
+             * @description The wallet, lowercase: the one this session signed in with, or the account's connected wallet. Null when there is neither.
+             */
+            address: string | null;
+            /**
+             * Github Id
+             * @description GitHub's numeric user id: the session's own, or the account's linked one
+             */
+            github_id: number | null;
+            /**
+             * Github Login
+             * @description The GitHub login: the account's linked one, or the session's own
+             */
+            github_login: string | null;
+            /** @description Null until a side is chosen */
             account: components["schemas"]["Account"] | null;
+            /** @description The wallet this account's money moves through: a publisher's funding wallet, or a contributor's payout wallet (connected or Circle). Null until there is one; approving a price or claiming waits for it. */
+            wallet?: components["schemas"]["Wallet"] | null;
         };
         /**
          * MetricsOut
@@ -1764,7 +1955,7 @@ export interface components {
              * @enum {string}
              */
             tier: "open" | "team" | "enterprise";
-            wallet: components["schemas"]["Wallet"];
+            wallet?: components["schemas"]["Wallet"] | null;
             circle_wallet?: components["schemas"]["Wallet"] | null;
             /** Budget Remaining Usdc */
             budget_remaining_usdc: string;
@@ -1798,7 +1989,7 @@ export interface components {
              * @enum {string}
              */
             tier: "open" | "team" | "enterprise";
-            wallet: components["schemas"]["Wallet"];
+            wallet?: components["schemas"]["Wallet"] | null;
             /** Budget Remaining Usdc */
             budget_remaining_usdc?: string | null;
             /** Approval Threshold Usdc */
@@ -1906,13 +2097,39 @@ export interface components {
              */
             budget_usdc: string;
         };
-        /** SessionOut */
+        /**
+         * SessionOut
+         * @description A session just started, and its token for an API client that cannot keep the
+         *     cookie.
+         */
         SessionOut: {
-            /** Address */
-            address: string;
+            /**
+             * Method
+             * @description How this session signed in: with GitHub, or by signing with a wallet
+             * @enum {string}
+             */
+            method: "github" | "wallet";
+            /**
+             * Address
+             * @description The wallet, lowercase: the one this session signed in with, or the account's connected wallet. Null when there is neither.
+             */
+            address: string | null;
+            /**
+             * Github Id
+             * @description GitHub's numeric user id: the session's own, or the account's linked one
+             */
+            github_id: number | null;
+            /**
+             * Github Login
+             * @description The GitHub login: the account's linked one, or the session's own
+             */
+            github_login: string | null;
+            /** @description Null until a side is chosen */
+            account: components["schemas"]["Account"] | null;
+            /** @description The wallet this account's money moves through: a publisher's funding wallet, or a contributor's payout wallet (connected or Circle). Null until there is one; approving a price or claiming waits for it. */
+            wallet?: components["schemas"]["Wallet"] | null;
             /** Token */
             token: string;
-            account: components["schemas"]["Account"] | null;
         };
         /** SignInRequest */
         SignInRequest: {
@@ -1923,6 +2140,14 @@ export interface components {
         };
         /** SimulatedLink */
         SimulatedLink: {
+            /** Login */
+            login: string;
+        };
+        /**
+         * SimulatedSignIn
+         * @description The simulation's GitHub sign-in: a typed login, standing in for OAuth.
+         */
+        SimulatedSignIn: {
             /** Login */
             login: string;
         };
@@ -2167,6 +2392,17 @@ export interface components {
             data: string;
         };
         /**
+         * WalletConnectRequest
+         * @description A Sign-In with Ethereum message over a nonce from `POST /auth/nonce`, and the
+         *     wallet's signature of it: the proof that the wallet being connected is yours.
+         */
+        WalletConnectRequest: {
+            /** Message */
+            message: string;
+            /** Signature */
+            signature: string;
+        };
+        /**
          * WalletSessionOut
          * @description What the browser needs to run Circle's PIN challenge for its own wallet.
          */
@@ -2222,6 +2458,13 @@ export interface operations {
                     "application/json": components["schemas"]["NonceOut"];
                 };
             };
+            /** @description Too many sign-in attempts from this client in a minute */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     verify_api_v1_auth_verify_post: {
@@ -2246,6 +2489,13 @@ export interface operations {
                     "application/json": components["schemas"]["SessionOut"];
                 };
             };
+            /** @description Not signed in, or the signature does not prove the wallet */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2254,6 +2504,180 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description Too many sign-in attempts from this client in a minute */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    start_github_signin_api_v1_auth_github_signin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubSignInStart"];
+                };
+            };
+            /** @description The browser is on another address than GitHub returns to; the detail says which address to open */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many sign-in attempts from this client in a minute */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No GitHub OAuth App is configured; the detail says what to set */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    simulate_github_signin_api_v1_auth_github_simulate_signin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SimulatedSignIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Outside the simulation, where GitHub sign-in goes through GitHub */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The login is linked to an account of another GitHub user */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many sign-in attempts from this client in a minute */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    github_callback_api_v1_auth_github_callback_get: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed in or linked; on to the Account page */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The state is unknown, used or expired */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Linking, and the browser is not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Signing in, and this browser did not start it; or linking, and another account started it. No session is issued. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description That GitHub account or login belongs to another account */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description GitHub refused the code or could not be reached */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No GitHub OAuth App is configured; the detail says what to set */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2266,7 +2690,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Signed out */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -2293,6 +2717,13 @@ export interface operations {
                     "application/json": components["schemas"]["MeOut"];
                 };
             };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     choose_role_api_v1_auth_role_post: {
@@ -2317,6 +2748,20 @@ export interface operations {
                     "application/json": components["schemas"]["Account"];
                 };
             };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description This wallet or GitHub account already has a side, the budget is not a number, or the GitHub login belongs to another account */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2325,6 +2770,60 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    connect_wallet_api_v1_auth_wallet_connect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WalletConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            /** @description Not signed in, or the signature does not prove the wallet */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The wallet belongs to another account, this account already has another wallet, or no side has been chosen yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many sign-in attempts from this client in a minute */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2346,7 +2845,14 @@ export interface operations {
                     "application/json": components["schemas"]["GitHubLinkStart"];
                 };
             };
-            /** @description The browser is on another address than GitHub returns to */
+            /** @description Not signed in, or no side chosen yet */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The browser is on another address than GitHub returns to, or the account is already linked to a GitHub account */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2383,6 +2889,27 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Account"];
                 };
+            };
+            /** @description Not signed in, or no side chosen yet */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Outside the simulation, where linking goes through GitHub */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The login belongs to another account, or this account is already linked to another GitHub account */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -2858,6 +3385,27 @@ export interface operations {
                     "application/json": components["schemas"]["IssueOut"];
                 };
             };
+            /** @description Not signed in, outside the simulation */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not this issue's publisher, no linked GitHub account, or refused by sanctions screening or the organisation's own policy */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The publisher has no wallet to fund from (the detail says to connect one), the criteria are not approved, the issue is not awaiting approval, or the escrow refused */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2895,6 +3443,34 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueOut"];
                 };
+            };
+            /** @description No such contributor (the simulation's anonymous claim) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in as a contributor */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a contributor, or no linked GitHub account */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The contributor has no wallet to be paid to (the detail says to connect one or set up a Circle wallet), or the issue is not open to claim */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -3570,6 +4146,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SubscriptionOut"];
                 };
+            };
+            /** @description The plan is agreed with us rather than bought here, or the publisher has no wallet to pay from yet (the detail says to connect one) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

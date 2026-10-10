@@ -71,9 +71,9 @@ def platform(arc: LocalArc) -> Platform:
     )
     stores.append(store)
     publisher = store.create_account(ADDRESS["publisher"], "publisher", "Arc Pub")
-    store.link_github(publisher.address, "arc-pub")
+    store.link_github(publisher.party_id, "arc-pub")
     contributor = store.create_account(ADDRESS["contributor"], "contributor", "arc-con")
-    store.link_github(contributor.address, "arc-con")
+    store.link_github(contributor.party_id, "arc-con")
     return Platform(arc, store, publisher.party_id, contributor.party_id)
 
 

@@ -30,7 +30,7 @@ A publisher's plan and its payments (#53) are its own too. We keep the transacti
 | --- | --- | --- |
 | GitHub handle | Our database | Already public; it is how work is attributed |
 | Wallet address | Our database | To pay the contributor and to screen them |
-| Account: the signed-in wallet, its role and its linked GitHub login | Our database | To decide who may act. The GitHub access token from linking is used once to read the login and never stored |
+| Account: its role, its connected wallet, and its GitHub user id and login | Our database | To decide who may act. The GitHub access token from signing in or linking is used once to read the id and login and never stored |
 | Identity documents | The verification provider only | Required before a first payout, and only then |
 | Identity outcome and provider reference | Our database | To know whether a payout may leave the escrow |
 | Sanctions screening results | Our database, append-only | Evidence that every payout was screened |

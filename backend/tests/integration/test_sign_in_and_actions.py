@@ -116,7 +116,7 @@ class TestGitHubLink:
             seen.append(request)
             if request.url.path == "/login/oauth/access_token":
                 return httpx.Response(200, json={"access_token": "gho_once"})
-            return httpx.Response(200, json={"login": "ada-dev"})
+            return httpx.Response(200, json={"id": 4021, "login": "ada-dev"})
 
         client_ = GitHubOAuth("client-1", "secret-1", transport=httpx.MockTransport(github))
         monkeypatch.setattr(auth_routes, "oauth", lambda: client_)
@@ -185,7 +185,7 @@ class TestLinkingARealGitHubAccount:
                 return httpx.Response(200, json={"access_token": "gho_once"})
             if request.headers.get("Authorization") != "Bearer gho_once":
                 return httpx.Response(401, json={"message": "Bad credentials"})
-            return httpx.Response(200, json={"login": "ada-real"})
+            return httpx.Response(200, json={"id": 4025, "login": "ada-real"})
 
         monkeypatch.setattr(
             auth_routes, "GitHubOAuth", partial(GitHubOAuth, transport=httpx.MockTransport(github))
@@ -441,7 +441,7 @@ class TestTheLinkCannotBeHijacked:
         def github(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/login/oauth/access_token":
                 return httpx.Response(200, json={"access_token": "gho_once"})
-            return httpx.Response(200, json={"login": login})
+            return httpx.Response(200, json={"id": 4031, "login": login})
 
         client = GitHubOAuth("c", "s", transport=httpx.MockTransport(github))
         monkeypatch.setattr(auth_routes, "oauth", lambda: client)

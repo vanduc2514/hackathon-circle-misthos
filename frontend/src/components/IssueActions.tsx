@@ -9,6 +9,7 @@ import {
   tooLong,
 } from '../lib/criteria'
 import { fundFromWallet, type Wallet } from '../lib/fund'
+import { walletNeeded } from '../lib/identity'
 
 function browserWallet(): Wallet | null {
   return (window as unknown as { ethereum?: Wallet }).ethereum ?? null
@@ -126,7 +127,13 @@ export default function IssueActions({
   switch (issue.state) {
     case 'AWAITING_APPROVAL':
       body = who.publisher ? (
-        <ApproveAndFund issue={issue} simulated={simulated} busy={busy} run={run} />
+        <ApproveAndFund
+          issue={issue}
+          simulated={simulated}
+          busy={busy}
+          run={run}
+          missing={walletNeeded(me, 'fund')}
+        />
       ) : (
         <Wait>
           {issue.publisher_name} approves the acceptance criteria, then the price. Funds are
@@ -134,14 +141,20 @@ export default function IssueActions({
         </Wait>
       )
       break
-    case 'FUNDED':
+    case 'FUNDED': {
+      const missing = walletNeeded(me, 'claim')
       body = who.contributor ? (
         <>
           <p className="dim action-hint">
             The first claim wins and holds the issue for 72 hours. Claiming commits you to
             nothing but trying.
           </p>
-          <button className="btn primary" disabled={busy} onClick={() => run({ kind: 'claim' })}>
+          {missing && <NeedsWallet message={missing} />}
+          <button
+            className="btn primary"
+            disabled={busy || Boolean(missing)}
+            onClick={() => run({ kind: 'claim' })}
+          >
             Claim for ${money(issue.escrow?.amount ?? issue.proposal?.recommended)}
           </button>
         </>
@@ -151,6 +164,7 @@ export default function IssueActions({
         </SignInTo>
       )
       break
+    }
     case 'CLAIMED':
     case 'REWORK':
       body = who.claimant ? (
@@ -279,7 +293,28 @@ function SignInTo({
   )
 }
 
-function ApproveAndFund({ issue, simulated, busy, run }: Step & { simulated: boolean }) {
+/**
+ * Which wallet is missing before money can move, and where to connect it (#131). The
+ * button it stands beside stays disabled; the API refuses the same with a 409.
+ */
+function NeedsWallet({ message }: { message: string }) {
+  return (
+    <p className="dim action-hint" role="note">
+      {message}{' '}
+      <Link to="/account" style={{ textDecoration: 'underline' }}>
+        Connect one on your Account page.
+      </Link>
+    </p>
+  )
+}
+
+function ApproveAndFund({
+  issue,
+  simulated,
+  busy,
+  run,
+  missing,
+}: Step & { simulated: boolean; missing: string | null }) {
   const [draft, setDraft] = useState(issue.acceptance_criteria.join('\n'))
   const criteria = criteriaLines(draft)
   const approved = Boolean(issue.criteria_approved_at)
@@ -331,10 +366,11 @@ function ApproveAndFund({ issue, simulated, busy, run }: Step & { simulated: boo
           ' Your wallet sends the commitment itself: it asks you to sign two transactions, ' +
             'letting the escrow take the amount, then committing it. The platform never holds it.'}
       </p>
+      {missing && <NeedsWallet message={missing} />}
       <div className="btn-row">
         <button
           className="btn primary"
-          disabled={busy || !approved || !unchanged}
+          disabled={busy || !approved || !unchanged || Boolean(missing)}
           onClick={() => run({ kind: 'fund' })}
         >
           Approve the price and commit ${money(issue.proposal?.recommended)}

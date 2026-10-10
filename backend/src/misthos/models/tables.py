@@ -57,10 +57,11 @@ publishers = Table(
     Column("name", String(200), nullable=False),
     Column("kind", String(16), nullable=False),
     Column("tier", String(16), nullable=False),
-    # The wallet the publisher signs in with and funds from: the escrow takes a
-    # commitment from it alone, and refunds go back to it.
-    Column("wallet_address", String(64), nullable=False),
-    Column("chain", String(32), nullable=False),
+    # The wallet the publisher funds from: the escrow takes a commitment from it alone,
+    # and refunds go back to it. Null for one who signed in with GitHub and has not
+    # connected a wallet yet (#131); approving a price waits for it.
+    Column("wallet_address", String(64)),
+    Column("chain", String(32)),
     # The publisher's own Circle wallet, kept beside the funding wallet and never in its
     # place: a commitment from the browser wallet would otherwise be refused (#123).
     Column("circle_wallet_address", String(64)),
@@ -76,8 +77,10 @@ contributors = Table(
     metadata,
     Column("id", Id, primary_key=True),
     Column("handle", String(100), nullable=False),
-    Column("wallet_address", String(64), nullable=False),
-    Column("chain", String(32), nullable=False),
+    # Where payouts go. Null until a contributor who signed in with GitHub connects a
+    # wallet or sets up a Circle one (#131); claiming waits for it.
+    Column("wallet_address", String(64)),
+    Column("chain", String(32)),
     Column("reputation", Integer, nullable=False),
     Column("settled_issues", Integer, nullable=False),
     Column("earned_base_units", BigInteger, nullable=False),
@@ -289,13 +292,16 @@ simulated_escrow_ceilings = Table(
     Column("latest_deadline", Timestamp),
 )
 
-# A signed-in wallet and the role it chose (#70). One role per wallet.
+# A signed-in party and the role it chose (#70), one row per party. It signs in with a
+# wallet, a GitHub account, or either (#131), and each of those belongs to one account:
+# the GitHub identity is the numeric id, because a login can be renamed and reused.
 accounts = Table(
     "accounts",
     metadata,
-    Column("address", String(42), primary_key=True),
+    Column("party_id", Id, primary_key=True),
     Column("role", String(16), nullable=False),
-    Column("party_id", Id, nullable=False, unique=True),
+    Column("address", String(42), unique=True),
+    Column("github_id", BigInteger, unique=True),
     Column("github_login", String(64), unique=True),
     Column("created_at", Timestamp, nullable=False),
 )

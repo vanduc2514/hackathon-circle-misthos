@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Link, NavLink, Route, Routes } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, type IssueOut } from './lib/client'
+import { accountLabel } from './lib/identity'
 import { useHealth, useMe } from './lib/session'
 import Dashboard from './routes/Dashboard'
 import Issues from './routes/Issues'
@@ -76,7 +77,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             {!me
               ? 'Sign in'
               : account
-                ? `${account.role} · ${account.github_login ?? account.party_id}`
+                ? `${account.role} · ${accountLabel(account)}`
                 : 'Choose a side'}
           </Link>
         </div>

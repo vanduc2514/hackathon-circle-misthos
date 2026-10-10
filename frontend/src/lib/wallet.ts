@@ -60,7 +60,29 @@ export async function browserWallet(): Promise<Signer> {
 
 export type DemoSlot = 'publisher' | 'contributor'
 
-const slotKey = (slot: DemoSlot) => `misthos.demo-wallet.${slot}`
+/** A throwaway key kept in this browser under `name`, or a fresh one if none can be. */
+function keptKey(name: string): Uint8Array {
+  const key = `misthos.demo-wallet.${name}`
+  let hex: string | null = null
+  try {
+    hex = localStorage.getItem(key)
+  } catch {
+    // Storage can be blocked; a fresh key for this page is still a valid demo.
+  }
+  if (!hex || !/^[0-9a-f]{64}$/.test(hex)) {
+    hex = bytesToHex(secp256k1.utils.randomSecretKey())
+    try {
+      localStorage.setItem(key, hex)
+    } catch {
+      // As above.
+    }
+  }
+  return hexToBytes(hex)
+}
+
+function demoSigner(key: Uint8Array): Signer {
+  return { kind: 'demo', address: addressOf(key), sign: async (m) => signPersonal(key, m) }
+}
 
 /**
  * A throwaway key kept in this browser, for the simulation only, so the demo can be
@@ -68,20 +90,14 @@ const slotKey = (slot: DemoSlot) => `misthos.demo-wallet.${slot}`
  * can take turns in the same browser. It never holds funds.
  */
 export function demoWallet(slot: DemoSlot): Signer {
-  let hex: string | null = null
-  try {
-    hex = localStorage.getItem(slotKey(slot))
-  } catch {
-    // Storage can be blocked; a fresh key for this page is still a valid demo.
-  }
-  if (!hex || !/^[0-9a-f]{64}$/.test(hex)) {
-    hex = bytesToHex(secp256k1.utils.randomSecretKey())
-    try {
-      localStorage.setItem(slotKey(slot), hex)
-    } catch {
-      // As above.
-    }
-  }
-  const key = hexToBytes(hex)
-  return { kind: 'demo', address: addressOf(key), sign: async (m) => signPersonal(key, m) }
+  return demoSigner(keptKey(slot))
+}
+
+/**
+ * A demo wallet of one account's own, for connecting after a GitHub sign-in (#131).
+ * Not the side's sign-in wallet: that one may already be an account of its own in
+ * this browser, and a wallet belongs to one account.
+ */
+export function demoWalletFor(partyId: string): Signer {
+  return demoSigner(keptKey(`account.${partyId}`))
 }
