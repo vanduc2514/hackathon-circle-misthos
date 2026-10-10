@@ -17,11 +17,19 @@ apart by which slot the state is kept in.
 Either way the account connects a wallet when money is about to move, by signing one
 message over a nonce, which proves the wallet is theirs.
 
+**Sign in with single sign-on** is for the staff of an Enterprise organisation (#53).
+A work e-mail's domain finds the organisation's identity provider, and the flow is
+OpenID Connect's authorization code with PKCE and a nonce. The state is kept twice, as
+for GitHub, and for the same reason. The session acts as the organisation's account
+and names the person, by the verified address the provider asserted.
+
 Nothing here logs an OAuth code, a token or the client secret.
 """
 
 from __future__ import annotations
 
+import json
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
@@ -31,10 +39,18 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 
 from misthos.api.guards import limit_signin
-from misthos.api.session import SESSION, SIGNED_IN, account_of, signed_in
+from misthos.api.session import (
+    SESSION,
+    SIGNED_IN,
+    account_of,
+    acting_account,
+    signed_in,
+    sso_unmet,
+)
 from misthos.auth import sessions, siwe
 from misthos.auth.sessions import Identity
 from misthos.config import settings
+from misthos.domain.sso import SsoRefusal, admitted, domain_of
 from misthos.repositories import AccountConflict
 from misthos.schemas import (
     Account,
@@ -47,10 +63,15 @@ from misthos.schemas import (
     SignInRequest,
     SimulatedLink,
     SimulatedSignIn,
+    SsoConnection,
+    SsoSignInRequest,
+    SsoSignInStart,
     WalletConnectRequest,
 )
+from misthos.services.attestor import AttestorKeyError, secret_store
 from misthos.services.github import GitHubError
 from misthos.services.github.oauth import GitHubOAuth, simulated_user
+from misthos.services.sso import OidcClient, SsoError, pkce
 from misthos.store import AccountExists, NoAccountYet, store
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -65,6 +86,12 @@ STATE_COOKIE_PATH = "/api/v1/auth/github"
 
 _SIGNIN = "gh-signin:"
 _LINK = "gh-link:"
+
+SSO_STATE_COOKIE = "misthos_sso_state"
+SSO_STATE_COOKIE_PATH = "/api/v1/auth/sso"
+_SSO = "sso:"
+# What an identity provider may put in `error` that is worth repeating to the user.
+_PROVIDER_ERROR = re.compile(r"^[a-z_]{1,64}$")
 
 R401 = {"description": "Not signed in, or the signature does not prove the wallet"}
 R409_ORIGIN = {
@@ -81,6 +108,11 @@ def domain() -> str:
 
 def callback_url() -> str:
     return f"{settings.public_url.rstrip('/')}/api/v1/auth/github/callback"
+
+
+def sso_callback_url() -> str:
+    """The redirect URI an organisation registers with its identity provider."""
+    return f"{settings.public_url.rstrip('/')}/api/v1/auth/sso/callback"
 
 
 def _origin(url: str) -> str:
@@ -148,14 +180,17 @@ def _start_session(response: Response, identity: Identity) -> str:
 def _me(identity: Identity) -> MeOut:
     """The session and its account, from the store. Runs in the threadpool."""
     account = account_of(identity)
+    wallet = identity.method == "wallet"
     github = identity.method == "github"
     return MeOut(
         method=identity.method,
-        address=identity.address if not github else (account.address if account else None),
+        address=identity.address if wallet else (account.address if account else None),
         github_id=identity.github_id if github else (account.github_id if account else None),
         github_login=(account.github_login if account else None) or identity.github_login,
         account=account,
         wallet=store.wallet_of(account) if account else None,
+        sso_email=identity.email,
+        sso_required=sso_unmet(identity, account),
     )
 
 
@@ -409,6 +444,209 @@ async def _finish_link(request: Request, code: str, state: str) -> RedirectRespo
     return RedirectResponse(f"{settings.public_url.rstrip('/')}/account?linked=github", 303)
 
 
+# ------------------------------------------------------- with single sign-on
+
+
+def oidc_client(connection: SsoConnection) -> OidcClient:
+    """A client for the organisation's provider, with the secret read from the secret
+    store now, by reference, and held no longer than the request. Runs in the
+    threadpool."""
+    try:
+        secret = secret_store(settings.secret_store_dir).read(connection.client_secret_ref)
+    except AttestorKeyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if secret is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"single sign-on for {connection.publisher_id} is not finished: the secret "
+            f"store holds nothing at {connection.client_secret_ref}",
+        )
+    return OidcClient(connection.issuer, connection.client_id, secret)
+
+
+def _connection_for(email: str) -> SsoConnection:
+    connection = store.sso_for_email(email)
+    if connection is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no organisation signs in with single sign-on at {domain_of(email) or email}",
+        )
+    return connection
+
+
+def _organisation_name(publisher_id: str) -> str:
+    publisher = store.get_publisher(publisher_id)
+    return publisher.name if publisher else publisher_id
+
+
+def _no_account(publisher_id: str) -> str:
+    return f"{publisher_id} has no account to sign in to; its owner signs in and chooses a side"
+
+
+@router.post(
+    "/sso/signin",
+    summary="Sign in through your organisation's single sign-on",
+    response_model=SsoSignInStart,
+    dependencies=[limit_signin],
+    responses={
+        404: {"description": "No organisation signs in with single sign-on at that domain"},
+        409: R409_ORIGIN,
+        429: R429,
+        502: {"description": "The identity provider could not be reached or answered wrong"},
+        503: {"description": "The organisation's client secret is not in the secret store"},
+    },
+)
+async def start_sso_signin(
+    payload: SsoSignInRequest, request: Request, response: Response
+) -> SsoSignInStart:
+    """Start signing in through an organisation's identity provider.
+
+    The work e-mail's domain says which. Answers with the URL to send the browser to,
+    and sets a short-lived HttpOnly cookie holding the same state; the provider sends
+    the user back to `/auth/sso/callback`, which signs them in only if the two match.
+    """
+    connection = await run_in_threadpool(_connection_for, payload.email)
+    _refuse_another_origin(request, "sign in")
+    client = await run_in_threadpool(oidc_client, connection)
+    try:
+        discovery = await run_in_threadpool(client.discover)
+    except SsoError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    state, nonce, proof = secrets.token_urlsafe(24), secrets.token_urlsafe(24), pkce()
+    pending = json.dumps(
+        {
+            "publisher_id": connection.publisher_id,
+            "issuer": connection.issuer,
+            "nonce": nonce,
+            "verifier": proof.verifier,
+        }
+    )
+    await run_in_threadpool(store.coordinator.put, f"{_SSO}{state}", pending, NONCE_TTL)
+    response.set_cookie(
+        SSO_STATE_COOKIE,
+        state,
+        max_age=int(NONCE_TTL.total_seconds()),
+        httponly=True,
+        # Lax, so the browser sends it on the top-level return from the provider.
+        samesite="lax",
+        secure=_secure(),
+        path=SSO_STATE_COOKIE_PATH,
+    )
+    return SsoSignInStart(
+        authorize_url=client.authorize_url(
+            discovery,
+            state=state,
+            nonce=nonce,
+            challenge=proof.challenge,
+            redirect_uri=sso_callback_url(),
+            login_hint=payload.email,
+        ),
+        organisation=await run_in_threadpool(_organisation_name, connection.publisher_id),
+    )
+
+
+@router.post(
+    "/sso/simulate-signin",
+    summary="Sign in with a typed work e-mail (simulation only)",
+    response_model=SessionOut,
+    dependencies=[limit_signin],
+    responses={
+        403: {"description": "Outside the simulation, where the identity provider signs in"},
+        404: {"description": "No organisation signs in with single sign-on at that domain"},
+        409: {"description": "The organisation has no account to act as"},
+        429: R429,
+    },
+)
+async def simulate_sso_signin(payload: SsoSignInRequest, response: Response) -> SessionOut:
+    """Sign in as a work e-mail without a provider: the simulation's demo only. The
+    address stands for one the organisation's provider verified."""
+    if not settings.simulated:
+        raise HTTPException(status_code=403, detail="sign in through your identity provider")
+    connection = await run_in_threadpool(_connection_for, payload.email)
+    try:
+        email = admitted(connection.domains, payload.email, True)
+    except SsoRefusal as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    identity = Identity.sso(connection.publisher_id, email)
+    if await run_in_threadpool(account_of, identity) is None:
+        raise HTTPException(status_code=409, detail=_no_account(connection.publisher_id))
+    return await _session_out(response, identity)
+
+
+@router.get(
+    "/sso/callback",
+    summary="Where an organisation's identity provider returns",
+    status_code=303,
+    response_class=RedirectResponse,
+    responses={
+        303: {"description": "Signed in; on to the Account page"},
+        400: {"description": "The state is unknown, used or expired, or no code came back"},
+        403: {
+            "description": "This browser did not start the sign-in, the provider refused it, "
+            "or the address it asserted is not admitted. No session is issued."
+        },
+        409: {"description": "The organisation's sign-on changed mid-flight, or it has no account"},
+        502: {"description": "The provider refused the code, or its ID token does not check out"},
+        503: {"description": "The organisation's client secret is not in the secret store"},
+    },
+)
+async def sso_callback(
+    request: Request, state: str, code: str | None = None, error: str | None = None
+) -> RedirectResponse:
+    """Where the provider sends the user back. The state is spent on first use, must
+    come back to the browser that started it, and the redirect goes only to this app's
+    own Account page."""
+    pending = await run_in_threadpool(_take, f"{_SSO}{state}")
+    if pending is None:
+        raise HTTPException(
+            status_code=400,
+            detail="this sign-in is unknown, used or expired; start it again from the Account page",
+        )
+    kept = request.cookies.get(SSO_STATE_COOKIE, "")
+    if not kept or not secrets.compare_digest(kept.encode(), state.encode()):
+        raise HTTPException(
+            status_code=403,
+            detail="this sign-in was not started in this browser; start it again from the "
+            "Account page",
+        )
+    if error is not None:
+        said = f": {error}" if _PROVIDER_ERROR.match(error) else ""
+        raise HTTPException(status_code=403, detail=f"your identity provider refused{said}")
+    if not code:
+        raise HTTPException(status_code=400, detail="the identity provider sent no code back")
+    started = json.loads(pending)
+    publisher_id = started["publisher_id"]
+    connection = await run_in_threadpool(store.sso, publisher_id)
+    if connection is None or connection.issuer != started["issuer"]:
+        raise HTTPException(
+            status_code=409,
+            detail="the organisation's single sign-on changed while you were signing in; "
+            "start again",
+        )
+    client = await run_in_threadpool(oidc_client, connection)
+    try:
+        user = await run_in_threadpool(
+            lambda: client.user_for(
+                code=code,
+                verifier=started["verifier"],
+                nonce=started["nonce"],
+                redirect_uri=sso_callback_url(),
+            )
+        )
+        email = admitted(connection.domains, user.email, user.email_verified)
+    except SsoError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SsoRefusal as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    identity = Identity.sso(publisher_id, email)
+    if await run_in_threadpool(account_of, identity) is None:
+        raise HTTPException(status_code=409, detail=_no_account(publisher_id))
+    back = RedirectResponse(f"{settings.public_url.rstrip('/')}/account?signed_in=sso", 303)
+    _start_session(back, identity)
+    back.delete_cookie(SSO_STATE_COOKIE, path=SSO_STATE_COOKIE_PATH)
+    return back
+
+
 # ------------------------------------------------------------- the session
 
 
@@ -465,6 +703,11 @@ async def choose_role(payload: RoleRequest, identity: Identity | None = SESSION)
     """
     if identity is None:
         raise HTTPException(status_code=401, detail="sign in first")
+    if identity.method == "sso":
+        raise HTTPException(
+            status_code=409,
+            detail="single sign-on acts as the organisation's account, which already has a side",
+        )
     try:
         return await run_in_threadpool(
             lambda: store.create_account(
@@ -511,7 +754,7 @@ async def connect_wallet(
     if identity is None:
         raise HTTPException(status_code=401, detail="sign in first, then connect a wallet")
     address = await _proven_address(payload.message, payload.signature)
-    account = await run_in_threadpool(account_of, identity)
+    account = await run_in_threadpool(acting_account, identity)
     try:
         return await run_in_threadpool(
             lambda: store.connect_wallet(

@@ -12,7 +12,8 @@ export function useHealth() {
 }
 
 /**
- * Who is signed in, how (GitHub or a wallet), and their account; null when nobody is.
+ * Who is signed in, how (GitHub, a wallet or single sign-on), and their account; null
+ * when nobody is.
  */
 export function useMe() {
   return useQuery({
@@ -54,6 +55,21 @@ export async function signInWithGitHub(): Promise<void> {
 /** The simulation's GitHub sign-in: a typed login stands in for OAuth. */
 export async function demoGitHubSignIn(login: string): Promise<void> {
   unwrap(await api.POST('/api/v1/auth/github/simulate-signin', { body: { login } }))
+}
+
+/**
+ * Sign in through an organisation's single sign-on (#53): the work e-mail's domain
+ * finds its identity provider, the API sets a short-lived cookie holding the state, and
+ * the provider sends the browser back to /account?signed_in=sso.
+ */
+export async function signInWithSso(email: string): Promise<void> {
+  const { authorize_url } = unwrap(await api.POST('/api/v1/auth/sso/signin', { body: { email } }))
+  window.location.assign(authorize_url)
+}
+
+/** The simulation's single sign-on: a typed work e-mail stands in for the provider. */
+export async function demoSsoSignIn(email: string): Promise<void> {
+  unwrap(await api.POST('/api/v1/auth/sso/simulate-signin', { body: { email } }))
 }
 
 /**

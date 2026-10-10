@@ -23,6 +23,7 @@ export type HealthOut = components['schemas']['HealthOut']
 export type Account = components['schemas']['Account']
 export type MeOut = components['schemas']['MeOut']
 export type SessionOut = components['schemas']['SessionOut']
+export type SsoOut = components['schemas']['SsoOut']
 
 /** A refusal from the API, carrying the reason it gave. */
 export class ApiError extends Error {

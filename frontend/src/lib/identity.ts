@@ -2,10 +2,14 @@ import { shortHash, type Account, type MeOut } from './client'
 
 /**
  * Who is signed in, in the words the app shows them (#131): the GitHub login for a
- * GitHub session, the wallet for a wallet session. Either can be missing on the other
- * kind, so each falls back to what the session does have.
+ * GitHub session, the wallet for a wallet session, the work e-mail for a single sign-on
+ * one (#53). Either of the first two can be missing on the other kind, so each falls
+ * back to what the session does have.
  */
-export function signedInAs(me: Pick<MeOut, 'method' | 'github_login' | 'address'>): string {
+export function signedInAs(
+  me: Pick<MeOut, 'method' | 'github_login' | 'address' | 'sso_email'>,
+): string {
+  if (me.method === 'sso' && me.sso_email) return me.sso_email
   const login = me.github_login ? `@${me.github_login}` : null
   const wallet = me.address ? shortHash(me.address) : null
   return (me.method === 'github' ? (login ?? wallet) : (wallet ?? login)) ?? 'signed in'

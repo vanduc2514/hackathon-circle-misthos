@@ -365,3 +365,28 @@ repo_connections = Table(
     Column("publisher_id", Id, ForeignKey("publishers.id")),
     Column("connected_at", Timestamp, nullable=False),
 )
+
+
+# An Enterprise organisation's connection to its own identity provider (#53). The
+# client secret is named by reference in the secret store, never kept here.
+sso_connections = Table(
+    "sso_connections",
+    metadata,
+    Column("publisher_id", Id, ForeignKey("publishers.id"), primary_key=True),
+    Column("issuer", String(300), nullable=False),
+    Column("client_id", String(256), nullable=False),
+    Column("client_secret_ref", String(128), nullable=False),
+    Column("required", Boolean, nullable=False),
+    Column("configured_at", Timestamp, nullable=False),
+)
+
+# The e-mail domains each connection speaks for. A domain routes sign-ins to one
+# organisation only, and the primary key is what makes that hold across processes.
+sso_domains = Table(
+    "sso_domains",
+    metadata,
+    Column("domain", String(253), primary_key=True),
+    Column(
+        "publisher_id", Id, ForeignKey("sso_connections.publisher_id"), nullable=False
+    ),
+)

@@ -500,6 +500,15 @@ def _command(
             )
         if account.party_id != rec.publisher_id:
             return _Ran(False, f"@{login}, only the publisher of this issue can {name} it.")
+        if store.sso_required(account.party_id):
+            # A GitHub login is not the organisation's sign-on, which it made the only way
+            # to act for it (#53); a comment would otherwise commit its money around it.
+            return _Ran(
+                False,
+                f"@{login}, {account.party_id} acts only through its single sign-on: "
+                f"{name} this at {settings.public_url}/issues/{rec.id}, signed in with your "
+                "work e-mail.",
+            )
         if name == "criteria":
             if not command.items:
                 return _Ran(

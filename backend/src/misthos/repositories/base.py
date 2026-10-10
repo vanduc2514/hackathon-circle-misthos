@@ -17,6 +17,7 @@ from misthos.schemas import (
     Decision,
     Publisher,
     RepoConnection,
+    SsoConnection,
     Subscription,
     SubscriptionPayment,
 )
@@ -40,6 +41,10 @@ class AppendOnlyViolation(Exception):
 
 class AccountConflict(Exception):
     """A wallet, a GitHub account and a GitHub login each belong to one account only."""
+
+
+class SsoDomainTaken(Exception):
+    """An e-mail domain routes sign-ins to one organisation's identity provider only."""
 
 
 class PaymentAlreadyUsed(Exception):
@@ -121,6 +126,17 @@ class Repository(Protocol):
     def delete_connections(self, repos: list[str]) -> None: ...
 
     def list_connections(self) -> list[RepoConnection]: ...
+
+    def get_sso(self, publisher_id: str) -> SsoConnection | None: ...
+
+    def get_sso_by_domain(self, domain: str) -> SsoConnection | None:
+        """The connection that speaks for an e-mail domain, lowercase."""
+
+    def save_sso(self, connection: SsoConnection) -> None:
+        """Create or replace, by publisher. A domain another organisation's connection
+        names is refused with SsoDomainTaken, and nothing is written."""
+
+    def delete_sso(self, publisher_id: str) -> None: ...
 
     def get_subscription(self, publisher_id: str) -> Subscription | None: ...
 

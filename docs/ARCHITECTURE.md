@@ -589,7 +589,9 @@ Every CSV the platform serves, the audit export and a contributor's statement al
 - **When a period ends.** The sweeper marks a period that ended unpaid as past due, gives it seven days' grace, and then moves the organisation back to Open. A cancelled plan ends at its period end.
 - **Enterprise** is agreed in a contract and recorded by an operator (`python -m misthos.services.contracts`).
 - **The simulation** has its own rail, so the demo can buy Team with a button.
-- **Not built yet:** SSO, which needs organisation membership beyond one wallet per party.
+- **Single sign-on** (`domain/sso.py`, `services/sso.py`, Enterprise only). An organisation connects its own OpenID Connect provider at `PUT /publishers/{id}/sso`: the issuer, the client id, the client secret *by reference* in the secret store (put there during onboarding, never in the database), and the e-mail domains it speaks for. A public mail domain is refused, and a domain routes to one organisation only. Staff sign in with a work e-mail (`POST /auth/sso/signin`): the authorization code flow with PKCE, a nonce and the same state-cookie check as GitHub sign-in, and the ID token is checked against the provider's published keys, its issuer and our client id. The session (`sso:<publisher id>`) acts as the organisation's account, and the decision log records the person's verified address. The session is checked against the connection on every request, so removing the connection, or a domain from it, ends its sessions at once.
+- **Requiring single sign-on.** `required` makes it the only way to act for the organisation; any other session of its account gets a 403 on everything of the organisation's own. It is turned on only from a session that came through the sign-on, so a provider that has never worked cannot lock the organisation out, and like a spending policy it keeps being enforced when the plan lapses.
+- **Not built yet:** the support commitment is a line on the plan, with no mechanism behind it. Single sign-on admits whoever the provider admits in the named domains; narrowing that to a group claim is the provider's assignment to configure, not ours.
 
 ## Trust boundaries
 

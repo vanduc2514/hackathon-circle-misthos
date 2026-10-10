@@ -426,8 +426,9 @@ class SignInRequest(BaseModel):
 class MeOut(BaseModel):
     """Who is signed in, how, and the account they act as (#131)."""
 
-    method: Literal["github", "wallet"] = Field(
-        description="How this session signed in: with GitHub, or by signing with a wallet"
+    method: Literal["github", "wallet", "sso"] = Field(
+        description="How this session signed in: with GitHub, by signing with a wallet, or "
+        "through an organisation's single sign-on (#53)"
     )
     address: str | None = Field(
         description="The wallet, lowercase: the one this session signed in with, or the "
@@ -445,6 +446,17 @@ class MeOut(BaseModel):
         description="The wallet this account's money moves through: a publisher's funding "
         "wallet, or a contributor's payout wallet (connected or Circle). Null until there "
         "is one; approving a price or claiming waits for it.",
+    )
+    sso_email: str | None = Field(
+        default=None,
+        description="Signed in through the organisation's single sign-on: the person, by "
+        "the verified e-mail their identity provider asserted. What the decision log "
+        "records for what they do.",
+    )
+    sso_required: bool = Field(
+        default=False,
+        description="The account acts only through its organisation's single sign-on, and "
+        "this session did not come through it: sign in with a work e-mail to act.",
     )
 
 
@@ -476,6 +488,21 @@ class GitHubSignInStart(BaseModel):
     short-lived HttpOnly cookie, which the callback checks."""
 
     authorize_url: str
+
+
+class SsoSignInRequest(BaseModel):
+    """A work e-mail. Its domain says which organisation's identity provider to use."""
+
+    email: str = Field(min_length=3, max_length=254)
+
+
+class SsoSignInStart(BaseModel):
+    """Where to send the user to sign in through their organisation's identity provider.
+    The state in it is also set in a short-lived HttpOnly cookie, which the callback
+    checks."""
+
+    authorize_url: str
+    organisation: str = Field(description="The organisation the provider signs in to")
 
 
 class AlreadyPublished(BaseModel):
@@ -835,6 +862,45 @@ class RepoConnection(BaseModel):
     """The GitHub login that installed the App: the publisher, once that login is linked."""
     publisher_id: str | None = None
     connected_at: datetime
+
+
+class SsoConnection(BaseModel):
+    """An Enterprise organisation's connection to its own identity provider (#53)."""
+
+    publisher_id: str
+    issuer: str = Field(description="The OpenID Connect issuer URL, without a trailing slash")
+    client_id: str
+    client_secret_ref: str = Field(
+        description="The client secret's name in the secret store. Never the secret."
+    )
+    domains: list[str] = Field(
+        description="The e-mail domains the provider speaks for, lowercase. A sign-in is "
+        "admitted only for a verified address in one of them."
+    )
+    required: bool = Field(
+        default=False,
+        description="The organisation's account acts only through this sign-on. Any other "
+        "session of it can read the public pages and nothing of the organisation's own.",
+    )
+    configured_at: datetime
+
+
+class SsoRequest(BaseModel):
+    issuer: str = Field(min_length=8, max_length=300)
+    client_id: str = Field(min_length=1, max_length=256)
+    client_secret_ref: str = Field(min_length=1, max_length=128)
+    domains: list[str] = Field(min_length=1, max_length=10)
+    required: bool = False
+    """Turned on only from a session that came through this sign-on, so an organisation
+    never locks itself out with a provider it has not seen work."""
+
+
+class SsoOut(BaseModel):
+    """An organisation's single sign-on, and what to register with its provider."""
+
+    connection: SsoConnection | None = Field(description="Null until one is configured")
+    callback_url: str = Field(description="The redirect URI to register with the provider")
+    entitled: bool = Field(description="Whether the organisation's plan includes single sign-on")
 
 
 class RepositoriesOut(BaseModel):

@@ -484,8 +484,13 @@ class TestMigrations:
         assert contributor is not None and contributor.wallet is None
 
         # Which 0014 has no place for, so going back stops rather than drop it.
+        # The revisions above 0015 go first, in a step of their own: SQLite commits DDL
+        # as it runs, so undoing them inside the refused step would leave their tables
+        # dropped under a version that still names them.
+        run("downgrade", "0015")
         with pytest.raises(RuntimeError, match="rows without a wallet"):
             run("downgrade", "0014")
+        run("upgrade", "head")
         repo.reset()
 
 

@@ -24,6 +24,7 @@ function me(extra: Partial<MeOut> = {}): MeOut {
     github_login: 'octo-dev',
     account: null,
     wallet: null,
+    sso_required: false,
     ...extra,
   }
 }
@@ -33,6 +34,12 @@ describe('signedInAs', () => {
     expect(signedInAs(me())).toBe('@octo-dev')
     expect(signedInAs(me({ method: 'wallet', address: WALLET, github_login: null }))).toBe(
       '0x7e5f45…395bdf',
+    )
+  })
+
+  it('names a single sign-on session by the work e-mail its provider vouched for', () => {
+    expect(signedInAs(me({ method: 'sso', sso_email: 'dana@acme.example' }))).toBe(
+      'dana@acme.example',
     )
   })
 

@@ -81,6 +81,7 @@ from misthos.domain.review import (
     ready_for_review,
 )
 from misthos.domain.signals import read as read_signals
+from misthos.domain.sso import SsoTerms, domain_of
 from misthos.domain.timers import TimedAction
 from misthos.models.records import IssueRecord
 from misthos.observability.metrics import (
@@ -118,6 +119,7 @@ from misthos.schemas import (
     Review,
     SpendCategory,
     SpendOut,
+    SsoConnection,
     Submission,
     Subscription,
     SubscriptionOut,
@@ -3049,6 +3051,66 @@ class Store:
         connected = account.model_copy(update={"address": address})
         self.repo.save_account(connected)
         return connected
+
+    # ------------------------------------------------------- single sign-on (#53)
+
+    def sso(self, publisher_id: str) -> SsoConnection | None:
+        self.ensure_ready()
+        return self.repo.get_sso(publisher_id)
+
+    def sso_for_email(self, email: str) -> SsoConnection | None:
+        """The connection whose provider signs in this work address, by its domain."""
+        self.ensure_ready()
+        domain = domain_of(email)
+        return self.repo.get_sso_by_domain(domain) if domain else None
+
+    def set_sso(
+        self, publisher_id: str, terms: SsoTerms, now: datetime | None = None
+    ) -> SsoConnection:
+        """Connect a publisher to its identity provider, or replace the connection.
+
+        A domain another organisation's connection names is refused (SsoDomainTaken).
+        Whether the plan includes it, and who may turn `required` on, is the API's to
+        check: both depend on the request, not on what is stored.
+        """
+        self.ensure_ready()
+        if self.repo.get_publisher(publisher_id) is None:
+            raise KeyError(publisher_id)
+        connection = SsoConnection(
+            publisher_id=publisher_id,
+            issuer=terms.issuer,
+            client_id=terms.client_id,
+            client_secret_ref=terms.client_secret_ref,
+            domains=sorted(terms.domains),
+            required=terms.required,
+            configured_at=now or _now(),
+        )
+        self.repo.save_sso(connection)
+        return connection
+
+    def remove_sso(self, publisher_id: str) -> None:
+        """Every session that came through it stops acting for the publisher at once."""
+        self.ensure_ready()
+        if self.repo.get_publisher(publisher_id) is None:
+            raise KeyError(publisher_id)
+        self.repo.delete_sso(publisher_id)
+
+    def account_for_sso(self, publisher_id: str, email: str) -> Account | None:
+        """The account a single sign-on session acts as: the publisher's, while its
+        connection still speaks for the address. Removing the connection, or the
+        address's domain from it, ends every session it issued, without waiting for
+        the sessions to lapse."""
+        self.ensure_ready()
+        connection = self.repo.get_sso(publisher_id)
+        if connection is None or domain_of(email) not in connection.domains:
+            return None
+        return self.repo.get_account(publisher_id)
+
+    def sso_required(self, party_id: str) -> bool:
+        """Whether the party's account acts only through its single sign-on."""
+        self.ensure_ready()
+        connection = self.repo.get_sso(party_id)
+        return connection is not None and connection.required
 
     def wallet_of(self, account: Account) -> Wallet | None:
         """Where this account's money moves through: a publisher's funding wallet, or a
