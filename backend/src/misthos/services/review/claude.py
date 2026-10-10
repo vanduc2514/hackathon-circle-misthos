@@ -30,16 +30,18 @@ from misthos.domain.money import Usdc
 from misthos.domain.review import CriterionCheck, Judgement, Submitted
 from misthos.services.review.base import ReviewFailed
 
-API = "https://api.anthropic.com"
+# Any Anthropic-compatible /v1/messages endpoint. DeepSeek's by default, like
+# `MISTHOS_ANTHROPIC_API_URL`; Claude's when that setting says so.
+API = "https://api.deepseek.com/anthropic"
 API_VERSION = "2023-06-01"
 # Enough for any patch a fixed-price issue should produce. Beyond it the review says
 # it saw a truncated diff instead of pretending it saw everything.
 MAX_DIFF_CHARS = 120_000
-# The cap has to cover the model's own reasoning as well as the judgement, and on
-# Sonnet 5.5 thinking is on by default and counts against `max_tokens`. A judgement
-# of twelve criteria needs a couple of thousand tokens, so this leaves headroom
-# rather than risking `stop_reason: max_tokens` and no tool block at all. Only what
-# is generated is billed, so a generous ceiling costs nothing by itself.
+# The cap has to cover the judgement, and whichever endpoint answers may bill its
+# own reasoning against `max_tokens` as well. A judgement of twelve criteria needs a
+# couple of thousand tokens, so this leaves headroom rather than risking
+# `stop_reason: max_tokens` and no tool block at all. Only what is generated is
+# billed, so a generous ceiling costs nothing by itself.
 MAX_OUTPUT_TOKENS = 8192
 
 SYSTEM = """You review a pull request for Misthos, a marketplace that pays a \
@@ -174,9 +176,10 @@ class ClaudeReviewer:
             # a 400 here would mean no verdict could ever be issued. The system
             # prompt asks for the tool and `strict` keeps its arguments in schema.
             "tool_choice": {"type": "auto"},
-            # Between-tool thinking is this model's way of turning up-front
-            # reasoning off, which keeps the token budget for the judgement.
-            "thinking": {"type": "between_tools"},
+            # Thinking off up front, which keeps the token budget for the judgement.
+            # `disabled` is the one value Anthropic and DeepSeek both accept; a
+            # provider-specific type here is a 422 and no verdict at all.
+            "thinking": {"type": "disabled"},
             "messages": [{"role": "user", "content": render(submitted)}],
         }
         try:

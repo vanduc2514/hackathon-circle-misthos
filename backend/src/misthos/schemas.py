@@ -416,6 +416,14 @@ class GitHubLinkStart(BaseModel):
     authorize_url: str
 
 
+class AlreadyPublished(BaseModel):
+    """The answer to publishing a GitHub issue that already has an open listing (#120)."""
+
+    detail: str
+    issue_id: str
+    """The open listing of that GitHub issue."""
+
+
 class SimulatedLink(BaseModel):
     login: str = Field(min_length=1, max_length=39, pattern=r"^[A-Za-z0-9-]+$")
 
@@ -617,6 +625,16 @@ class HealthOut(BaseModel):
     money_note: str
     seeded_issues: int
     simulated: bool
+    github_oauth: bool = Field(
+        description=(
+            "Whether a real GitHub account can be linked here: both "
+            "MISTHOS_GITHUB_OAUTH_CLIENT_ID and MISTHOS_GITHUB_OAUTH_CLIENT_SECRET are set. "
+            "Without it, the simulation links a typed login and a deployment links none."
+        )
+    )
+    github_oauth_callback_url: str = Field(
+        description="The callback URL to register on the GitHub OAuth App, from MISTHOS_PUBLIC_URL"
+    )
 
 
 class StatementLine(BaseModel):

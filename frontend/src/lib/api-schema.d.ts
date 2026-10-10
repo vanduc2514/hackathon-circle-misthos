@@ -954,6 +954,16 @@ export interface components {
             created_at: string;
         };
         /**
+         * AlreadyPublished
+         * @description The answer to publishing a GitHub issue that already has an open listing (#120).
+         */
+        AlreadyPublished: {
+            /** Detail */
+            detail: string;
+            /** Issue Id */
+            issue_id: string;
+        };
+        /**
          * AnnualStatement
          * @description Every payout one contributor received in one calendar year, in UTC.
          *
@@ -1374,6 +1384,16 @@ export interface components {
             seeded_issues: number;
             /** Simulated */
             simulated: boolean;
+            /**
+             * Github Oauth
+             * @description Whether a real GitHub account can be linked here: both MISTHOS_GITHUB_OAUTH_CLIENT_ID and MISTHOS_GITHUB_OAUTH_CLIENT_SECRET are set. Without it, the simulation links a typed login and a deployment links none.
+             */
+            github_oauth: boolean;
+            /**
+             * Github Oauth Callback Url
+             * @description The callback URL to register on the GitHub OAuth App, from MISTHOS_PUBLIC_URL
+             */
+            github_oauth_callback_url: string;
         };
         /** IssueOut */
         IssueOut: {
@@ -2312,6 +2332,20 @@ export interface operations {
                     "application/json": components["schemas"]["GitHubLinkStart"];
                 };
             };
+            /** @description The browser is on another address than GitHub returns to */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No GitHub OAuth App is configured; the detail says what to set */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     simulate_github_link_api_v1_auth_github_simulate_post: {
@@ -2424,6 +2458,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description The GitHub issue already has an open listing, which `issue_id` names */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlreadyPublished"];
                 };
             };
             /** @description Validation Error */

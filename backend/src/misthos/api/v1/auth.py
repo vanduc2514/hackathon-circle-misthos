@@ -43,10 +43,31 @@ def callback_url() -> str:
     return f"{settings.public_url.rstrip('/')}/api/v1/auth/github/callback"
 
 
+def _origin(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}".lower()
+
+
+def oauth_configured() -> bool:
+    """Whether a real GitHub account can be linked: the OAuth App's id and secret are
+    both set. Read again on every call, so a test can configure it."""
+    return bool(settings.github_oauth_client_id and settings.github_oauth_client_secret)
+
+
 def oauth() -> GitHubOAuth | None:
-    if not (settings.github_oauth_client_id and settings.github_oauth_client_secret):
+    if not oauth_configured():
         return None
     return GitHubOAuth(settings.github_oauth_client_id, settings.github_oauth_client_secret)
+
+
+def not_configured() -> HTTPException:
+    """What an operator sets for linking to work, said where linking was asked for."""
+    return HTTPException(
+        status_code=503,
+        detail="GitHub linking is not set up on this server: create a GitHub OAuth App "
+        f"with the callback {callback_url()}, set MISTHOS_GITHUB_OAUTH_CLIENT_ID and "
+        "MISTHOS_GITHUB_OAUTH_CLIENT_SECRET, and restart the API",
+    )
 
 
 @router.post("/nonce", response_model=NonceOut, dependencies=[limit_signin])
@@ -133,14 +154,35 @@ async def choose_role(payload: RoleRequest, request: Request) -> Account:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/github/start", response_model=GitHubLinkStart)
-async def start_github_link(account: Account | None = SIGNED_IN) -> GitHubLinkStart:
+@router.post(
+    "/github/start",
+    response_model=GitHubLinkStart,
+    responses={
+        409: {"description": "The browser is on another address than GitHub returns to"},
+        503: {"description": "No GitHub OAuth App is configured; the detail says what to set"},
+    },
+)
+async def start_github_link(
+    request: Request, account: Account | None = SIGNED_IN
+) -> GitHubLinkStart:
     """Where to send the user to approve linking their GitHub account."""
     if account is None:
         raise HTTPException(status_code=401, detail="sign in and choose a role first")
     client = oauth()
     if client is None:
-        raise HTTPException(status_code=503, detail="GitHub OAuth is not configured")
+        raise not_configured()
+    # GitHub returns to the public URL, and the session cookie belongs to the address
+    # the browser is on. Opened at 127.0.0.1:5173 with the public URL on localhost, the
+    # callback would arrive without the session and be refused, after the user had
+    # approved on GitHub. Said now instead, while it can still be put right.
+    public = _origin(settings.public_url)
+    origin = request.headers.get("origin")
+    if origin and _origin(origin) != public:
+        raise HTTPException(
+            status_code=409,
+            detail=f"GitHub sends you back to {public}, and this browser is on {origin}; "
+            f"open the app at {public} and link from there",
+        )
     state = secrets.token_urlsafe(24)
     await run_in_threadpool(store.coordinator.put, f"gh-link:{state}", account.address, NONCE_TTL)
     return GitHubLinkStart(authorize_url=client.authorize_url(state, callback_url()))
@@ -175,7 +217,7 @@ async def github_callback(
     await run_in_threadpool(store.coordinator.delete, slot)
     client = oauth()
     if client is None:
-        raise HTTPException(status_code=503, detail="GitHub OAuth is not configured")
+        raise not_configured()
     try:
         login = await run_in_threadpool(client.login_for, code, callback_url())
         await run_in_threadpool(store.link_github, address, login)

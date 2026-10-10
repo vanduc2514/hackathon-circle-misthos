@@ -36,8 +36,9 @@ exactly this and fails the build if any service does not become healthy.
 
 Pass real integrations through from your shell or a `.env` file next to
 `compose.yaml`: `MISTHOS_GITHUB_APP_ID`, `MISTHOS_GITHUB_APP_PRIVATE_KEY`,
-`MISTHOS_GITHUB_WEBHOOK_SECRET`, `MISTHOS_ANTHROPIC_API_KEY`, and for sign-in
-`MISTHOS_PUBLIC_URL`, `MISTHOS_SESSION_SECRET`, `MISTHOS_GITHUB_OAUTH_CLIENT_ID` and
+`MISTHOS_GITHUB_WEBHOOK_SECRET`, `MISTHOS_ANTHROPIC_API_KEY`,
+`MISTHOS_ANTHROPIC_API_URL`, and for sign-in `MISTHOS_PUBLIC_URL`,
+`MISTHOS_SESSION_SECRET`, `MISTHOS_GITHUB_OAUTH_CLIENT_ID` and
 `MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`. Every other setting is in
 `backend/.env.example`.
 
@@ -208,3 +209,38 @@ is real, or settle on Arc testnet as section 3 describes.
    5. The publisher merges. The App posts the settlement, and the issue is `PAID`.
 
 Every step lands in the issue's decision log in the web app.
+
+## 5. The nightly review
+
+`.github/workflows/nightly.yml` runs at 18:00 in `Asia/Ho_Chi_Minh` and reviews every
+open pull request in this repository against `main`. It posts the review with an
+explicit decision — an approving review, or a request for changes — and squash-merges
+the ones it approved, and only those.
+
+The decision is [backend/src/misthos/services/pr_review.py](../backend/src/misthos/services/pr_review.py),
+which is a tool rather than shell written into the workflow so that it can be tested:
+nothing merges on a request-changes verdict, a draft, a conflict, a check that is red or
+still running, or a pull request another reviewer has held back. A pull request it
+cannot review — a diff past the size it reads, an answer it cannot parse — is skipped and
+said so in the run's log, never guessed at. Each run reviews all of them, and one whose
+head has not moved since the last review is only judged for the merge.
+
+Run it by hand:
+
+```bash
+GH_TOKEN=$(gh auth token) MISTHOS_ANTHROPIC_API_KEY=... mise run pr:review
+mise run pr:review -- --dry-run     # judge and report; post nothing, merge nothing
+mise run pr:review -- --only 117    # one pull request
+```
+
+Two repository secrets. `ANTHROPIC_API_KEY` pays for the model that writes the reviews.
+`NIGHTLY_TOKEN` is optional: the default `GITHUB_TOKEN` can review and merge other
+people's pull requests, but a pull request this repository's owner wrote cannot be
+*approved* by its author, so merging those unattended needs a token whose user may
+bypass the `main` ruleset. Without it they are reviewed, given a verdict in a comment,
+and left for a person to merge.
+
+The key is spent at `MISTHOS_ANTHROPIC_API_URL`, any Anthropic-compatible endpoint. It
+is unset by default, so the backend's built-in one is used; set the repository variable
+`MISTHOS_ANTHROPIC_API_URL` when the key belongs somewhere else, such as
+`https://api.anthropic.com`.

@@ -9,7 +9,7 @@ module never writes state itself.
   connected to the publisher whose linked GitHub login installed it.
 - `issues` opened or labeled with the `misthos` label, in a connected repository:
   `publish`. The issue is priced and the price, the drafted criteria and the commands
-  are posted on it.
+  are posted on it. An issue already listed and open is not listed again.
 - `issues` edited, labeled or unlabeled: `reprice`, a new proposal while the issue
   is unfunded.
 - `issue_comment` created with commands, each on its own line:
@@ -57,6 +57,7 @@ from misthos.services.coordination import Busy
 from misthos.services.github.app import pull_request_from
 from misthos.services.github.base import GitHubError
 from misthos.store import (
+    AlreadyListed,
     CriteriaNotApproved,
     NotTheSubmission,
     Store,
@@ -209,6 +210,11 @@ def _list_issue(store: Store, repo: str, number: int, payload: dict[str, Any]) -
         return Handled(True, f"{repo}#{number} is not fundable as scoped")
     except UnreadableIssue as exc:
         return Handled(False, f"ignored: {exc}")
+    except AlreadyListed as exc:
+        # GitHub sends `opened` and `labeled` together for an issue created with the
+        # label, and both arrive here finding it unlisted. The second is the same issue
+        # and the price is already posted on it, so it says nothing (#120).
+        return Handled(False, f"ignored: {exc}", (exc.issue_id,))
     assert rec.proposal is not None
     p = rec.proposal
     criteria = "\n".join(f"- {c}" for c in rec.acceptance_criteria)
