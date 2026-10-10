@@ -154,6 +154,9 @@ escrow_commitments = Table(
     Column("issue_id", Id, ForeignKey("issues.id"), primary_key=True),
     Column("contract", String(64), nullable=False),
     Column("chain", String(32), nullable=False),
+    # What the money was (#31): the simulation and Arc testnet share a chain id, so the
+    # chain alone cannot tell test money from none. Null before it was kept.
+    Column("money", String(16)),
     Column("tx_hash", String(80), nullable=False, unique=True),
     Column("amount_base_units", BigInteger, nullable=False),
     Column("deadline", Timestamp, nullable=False),

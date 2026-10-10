@@ -167,10 +167,18 @@ class PriceProposalOut(BaseModel):
     """Closest first. Confidence follows these, and nothing else."""
 
 
+MoneyKind = Literal["simulated", "test", "real", "unknown"]
+
+
 class EscrowCommitment(BaseModel):
     issue_id: str
     contract: str
     chain: str
+    money: MoneyKind | None = None
+    """What the committed money was, recorded when it was committed (#31): simulated,
+    test USDC, real USDC, or USDC on a chain that is not Arc. `chain` alone cannot say:
+    the simulation and Arc testnet share a chain id. None for a commitment recorded
+    before this was kept."""
     tx_hash: str
     amount: dict[str, str | int]
     deadline: datetime
@@ -321,6 +329,19 @@ class IssueSummaryOut(BaseModel):
     github_url: str
 
 
+class ValueMoved(BaseModel):
+    """What settled on one network with one kind of money (#31). Test money and real
+    money are never added into one figure, and neither is the simulation's."""
+
+    chain: str = Field(description="arc-mainnet, arc-testnet or chain-<id>")
+    money: Literal["simulated", "test", "real", "unknown", "unrecorded"] = Field(
+        description="What the money was; `unrecorded` for a commitment made before it was kept"
+    )
+    settled_issues: int
+    settled_usdc: str
+    platform_fees_usdc: str
+
+
 class MetricsOut(BaseModel):
     """Every number is computed from the ledger and the lifecycle records (09)."""
 
@@ -339,8 +360,12 @@ class MetricsOut(BaseModel):
     repeat_publisher_rate: float
     """Publishers who funded a second issue within 60 days of an earlier one."""
     matched_volume_usdc: str
+    """Every network together. Report `value_moved` instead, which keeps test money,
+    real money and the simulation apart (#31)."""
     platform_fees_usdc: str
-    """The take-rate revenue actually collected across settled issues."""
+    """The take-rate revenue actually collected across settled issues, every network
+    together; `value_moved` splits it."""
+    value_moved: list[ValueMoved] = Field(default_factory=list)
     median_hours_to_payout: float | None
     refund_rate: float = 0.0
     """Of the commitments that closed, the share refunded rather than paid."""
@@ -705,6 +730,8 @@ class LoopOut(BaseModel):
     settled_issues: int
     settled_issues_7d: int
     matched_volume_usdc: str
+    """Every network together; `value_moved` keeps them apart (#31)."""
+    value_moved: list[ValueMoved] = Field(default_factory=list)
     recent: list[LoopSettlement]
 
 

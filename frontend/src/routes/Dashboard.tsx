@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, money, relativeTime, unwrap, type Decision, type IssueSummaryOut, type MetricsOut } from '../lib/client'
 import { Bar, Panel, Stat, StateBadge } from '../components/ui'
+import { valueMovedStat } from '../lib/value-moved'
 
 export default function Dashboard() {
   const qc = useQueryClient()
@@ -80,11 +81,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid k4">
-        <Stat
-          label="Matched volume"
-          value={`$${money(m?.matched_volume_usdc)}`}
-          hint="Total value of work that changed hands"
-        />
+        <Stat label="Value moved" {...valueMovedStat(m?.value_moved)} />
         <Stat
           label="Funded issues"
           value={m?.funded_issues_published ?? '—'}

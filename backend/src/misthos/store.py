@@ -792,6 +792,7 @@ class Store:
             issue_id=rec.id,
             contract=ESCROW_CONTRACT,
             chain=settings.chain,
+            money=settings.network.money,
             tx_hash=tx,
             amount=money(terms.amount),
             deadline=deadline,
@@ -2747,6 +2748,7 @@ class Store:
                 1 for e, _ in settled if e.occurred_at >= now - metrics.WEEK
             ),
             matched_volume_usdc=f"{Usdc(sum(e.amount.base_units for e, _ in settled)).decimal:.2f}",
+            value_moved=metrics.value_moved((r, e) for e, r in settled),
             recent=[
                 LoopSettlement(
                     issue_id=r.id,

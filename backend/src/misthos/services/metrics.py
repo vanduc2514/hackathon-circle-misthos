@@ -18,7 +18,7 @@ from misthos.domain import issue as lifecycle
 from misthos.domain.ledger import MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.models.records import IssueRecord
-from misthos.schemas import Decision, MetricsOut
+from misthos.schemas import Decision, MetricsOut, ValueMoved
 
 WEEK = timedelta(days=7)
 MONTH = timedelta(days=30)
@@ -101,6 +101,35 @@ def earnings(
     return dict(paid)
 
 
+def value_moved(released: Iterable[tuple[IssueRecord, MoneyEvent]]) -> list[ValueMoved]:
+    """What settled, by network and by what the money was, one row each (#31).
+
+    The judges weight real USDC above test USDC, and the simulation moved nothing, so a
+    single total would claim more than happened. Real money comes first.
+    """
+    groups: dict[tuple[str, str], list[tuple[IssueRecord, MoneyEvent]]] = defaultdict(list)
+    for rec, event in released:
+        chain = rec.escrow.chain if rec.escrow else "unknown"
+        kind = (rec.escrow.money if rec.escrow else None) or "unrecorded"
+        groups[(chain, kind)].append((rec, event))
+    order = ["real", "unknown", "test", "simulated", "unrecorded"]
+    rows_out = []
+    for chain, kind in sorted(groups, key=lambda g: (order.index(g[1]), g[0])):
+        rows = groups[(chain, kind)]
+        settled = sum(e.amount.base_units for _, e in rows)
+        fees = sum(r.platform_fee.base_units for r, _ in rows if r.platform_fee)
+        rows_out.append(
+            ValueMoved(
+                chain=chain,
+                money=kind,  # type: ignore[arg-type]
+                settled_issues=len(rows),
+                settled_usdc=f"{Usdc(settled).decimal:.2f}",
+                platform_fees_usdc=f"{Usdc(fees).decimal:.2f}",
+            )
+        )
+    return rows_out
+
+
 def compute(records: list[IssueRecord], now: datetime) -> MetricsOut:
     committed = _events(records, MoneyEventKind.COMMITTED)
     released = _events(records, MoneyEventKind.RELEASED)
@@ -164,6 +193,7 @@ def compute(records: list[IssueRecord], now: datetime) -> MetricsOut:
         repeat_publisher_rate=_rate(repeat, publishers),
         matched_volume_usdc=f"{Usdc(sum(e.amount.base_units for _, e in released)).decimal:.2f}",
         platform_fees_usdc=f"{Usdc(fees).decimal:.2f}",
+        value_moved=value_moved(released),
         median_hours_to_payout=round(float(median_hours), 1) if median_hours is not None else None,
         refund_rate=_rate(len(refunded), len(released) + len(refunded)),
         dispute_rate=_rate(

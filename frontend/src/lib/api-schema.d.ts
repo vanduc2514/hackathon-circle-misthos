@@ -1486,6 +1486,8 @@ export interface components {
             contract: string;
             /** Chain */
             chain: string;
+            /** Money */
+            money?: ("simulated" | "test" | "real" | "unknown") | null;
             /** Tx Hash */
             tx_hash: string;
             /** Amount */
@@ -1771,6 +1773,8 @@ export interface components {
             settled_issues_7d: number;
             /** Matched Volume Usdc */
             matched_volume_usdc: string;
+            /** Value Moved */
+            value_moved?: components["schemas"]["ValueMoved"][];
             /** Recent */
             recent: components["schemas"]["LoopSettlement"][];
         };
@@ -1869,6 +1873,8 @@ export interface components {
             matched_volume_usdc: string;
             /** Platform Fees Usdc */
             platform_fees_usdc: string;
+            /** Value Moved */
+            value_moved?: components["schemas"]["ValueMoved"][];
             /** Median Hours To Payout */
             median_hours_to_payout: number | null;
             /**
@@ -2580,6 +2586,30 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * ValueMoved
+         * @description What settled on one network with one kind of money (#31). Test money and real
+         *     money are never added into one figure, and neither is the simulation's.
+         */
+        ValueMoved: {
+            /**
+             * Chain
+             * @description arc-mainnet, arc-testnet or chain-<id>
+             */
+            chain: string;
+            /**
+             * Money
+             * @description What the money was; `unrecorded` for a commitment made before it was kept
+             * @enum {string}
+             */
+            money: "simulated" | "test" | "real" | "unknown" | "unrecorded";
+            /** Settled Issues */
+            settled_issues: number;
+            /** Settled Usdc */
+            settled_usdc: string;
+            /** Platform Fees Usdc */
+            platform_fees_usdc: string;
         };
         /** Wallet */
         Wallet: {
