@@ -23,6 +23,7 @@ from enum import StrEnum
 
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import TAKE_RATE_BY_TIER, min_fix_price
+from misthos.domain.support import COMMITMENT
 
 PERIOD = timedelta(days=30)
 GRACE = timedelta(days=7)
@@ -94,7 +95,7 @@ PLANS: dict[str, Plan] = {
         monthly=Usdc.from_decimal("2000"),
         self_serve=False,
         features=frozenset(Feature),
-        support="A support commitment, agreed in the contract",
+        support=COMMITMENT,
     ),
 }
 

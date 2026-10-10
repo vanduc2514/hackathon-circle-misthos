@@ -20,6 +20,7 @@ from misthos.schemas import (
     SsoConnection,
     Subscription,
     SubscriptionPayment,
+    SupportRequest,
 )
 
 
@@ -137,6 +138,14 @@ class Repository(Protocol):
         names is refused with SsoDomainTaken, and nothing is written."""
 
     def delete_sso(self, publisher_id: str) -> None: ...
+
+    def get_support(self, request_id: str) -> SupportRequest | None: ...
+
+    def save_support(self, request: SupportRequest) -> None:
+        """Create or update, by id."""
+
+    def list_support(self, publisher_id: str | None = None) -> list[SupportRequest]:
+        """Oldest first; every organisation's when none is named."""
 
     def get_subscription(self, publisher_id: str) -> Subscription | None: ...
 

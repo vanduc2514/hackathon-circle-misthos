@@ -65,6 +65,7 @@ from misthos.schemas import (
     Submission,
     Subscription,
     SubscriptionPayment,
+    SupportRequest,
     Wallet,
     money,
 )
@@ -352,6 +353,35 @@ class SqlRepository:
         with self.engine.connect() as conn:
             rows = conn.execute(select(t.repo_connections)).mappings().all()
         return [_connection(r) for r in rows]
+
+    # ---------------------------------------------------------------- support
+
+    def get_support(self, request_id: str) -> SupportRequest | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            row = (
+                conn.execute(
+                    select(t.support_requests).where(t.support_requests.c.id == request_id)
+                )
+                .mappings()
+                .first()
+            )
+        return _support(row) if row else None
+
+    def save_support(self, request: SupportRequest) -> None:
+        self.migrate()
+        values = request.model_dump(exclude={"id", "overdue"})
+        with self.engine.begin() as conn:
+            _upsert(conn, t.support_requests, {"id": request.id}, values)
+
+    def list_support(self, publisher_id: str | None = None) -> list[SupportRequest]:
+        self.migrate()
+        query = select(t.support_requests)
+        if publisher_id is not None:
+            query = query.where(t.support_requests.c.publisher_id == publisher_id)
+        with self.engine.connect() as conn:
+            rows = conn.execute(query).mappings().all()
+        return sorted((_support(r) for r in rows), key=lambda r: (r.opened_at, r.id))
 
     # --------------------------------------------------------- single sign-on
 
@@ -1087,6 +1117,16 @@ def _connection(row) -> RepoConnection:  # type: ignore[no-untyped-def]
         installed_by=row["installed_by"],
         publisher_id=row["publisher_id"],
         connected_at=_utc(row["connected_at"]),
+    )
+
+
+def _support(row: Row) -> SupportRequest:
+    return SupportRequest(
+        **{k: row[k] for k in row.keys() if not k.endswith("_at") and k != "respond_by"},
+        opened_at=_utc(row["opened_at"]),
+        respond_by=_utc(row["respond_by"]),
+        first_response_at=_utc_or_none(row["first_response_at"]),
+        alerted_at=_utc_or_none(row["alerted_at"]),
     )
 
 

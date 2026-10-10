@@ -40,6 +40,7 @@ from misthos.config import settings
 from misthos.domain import comparables, compliance, ledger, plans, pricing, timers
 from misthos.domain import criteria as acceptance
 from misthos.domain import issue as lifecycle
+from misthos.domain import support as commitment
 from misthos.domain.comparables import Comparable, SettledWork
 from misthos.domain.compliance import (
     ComplianceRefusal,
@@ -91,6 +92,8 @@ from misthos.observability.metrics import (
     PRICE_SECONDS,
     REVIEW_COST_USDC,
     REVIEW_SECONDS,
+    SUPPORT_OVERDUE,
+    SUPPORT_OVERDUE_ALERTS,
 )
 from misthos.repositories import (
     AccountConflict,
@@ -124,6 +127,7 @@ from misthos.schemas import (
     Subscription,
     SubscriptionOut,
     SubscriptionPayment,
+    SupportRequest,
     TimelineEntry,
     Wallet,
     money,
@@ -279,6 +283,10 @@ class UntestableCriteria(Exception):
 
 class NotSimulated(Exception):
     """A step only the simulated GitHub can take, asked of the real one."""
+
+
+class AlreadyAnswered(Exception):
+    """A support request's first response is recorded once: it is what is measured."""
 
 
 class DeclineRefused(Exception):
@@ -3053,6 +3061,108 @@ class Store:
         connected = account.model_copy(update={"address": address})
         self.repo.save_account(connected)
         return connected
+
+    # ------------------------------------------------- the support commitment (#53)
+
+    def open_support(
+        self,
+        publisher_id: str,
+        *,
+        severity: commitment.Severity,
+        subject: str,
+        body: str,
+        by: str,
+        issue_id: str | None = None,
+        now: datetime | None = None,
+    ) -> SupportRequest:
+        """Open a request, with its first response due by the plan's commitment.
+        Whether the plan includes it is the API's to check."""
+        self.ensure_ready()
+        if self.repo.get_publisher(publisher_id) is None:
+            raise KeyError(publisher_id)
+        if issue_id is not None:
+            rec = self.repo.get_issue(issue_id)
+            if rec is None or rec.publisher_id != publisher_id:
+                raise KeyError(issue_id)
+        opened = now or _now()
+        request = SupportRequest(
+            id=f"SUP-{self.repo.next_value('support', 1)}",
+            publisher_id=publisher_id,
+            severity=severity,
+            subject=subject.strip(),
+            body=body.strip(),
+            issue_id=issue_id,
+            opened_by=by,
+            opened_at=opened,
+            respond_by=commitment.respond_by(opened, severity),
+        )
+        self.repo.save_support(request)
+        return self._measured(request, opened)
+
+    def support_requests(
+        self, publisher_id: str | None = None, now: datetime | None = None
+    ) -> list[SupportRequest]:
+        """Newest first, each marked overdue or not as of now."""
+        self.ensure_ready()
+        now = now or _now()
+        found = self.repo.list_support(publisher_id)
+        return [self._measured(r, now) for r in reversed(found)]
+
+    def answer_support(
+        self, request_id: str, *, responder: str, message: str, now: datetime | None = None
+    ) -> SupportRequest:
+        """Record our first response. Ours to call, from the operator's command line."""
+        self.ensure_ready()
+        request = self.repo.get_support(request_id)
+        if request is None:
+            raise KeyError(request_id)
+        if request.first_response_at is not None:
+            raise AlreadyAnswered(
+                f"{request_id} was answered by {request.responder} at "
+                f"{request.first_response_at:%Y-%m-%d %H:%M} UTC"
+            )
+        answered = request.model_copy(
+            update={
+                "first_response": message.strip(),
+                "responder": responder.strip(),
+                "first_response_at": now or _now(),
+            }
+        )
+        self.repo.save_support(answered)
+        return self._measured(answered, now or _now())
+
+    def sweep_support(self, now: datetime | None = None) -> list[str]:
+        """Raise every request that went past its deadline unanswered, once each. A
+        commitment broken in silence is not one."""
+        self.ensure_ready()
+        now = now or _now()
+        raised: list[str] = []
+        late = [
+            r
+            for r in self.repo.list_support()
+            if r.first_response_at is None and commitment.overdue(r.respond_by, None, now)
+        ]
+        SUPPORT_OVERDUE.set(len(late))
+        for request in late:
+            if request.alerted_at is not None:
+                continue
+            log.error(
+                "support: %s from %s is past its first-response deadline (%s, due %s)",
+                request.id,
+                request.publisher_id,
+                request.severity,
+                request.respond_by.isoformat(),
+                extra={"alert": "support_overdue", "request_id": request.id},
+            )
+            SUPPORT_OVERDUE_ALERTS.inc()
+            self.repo.save_support(request.model_copy(update={"alerted_at": now}))
+            raised.append(request.id)
+        return raised
+
+    @staticmethod
+    def _measured(request: SupportRequest, now: datetime) -> SupportRequest:
+        late = commitment.overdue(request.respond_by, request.first_response_at, now)
+        return request.model_copy(update={"overdue": late})
 
     # ------------------------------------------------------- single sign-on (#53)
 

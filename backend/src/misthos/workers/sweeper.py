@@ -105,6 +105,8 @@ class SweepReport:
     """Issues whose ledger and on-chain escrow disagree. Each one is an alert."""
     plans_changed: list[str] = field(default_factory=list)
     """Publishers whose plan went past due, was cancelled or lapsed this pass."""
+    support_overdue: list[str] = field(default_factory=list)
+    """Support requests raised this pass as past their first-response deadline (#53)."""
 
 
 def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
@@ -176,6 +178,11 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
         except Exception:
             log.exception("sweeper: plans failed, retrying next pass")
             plans_changed = []
+        try:
+            support_overdue = store.sweep_support(now)
+        except Exception:
+            log.exception("sweeper: support deadlines failed, retrying next pass")
+            support_overdue = []
         SWEEP_FAILURES.inc(len(failed))
         return SweepReport(
             ran=True,
@@ -188,6 +195,7 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
             purged=purged,
             divergences=len(divergences),
             plans_changed=plans_changed,
+            support_overdue=support_overdue,
         )
 
 

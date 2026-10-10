@@ -937,6 +937,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/publishers/{publisher_id}/support": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Support
+         * @description The support commitment the plan makes, and every request with when its first
+         *     response was due and whether it came in time. Served after a plan lapses too: the
+         *     record of what was promised stays the organisation's.
+         */
+        get: operations["support_api_v1_publishers__publisher_id__support_get"];
+        put?: never;
+        /**
+         * Open Support
+         * @description Ask us for help. The answer names when the first response is due: urgent when
+         *     money cannot move, answered around the clock; otherwise by the next working day.
+         */
+        post: operations["open_support_api_v1_publishers__publisher_id__support_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/publishers/{publisher_id}/spend": {
         parameters: {
             query?: never;
@@ -2552,6 +2579,90 @@ export interface components {
              * Format: date-time
              */
             paid_at: string;
+        };
+        /** SupportOut */
+        SupportOut: {
+            /**
+             * Commitment
+             * @description What the plan promises, in the plan's own words
+             */
+            commitment: string;
+            /**
+             * Entitled
+             * @description Whether the organisation's plan includes it
+             */
+            entitled: boolean;
+            /**
+             * Requests
+             * @description Newest first
+             */
+            requests: components["schemas"]["SupportRequest"][];
+        };
+        /**
+         * SupportRequest
+         * @description One request to us under the Enterprise support commitment (#53).
+         */
+        SupportRequest: {
+            /** Id */
+            id: string;
+            /** Publisher Id */
+            publisher_id: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "urgent" | "normal";
+            /** Subject */
+            subject: string;
+            /** Body */
+            body: string;
+            /** Issue Id */
+            issue_id?: string | null;
+            /**
+             * Opened By
+             * @description Who opened it: a work e-mail, a GitHub login or a wallet
+             */
+            opened_by: string;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /**
+             * Respond By
+             * Format: date-time
+             * @description When the first response is due
+             */
+            respond_by: string;
+            /** First Response */
+            first_response?: string | null;
+            /** Responder */
+            responder?: string | null;
+            /** First Response At */
+            first_response_at?: string | null;
+            /** Alerted At */
+            alerted_at?: string | null;
+            /**
+             * Overdue
+             * @description Unanswered past respond_by, or answered after it. Worked out when read.
+             * @default false
+             */
+            overdue: boolean;
+        };
+        /** SupportRequestIn */
+        SupportRequestIn: {
+            /**
+             * Severity
+             * @description urgent: money cannot move, such as a held payout or a refused commitment. normal: anything else.
+             * @enum {string}
+             */
+            severity: "urgent" | "normal";
+            /** Subject */
+            subject: string;
+            /** Body */
+            body: string;
+            /** Issue Id */
+            issue_id?: string | null;
         };
         /** TimelineEntry */
         TimelineEntry: {
@@ -4490,6 +4601,86 @@ export interface operations {
         responses: {
             /** @description Removed; every session it issued has ended */
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    support_api_v1_publishers__publisher_id__support_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_support_api_v1_publishers__publisher_id__support_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupportRequestIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportRequest"];
+                };
+            };
+            /** @description The plan does not include the support commitment */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such publisher, or the issue named is not this publisher's */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
