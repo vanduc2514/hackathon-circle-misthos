@@ -66,6 +66,8 @@ mise run dev       # API on :8000 and web app on :5173
 ```
 
 Open <http://localhost:5173>. The API reference is at <http://127.0.0.1:8000/docs>.
+To link your real GitHub account rather than a typed login, set up an OAuth App first:
+see [Linking your real GitHub account locally](#linking-your-real-github-account-locally).
 
 To run the two servers in separate terminals:
 
@@ -114,6 +116,31 @@ process:
 MISTHOS_REDIS_URL=redis://localhost:6379/0 mise run dev:api
 ```
 
+### Linking your real GitHub account locally
+
+Publishing and claiming need a linked GitHub login. With nothing configured the
+Account page says linking is not set up here, and the simulation takes a login you
+type instead. To link your real account:
+
+1. Create a GitHub OAuth App at <https://github.com/settings/developers> (OAuth Apps,
+   New OAuth App).
+2. Give it the homepage URL `http://localhost:5173` and the authorization callback URL
+   `http://localhost:5173/api/v1/auth/github/callback`. The API builds the callback
+   from `MISTHOS_PUBLIC_URL`, which defaults to `http://localhost:5173`, and Vite
+   forwards `/api` to the API on :8000.
+3. Generate a client secret, and put the app's client ID and the secret in a `.env` at
+   the root of the repository, which mise loads into every task (`backend/.env` works
+   too: the API reads it from `backend/`, where it runs):
+
+   ```bash
+   MISTHOS_GITHUB_OAUTH_CLIENT_ID=<the app's client ID>
+   MISTHOS_GITHUB_OAUTH_CLIENT_SECRET=<the secret>
+   ```
+
+4. Restart `mise run dev`, open <http://localhost:5173> (not 127.0.0.1: GitHub returns
+   to the address in `MISTHOS_PUBLIC_URL`, and your session lives on the one you
+   opened), sign in, choose a side and press **Link with GitHub**.
+
 ### Connecting a real repository
 
 GitHub is simulated until a GitHub App is configured. Register one from
@@ -158,9 +185,11 @@ submits only a pull request it opened. The loop then runs through explicit actio
 | Either | Have the review agent judge it now rather than on the sweeper's next pass | `POST /issues/{id}/review` |
 | Publisher | Merge on GitHub, which releases the payment | The webhook |
 
-Linking is simulated until a GitHub OAuth App is configured
-(`MISTHOS_GITHUB_OAUTH_CLIENT_ID` and `MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`), and
-`MISTHOS_SESSION_SECRET` keeps sessions across a restart. The demo stepper
+Linking needs a GitHub OAuth App (`MISTHOS_GITHUB_OAUTH_CLIENT_ID` and
+`MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`, see
+[Linking your real GitHub account locally](#linking-your-real-github-account-locally));
+without one the simulation links a typed login and a deployment links none. Set
+`MISTHOS_SESSION_SECRET` to keep sessions across a restart. The demo stepper
 (`/advance` and `/complete`) runs only in the simulation, because it fabricates the
 pull request and the merge.
 

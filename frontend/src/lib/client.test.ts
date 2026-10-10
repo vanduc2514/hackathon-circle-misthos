@@ -96,6 +96,28 @@ describe('unwrap', () => {
     const error = { detail: [{ msg: 'field required' }, { msg: 'too long' }] }
     expect(() => unwrap({ error, response: response(422) })).toThrow('field required; too long')
   })
+
+  const refusal = (error: unknown): ApiError => {
+    try {
+      unwrap({ error, response: response(409) })
+    } catch (thrown) {
+      if (thrown instanceof ApiError) return thrown
+    }
+    throw new Error('unwrap did not refuse')
+  }
+
+  it('keeps the issue a second publish of an open GitHub issue names, to link to it', () => {
+    const refused = refusal({
+      detail: 'acme/widgets#5 is already on Misthos as ISS-1009',
+      issue_id: 'ISS-1009',
+    })
+    expect(refused.issueId).toBe('ISS-1009')
+    expect(refused.message).toBe('acme/widgets#5 is already on Misthos as ISS-1009')
+  })
+
+  it('names no issue when the refusal does not', () => {
+    expect(refusal({ detail: 'another action is in progress' }).issueId).toBeNull()
+  })
 })
 
 describe('checksChip', () => {

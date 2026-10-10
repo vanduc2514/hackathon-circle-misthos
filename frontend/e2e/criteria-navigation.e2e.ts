@@ -26,8 +26,8 @@ async function onboardPublisher(page: Page, name: string, login: string) {
   await page.getByRole('button', { name: 'Demo publisher wallet' }).click()
   await page.getByLabel('Organisation name').fill(name)
   await page.getByRole('button', { name: 'Continue as a publisher' }).click()
-  await page.getByLabel('Or, in the simulation, any GitHub login').fill(login)
-  await page.getByRole('button', { name: 'Link without GitHub' }).click()
+  await page.getByLabel('GitHub login').fill(login)
+  await page.getByRole('button', { name: 'Link this login' }).click()
   await expect(page.getByRole('link', { name: `publisher · ${login}` })).toBeVisible()
 }
 

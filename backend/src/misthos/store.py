@@ -196,6 +196,22 @@ class NotTheSubmission(Exception):
     """A pull request event about a pull request this issue is not waiting on."""
 
 
+class AlreadyListed(Exception):
+    """A GitHub issue has one open listing at a time.
+
+    A second listing of the same issue lets one pull request be reviewed, accepted and
+    paid on each of them (#120). Open is every state short of PAID or REFUNDED, the
+    ones `find_open` routes GitHub's events to.
+    """
+
+    def __init__(self, existing: IssueRecord) -> None:
+        super().__init__(
+            f"{existing.repo}#{existing.number} is already on Misthos as {existing.id}, "
+            f"which is {existing.state.value}; a GitHub issue is listed once while it is open"
+        )
+        self.issue_id = existing.id
+
+
 class DisputeRefused(Exception):
     """A dispute the verdict cannot take: one dispute per verdict."""
 
@@ -250,6 +266,11 @@ class DeclineRefused(Exception):
 # stuck or gone, and the loser carries on unready and asks again on its next call.
 SEED_WAIT = timedelta(seconds=10)
 _SEED_POLL_SECONDS = 0.05
+
+# How long a publish waits for another publish of the same GitHub issue to finish. The
+# other one holds the listing only to check it and save, which takes well under this.
+LISTING_WAIT = timedelta(seconds=5)
+_LISTING_POLL_SECONDS = 0.02
 
 
 def _now() -> datetime:
@@ -718,6 +739,15 @@ class Store:
         rec.contributor_id = contributor_id
 
     def _submit(self, rec: IssueRecord, pr: dict) -> None:
+        if rec.review is not None and rec.review.head_sha == pr["head_sha"]:
+            # A commit gets one verdict, and the review only takes a commit without
+            # one. Submitted again, it would leave the issue in IN_REVIEW, where no
+            # review takes it and no timer runs, with the money held there (#119).
+            raise NotTheSubmission(
+                f"the review already judged {pr['head_sha'][:7]}, the head of "
+                f"#{pr['pr_number']}; push the requested changes as a new commit, then "
+                "submit again"
+            )
         self._move(rec, IssueState.IN_REVIEW)
         rec.submission = Submission(**pr)
         sha = rec.submission.head_sha
@@ -1240,6 +1270,36 @@ class Store:
                 raise Busy(publisher_id)
             yield
 
+    @contextmanager
+    def _pull_request_exclusive(self, repo: str, number: int) -> Iterator[None]:
+        """Hold one pull request while it is checked against every other issue and
+        submitted, or refuse at once with Busy. Taken after the issue lock."""
+        name = f"{repo.lower()}#{number}"
+        with self.coordinator.lock(f"pull:{name}", ISSUE_LOCK_TTL) as held:
+            if not held:
+                raise Busy(f"pull request {name}")
+            yield
+
+    @contextmanager
+    def _listing_exclusive(self, repo: str, number: int) -> Iterator[None]:
+        """Hold one GitHub issue's listing while it is checked and saved.
+
+        Two publishes of the same issue at once, a double click or GitHub's `opened`
+        and `labeled` arriving together, would otherwise both find it unlisted. Unlike
+        an issue's lock this waits a moment, because the holder is saved or refused in
+        well under a second, and what the second publish has to say is which.
+        """
+        name = f"{repo.lower()}#{number}"
+        give_up = time.monotonic() + LISTING_WAIT.total_seconds()
+        while True:
+            with self.coordinator.lock(f"listing:{name}", ISSUE_LOCK_TTL) as held:
+                if held:
+                    yield
+                    return
+            if time.monotonic() >= give_up:
+                raise Busy(name)
+            time.sleep(_LISTING_POLL_SECONDS)
+
     def reconcile(self, now: datetime | None = None) -> list[Divergence]:
         """Compare every issue's ledger with what the chain holds, and raise the alarm.
 
@@ -1434,7 +1494,7 @@ class Store:
                 self._submit(
                     rec,
                     {
-                        "pr_number": rec.number + 400,
+                        "pr_number": self._demo_pull_request_number(rec),
                         "head_sha": f"{random.getrandbits(160):040x}",
                         "checks_passed": True,
                         "files_changed": 3,
@@ -1471,7 +1531,9 @@ class Store:
                     rec,
                     {
                         "pr_number": (
-                            rec.submission.pr_number if rec.submission else rec.number + 400
+                            rec.submission.pr_number
+                            if rec.submission
+                            else self._demo_pull_request_number(rec)
                         ),
                         "head_sha": f"{random.getrandbits(160):040x}",
                         "checks_passed": True,
@@ -1502,10 +1564,19 @@ class Store:
         return rec
 
     def publish(self, payload) -> IssueRecord:
+        """List a GitHub issue and price it, once while it is open (#120).
+
+        A second publish of an open issue is refused with AlreadyListed, naming the
+        listing it has. The check runs first, so a refusal reads nothing from GitHub,
+        and again with the save under the listing's lock, which is what stops two
+        publishes at once from both being saved.
+        """
         self.ensure_ready()
         publisher = self.repo.get_publisher(payload.publisher_id)
         if publisher is None:
             raise KeyError(payload.publisher_id)
+        if payload.number:
+            self._refuse_listed(payload.repo, payload.number)
         started = time.perf_counter()
         facts = None
         if payload.number and not payload.signals:
@@ -1520,7 +1591,7 @@ class Store:
             "affordability_ceiling": ceiling,
             "ceiling_source": ceiling_source,
             "repo": payload.repo,
-            "number": payload.number or random.randint(100, 999),
+            "number": payload.number or self._unlisted_number(payload.repo),
             "title": payload.title,
             "summary": payload.summary or "Published through the web application.",
             "state": IssueState.PRICED,
@@ -1562,9 +1633,31 @@ class Store:
             rule="publisher_created_issue",
             outcome="issue published and price proposed",
         )
-        self.repo.save_issues(rec)
+        with self._listing_exclusive(rec.repo, rec.number):
+            self._refuse_listed(rec.repo, rec.number)
+            self.repo.save_issues(rec)
         _observe_price(rec, "github" if facts is not None else "form", started)
         return rec
+
+    def _refuse_listed(self, repo: str, number: int) -> None:
+        existing = self.find_open(repo, number)
+        if existing is not None:
+            raise AlreadyListed(existing)
+
+    def _unlisted_number(self, repo: str) -> int:
+        """A number for an issue the simulation makes up, when the form names none: one
+        no open listing in the repository has, so it is never refused as a duplicate of
+        an issue the publisher did not mean."""
+        taken = {
+            r.number
+            for r in self.repo.list_issues()
+            if r.repo.lower() == repo.lower() and r.state not in lifecycle.TERMINAL_STATES
+        }
+        number = random.randint(100, 999)
+        if number in taken:
+            # Of len(taken) + 1 numbers, at least one is free.
+            number = min(set(range(100, 101 + len(taken))) - taken)
+        return number
 
     # ------------------------------------------------------------- plans (#53)
 
@@ -1950,6 +2043,57 @@ class Store:
         return [
             r.id for r in self.list_issues({IssueState.IN_REVIEW}) if self._awaiting_review(r, now)
         ]
+
+    @staticmethod
+    def _judged_already(rec: IssueRecord) -> bool:
+        """In review on a commit the review has already judged.
+
+        Only a resubmission of the same commit could do this, before #119 refused it.
+        No review takes the commit again and no timer runs in review, so nothing would
+        ever move the issue or the money it holds.
+        """
+        return (
+            rec.state is IssueState.IN_REVIEW
+            and rec.submission is not None
+            and rec.review is not None
+            and rec.review.head_sha == rec.submission.head_sha
+        )
+
+    def return_judged_to_rework(self, now: datetime | None = None) -> list[str]:
+        """Put each issue left in review on an already judged commit back in REWORK,
+        the state it was resubmitted from, so a new commit can be pushed and reviewed.
+
+        The sweeper runs it on every pass. An issue someone is acting on is left for the
+        next pass. Returns the issues it moved.
+        """
+        self.ensure_ready()
+        moved: list[str] = []
+        for listed in self.repo.list_issues({IssueState.IN_REVIEW}):
+            if not self._judged_already(listed):
+                continue
+            try:
+                with self._exclusive(listed.id), self._posting():
+                    rec = self.repo.get_issue(listed.id)
+                    if rec is None or not self._judged_already(rec):
+                        continue
+                    assert rec.submission is not None
+                    self._move(rec, IssueState.REWORK)
+                    self._log(
+                        rec,
+                        actor="system",
+                        action="returned_to_rework",
+                        rule="commit_already_judged",
+                        outcome=f"{rec.submission.head_sha[:7]} on PR "
+                        f"#{rec.submission.pr_number} was submitted again after its verdict, "
+                        "so no review could take it; the issue is back in rework until a "
+                        "new commit is pushed",
+                        when=now,
+                    )
+                    self.repo.save_issues(rec)
+            except (Busy, StaleIssue):
+                continue
+            moved.append(listed.id)
+        return moved
 
     def _submitted(self, rec: IssueRecord) -> Submitted:
         assert rec.submission is not None
@@ -2403,6 +2547,22 @@ class Store:
             ],
         )
 
+    def _demo_pull_request_number(self, rec: IssueRecord) -> int:
+        """The number of the first pull request the simulation opens for an issue: its own
+        number plus 400, or the next one up that no other issue's submission in the
+        repository has, since a pull request counts toward one issue only (#120)."""
+        taken = {
+            other.submission.pr_number
+            for other in self.repo.list_issues()
+            if other.id != rec.id
+            and other.repo.lower() == rec.repo.lower()
+            and other.submission is not None
+        }
+        number = rec.number + 400
+        while number in taken:
+            number += 1
+        return number
+
     def _fabricate_files(self, rec: IssueRecord) -> None:
         """Give a pull request the simulation made up a file list the review agent can
         read: a fix, its test and a changelog line. Only the simulated GitHub has
@@ -2432,7 +2592,9 @@ class Store:
         files = _demo_files(rec.repo)
         pr = PullRequest(
             repo=rec.repo,
-            number=rec.submission.pr_number if rec.submission else rec.number + 400,
+            number=(
+                rec.submission.pr_number if rec.submission else self._demo_pull_request_number(rec)
+            ),
             author=self._handle(rec.contributor_id),
             head_sha=f"{random.getrandbits(160):040x}",
             body=f"Fixes #{rec.number}",
@@ -2785,7 +2947,9 @@ class Store:
         """A pull request that closes the issue was opened, or pushed to after rework.
 
         Only the contributor holding the claim submits: anyone can open a pull
-        request that mentions an issue, and only one of them is owed money.
+        request that mentions an issue, and only one of them is owed money. A pull
+        request counts toward one issue only, and a commit the review already judged
+        is not submitted again: the contributor pushes a new one.
         """
         self.ensure_ready()
         with self._exclusive(issue_id), self._posting():
@@ -2807,33 +2971,60 @@ class Store:
                     raise NotTheSubmission(
                         f"rework continues on #{rec.submission.pr_number}, not #{pr.number}"
                     )
-            resubmitted = rec.state is IssueState.REWORK
-            history = self.github.merged_pull_requests(rec.repo, pr.author)
-            self._submit(
-                rec,
-                {
-                    "pr_number": pr.number,
-                    "head_sha": pr.head_sha,
-                    # None until the project's own checks finish, and check_run says
-                    # when they do. A repository with no CI never says.
-                    "checks_passed": self.github.checks_passed(rec.repo, pr.head_sha),
-                    "files_changed": pr.files_changed,
-                    "additions": pr.additions,
-                    "deletions": pr.deletions,
-                },
-            )
-            self._log(
-                rec,
-                actor="contributor",
-                action="resubmitted" if resubmitted else "submitted",
-                rule="pull_request_synchronized" if resubmitted else "pull_request_opened",
-                outcome=f"{claimant} {'pushed rework to' if resubmitted else 'opened'} "
-                f"PR #{pr.number}; {history} earlier pull request(s) of theirs merged in "
-                f"{rec.repo}",
-                when=now,
-            )
-            self.repo.save_issues(rec)
+            # Two issues take two different issue locks, so the pull request has one of
+            # its own: without it, the same pull request submitted to both at once
+            # would pass the check below twice.
+            with self._pull_request_exclusive(rec.repo, pr.number):
+                elsewhere = self._submitted_elsewhere(rec, pr.number)
+                if elsewhere is not None:
+                    raise NotTheSubmission(
+                        f"#{pr.number} was already submitted for {elsewhere.id}; a pull "
+                        "request counts toward one issue only"
+                    )
+                resubmitted = rec.state is IssueState.REWORK
+                history = self.github.merged_pull_requests(rec.repo, pr.author)
+                self._submit(
+                    rec,
+                    {
+                        "pr_number": pr.number,
+                        "head_sha": pr.head_sha,
+                        # None until the project's own checks finish, and check_run says
+                        # when they do. A repository with no CI never says.
+                        "checks_passed": self.github.checks_passed(rec.repo, pr.head_sha),
+                        "files_changed": pr.files_changed,
+                        "additions": pr.additions,
+                        "deletions": pr.deletions,
+                    },
+                )
+                pushed = (
+                    f"pushed a new commit, {pr.head_sha[:7]}, to PR #{pr.number}"
+                    if resubmitted
+                    else f"opened PR #{pr.number}"
+                )
+                self._log(
+                    rec,
+                    actor="contributor",
+                    action="resubmitted" if resubmitted else "submitted",
+                    rule="pull_request_synchronized" if resubmitted else "pull_request_opened",
+                    outcome=f"{claimant} {pushed}; {history} earlier pull request(s) of "
+                    f"theirs merged in {rec.repo}",
+                    when=now,
+                )
+                self.repo.save_issues(rec)
             return rec
+
+    def _submitted_elsewhere(self, rec: IssueRecord, pr_number: int) -> IssueRecord | None:
+        """Another issue this pull request was submitted for, in any state, paid ones
+        included: the same work counted twice is reviewed, accepted and paid twice."""
+        for other in self.repo.list_issues():
+            if (
+                other.id != rec.id
+                and other.repo.lower() == rec.repo.lower()
+                and other.submission is not None
+                and other.submission.pr_number == pr_number
+            ):
+                return other
+        return None
 
     def record_checks(self, issue_id: str, head_sha: str, now: datetime | None = None) -> bool:
         """Read the project's own checks on the submitted commit. True if that changed

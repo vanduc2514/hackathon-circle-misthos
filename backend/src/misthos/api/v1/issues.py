@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 
 from misthos.api.guards import idempotent, limit_actions, limit_publish
 from misthos.api.session import (
@@ -14,6 +15,7 @@ from misthos.api.session import (
     require_owner_or_simulation,
     require_role,
 )
+from misthos.api.v1.auth import callback_url, oauth_configured
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.escrow import approve_call, commit_call, issue_key
@@ -24,6 +26,7 @@ from misthos.domain.pricing import UnfundableIssue
 from misthos.repositories import StaleIssue
 from misthos.schemas import (
     Account,
+    AlreadyPublished,
     ApproveReleaseRequest,
     ClaimRequest,
     CommitmentPlan,
@@ -52,6 +55,7 @@ from misthos.services.github import GitHubError
 from misthos.services.review import ReviewFailed
 from misthos.store import (
     ESCROW,
+    AlreadyListed,
     CriteriaNotApproved,
     DeclineRefused,
     DisputeRefused,
@@ -126,6 +130,9 @@ async def health() -> HealthOut:
         money_note=settings.network.description,
         seeded_issues=await run_in_threadpool(store.count_issues),
         simulated=settings.simulated,
+        # The web app offers "Link with GitHub" only where it can work (#118).
+        github_oauth=oauth_configured(),
+        github_oauth_callback_url=callback_url(),
     )
 
 
@@ -505,11 +512,27 @@ async def dispute(
     )
 
 
+async def already_published(_: Request, exc: Exception) -> JSONResponse:
+    """A GitHub issue already listed and open: 409, naming the listing, so the web app
+    can link to it. Registered on the app, because the refusal comes from the store
+    inside the idempotency guard."""
+    assert isinstance(exc, AlreadyListed)
+    body = AlreadyPublished(detail=str(exc), issue_id=exc.issue_id)
+    return JSONResponse(status_code=409, content=body.model_dump())
+
+
 @router.post(
     "/issues",
     response_model=IssueOut,
     status_code=201,
     dependencies=[limit_publish],
+    responses={
+        409: {
+            "model": AlreadyPublished,
+            "description": "The GitHub issue already has an open listing, which "
+            "`issue_id` names",
+        }
+    },
 )
 async def publish(
     payload: PublishRequest,
@@ -537,6 +560,9 @@ async def publish(
         except UnreadableIssue as exc:
             # The App is not installed there, or the issue does not exist.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Busy as exc:
+            # Another publish of the same GitHub issue held it past the wait.
+            raise _conflict(exc) from exc
         return await run_in_threadpool(store.to_out, rec)
 
     return await idempotent(request, idempotency_key, run, status_code=201)

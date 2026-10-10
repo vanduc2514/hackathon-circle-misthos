@@ -37,6 +37,10 @@ export default defineConfig({
         // Each test starts from the seed. The data here is the tests' own to throw
         // away, even when a database is configured in backend/.env.
         MISTHOS_ALLOW_DEMO_RESET: 'true',
+        // A fresh install has no GitHub OAuth App, which is what the browser tests
+        // check the Account page against, whatever backend/.env says.
+        MISTHOS_GITHUB_OAUTH_CLIENT_ID: '',
+        MISTHOS_GITHUB_OAUTH_CLIENT_SECRET: '',
       },
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

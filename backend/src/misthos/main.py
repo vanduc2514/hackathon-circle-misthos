@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from misthos.api.router import api_router
+from misthos.api.v1.issues import already_published
 from misthos.auth import sessions
 from misthos.config import settings
 from misthos.observability import logs
@@ -18,7 +19,7 @@ from misthos.services.attestor import (
     assert_key_is_not_in_the_environment,
     assert_secrets_are_configured,
 )
-from misthos.store import store
+from misthos.store import AlreadyListed, store
 from misthos.workers.sweeper import run_forever
 
 DESCRIPTION = """
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     # Outermost, so the correlation id covers everything, CORS included.
     app.add_middleware(RequestContext)
     app.include_router(api_router)
+    app.add_exception_handler(AlreadyListed, already_published)
 
     @app.get("/internal/metrics", include_in_schema=False)
     async def prometheus() -> Response:

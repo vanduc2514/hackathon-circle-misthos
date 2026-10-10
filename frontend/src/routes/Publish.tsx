@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
-import { api, unwrap } from '../lib/client'
+import { ApiError, api, unwrap } from '../lib/client'
 import { useHealth, useMe } from '../lib/session'
 import { Panel } from '../components/ui'
 
@@ -25,6 +25,10 @@ export default function Publish() {
 
   const account = me.data?.account ?? null
   const ready = account?.role === 'publisher' && Boolean(account.github_login)
+  // Set the moment the form is sent. The button is disabled by isPending, but that
+  // reaches it a render later, and a double click inside that window published the
+  // same GitHub issue twice (#120).
+  const sending = useRef(false)
 
   const publish = useMutation({
     mutationFn: async () =>
@@ -50,7 +54,12 @@ export default function Publish() {
       qc.invalidateQueries({ queryKey: ['metrics'] })
       navigate(`/issues/${issue.id}`)
     },
+    onSettled: () => {
+      sending.current = false
+    },
   })
+  // A GitHub issue that is already open on Misthos: the refusal names its listing.
+  const listed = publish.error instanceof ApiError ? publish.error.issueId : null
 
   return (
     <>
@@ -85,6 +94,8 @@ export default function Publish() {
               className="form"
               onSubmit={(e) => {
                 e.preventDefault()
+                if (sending.current) return
+                sending.current = true
                 publish.mutate()
               }}
             >
@@ -159,7 +170,17 @@ export default function Publish() {
                 </button>
               </div>
               {publish.error && (
-                <div className="error-box form-error">{publish.error.message}</div>
+                <div className="error-box form-error">
+                  {publish.error.message}
+                  {listed && (
+                    <>
+                      {' '}
+                      <Link to={`/issues/${listed}`} style={{ textDecoration: 'underline' }}>
+                        Open {listed}
+                      </Link>
+                    </>
+                  )}
+                </div>
               )}
             </form>
           </Panel>

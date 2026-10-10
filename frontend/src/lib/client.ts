@@ -19,6 +19,7 @@ export type LoopOut = components['schemas']['LoopOut']
 export type SpendOut = components['schemas']['SpendOut']
 export type FinanceOut = components['schemas']['FinanceOut']
 
+export type HealthOut = components['schemas']['HealthOut']
 export type Account = components['schemas']['Account']
 export type MeOut = components['schemas']['MeOut']
 export type SessionOut = components['schemas']['SessionOut']
@@ -26,11 +27,21 @@ export type SessionOut = components['schemas']['SessionOut']
 /** A refusal from the API, carrying the reason it gave. */
 export class ApiError extends Error {
   status: number
+  /** The issue the refusal points at, such as the listing a GitHub issue already has. */
+  issueId: string | null
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, issueId: string | null = null) {
     super(message)
     this.status = status
+    this.issueId = issueId
   }
+}
+
+/** The `issue_id` a refusal names: a second publish of an open issue says which (#120). */
+export function issueIdOf(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('issue_id' in error)) return null
+  const id = (error as { issue_id: unknown }).issue_id
+  return typeof id === 'string' && id ? id : null
 }
 
 /** FastAPI's `detail`: a sentence, or a list of validation errors. */
@@ -52,7 +63,11 @@ export function detailOf(error: unknown): string | null {
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
   if (result.error === undefined && result.data !== undefined) return result.data
   const { status, statusText } = result.response
-  throw new ApiError(status, detailOf(result.error) ?? `${status} ${statusText}`.trim())
+  throw new ApiError(
+    status,
+    detailOf(result.error) ?? `${status} ${statusText}`.trim(),
+    issueIdOf(result.error),
+  )
 }
 
 export type Money = { usdc: string | number; base_units: number }
