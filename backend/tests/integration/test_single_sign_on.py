@@ -14,7 +14,6 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -29,8 +28,7 @@ from misthos.domain.issue import IssueState
 from misthos.domain.signals import IssueFacts
 from misthos.domain.sso import SsoTerms
 from misthos.main import app
-from misthos.repositories import MemoryRepository, SsoDomainTaken
-from misthos.repositories.sql import SqlRepository
+from misthos.repositories import SsoDomainTaken
 from misthos.services.github import SimulatedGitHub
 from misthos.services.sso import OidcClient
 from misthos.store import Store, store
@@ -453,16 +451,10 @@ class TestRequiringIt:
         assert staff.get(f"{API}/auth/me").json()["account"] is None
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-def repo_store(request: pytest.FixtureRequest, tmp_path: Path) -> Store:
-    repo = (
-        MemoryRepository()
-        if request.param == "memory"
-        else SqlRepository(f"sqlite:///{tmp_path / 'misthos.db'}")
-    )
-    fresh = Store(repo)
-    fresh.reset()
-    return fresh
+@pytest.fixture
+def repo_store(every_store: Store) -> Store:
+    """Memory, SQLite, and Postgres where CI points MISTHOS_DATABASE_URL at one."""
+    return every_store
 
 
 class TestKeepingIt:
@@ -479,6 +471,16 @@ class TestKeepingIt:
         repo_store.set_sso("PUB-1", SsoTerms(ISSUER, "misthos-acme", "acme-oidc", ("c.example",)))
         assert repo_store.sso_for_email("dana@a.example") is None
         assert repo_store.sso_for_email("dana@c.example") is not None
+
+    def test_every_store_hands_the_domains_back_in_the_same_order(
+        self, repo_store: Store
+    ) -> None:
+        # Postgres collates by locale, which ignores punctuation, and once answered
+        # acme.example before acme-labs.example where the memory store did not.
+        domains = ("acme.example", "acme-labs.example", "acme1.example", "a.acme.example")
+        kept = repo_store.set_sso("PUB-1", SsoTerms(ISSUER, "a", "acme-oidc", domains))
+        assert kept.domains == sorted(domains)
+        assert repo_store.sso("PUB-1").domains == sorted(domains)  # type: ignore[union-attr]
 
     def test_a_domain_another_organisation_holds_is_refused_and_nothing_is_written(
         self, repo_store: Store
