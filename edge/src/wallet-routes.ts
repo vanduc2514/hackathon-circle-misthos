@@ -3,7 +3,9 @@
  *
  * The edge is public because x402 buyers reach it, but these routes hand out
  * Circle user tokens, so only the core may call them: every request must carry
- * the shared EDGE_CORE_TOKEN. Simulated, there is nothing to protect.
+ * the shared EDGE_CORE_TOKEN. Simulated, there is nothing to protect, and
+ * simulated means what MISTHOS_SIMULATED means to the API (simulated.ts): whenever
+ * the API is live, these routes are Circle's and refuse a caller without the token.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express'

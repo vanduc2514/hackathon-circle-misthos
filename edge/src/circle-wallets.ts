@@ -24,6 +24,7 @@
 
 import { createHash } from 'node:crypto'
 import { initiateUserControlledWalletsClient } from '@circle-fin/user-controlled-wallets'
+import { simulatedFrom } from './simulated.js'
 
 export type Party = 'publisher' | 'contributor'
 
@@ -76,8 +77,15 @@ export interface CircleUsers {
   }): Promise<{ data?: { wallets: { address: string; blockchain: string }[] } }>
 }
 
+/**
+ * Read the wallets' configuration. `MISTHOS_SIMULATED` is read as the API and the x402
+ * gate read it (simulated.ts). Only the literal `false` used to make these wallets
+ * live, so with `0` a live API was handed made-up addresses and kept them as payout
+ * wallets. Live, real wallets need Circle's credentials, and mainnet needs
+ * EDGE_CONFIRM_MAINNET to name chain 5042.
+ */
 export function walletConfig(env: NodeJS.ProcessEnv = process.env): WalletConfig {
-  const simulated = (env.MISTHOS_SIMULATED ?? 'true').toLowerCase() !== 'false'
+  const simulated = simulatedFrom(env.MISTHOS_SIMULATED)
   const blockchain = env.CIRCLE_WALLET_BLOCKCHAIN === ARC_MAINNET ? ARC_MAINNET : ARC_TESTNET
   const config: WalletConfig = {
     simulated,

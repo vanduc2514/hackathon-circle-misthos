@@ -9,7 +9,6 @@ import {
   createGate,
   gateConfig,
   settlementOf,
-  simulatedFrom,
   type GateConfig,
 } from './x402-gate.js'
 
@@ -39,23 +38,9 @@ describe('gate configuration', () => {
   })
 
   // The API's `simulated` is a pydantic bool, so the two services have to read one
-  // variable the same way. `0` used to mean live to the API and simulated here, which
-  // handed out metered endpoints free to anyone who sent a header.
-  it('reads every spelling the backend accepts the same way', () => {
-    for (const value of ['1', 'true', 't', 'yes', 'y', 'on', 'TRUE', ' On ', undefined]) {
-      assert.equal(simulatedFrom(value), true, String(value))
-    }
-    for (const value of ['0', 'false', 'f', 'no', 'n', 'off', 'FALSE', ' Off ']) {
-      assert.equal(simulatedFrom(value), false, value)
-    }
-  })
-
-  it('refuses a value neither service understands rather than guessing', () => {
-    for (const value of ['2', 'maybe', 'simulated', '']) {
-      assert.throws(() => simulatedFrom(value), /MISTHOS_SIMULATED/, value)
-    }
-  })
-
+  // variable the same way (simulated.test.ts has every spelling). `0` used to mean live
+  // to the API and simulated here, which handed out metered endpoints free to anyone
+  // who sent a header.
   it('turns the simulation off for a spelling pydantic also reads as false', () => {
     const config = gateConfig({ MISTHOS_SIMULATED: '0', MISTHOS_SELLER_ADDRESS: SELLER })
     assert.equal(config.simulated, false)

@@ -19,6 +19,8 @@ const LIVE: WalletConfig = {
   blockchain: ARC_TESTNET,
 }
 
+const CREDENTIALS = { CIRCLE_API_KEY: 'TEST_API_KEY:x:y', CIRCLE_APP_ID: 'app-1' }
+
 /** A stand-in for Circle that records calls and holds wallets in memory. */
 function fakeCircle(existing: Record<string, string> = {}) {
   const calls: string[] = []
@@ -56,6 +58,21 @@ describe('wallet configuration', () => {
 
   it('refuses real wallets without Circle credentials', () => {
     assert.throws(() => walletConfig({ MISTHOS_SIMULATED: 'false' }), /CIRCLE_API_KEY/)
+  })
+
+  // The API reads `0`, `no` and `off` as live. Read as simulated here, they gave the
+  // live API made-up addresses to keep as payout wallets.
+  it('is live for every spelling the API reads as live, and then needs Circle', () => {
+    for (const value of ['0', 'f', 'n', 'no', 'off', 'False', 'OFF']) {
+      assert.equal(walletConfig({ MISTHOS_SIMULATED: value, ...CREDENTIALS }).simulated, false, value)
+      assert.throws(() => walletConfig({ MISTHOS_SIMULATED: value }), /CIRCLE_API_KEY/, value)
+    }
+  })
+
+  it('refuses a MISTHOS_SIMULATED the API would refuse', () => {
+    for (const value of ['', 'maybe', ' false']) {
+      assert.throws(() => walletConfig({ MISTHOS_SIMULATED: value }), /MISTHOS_SIMULATED/, value)
+    }
   })
 
   it('refuses mainnet wallets until the confirmation names chain 5042', () => {
@@ -160,6 +177,39 @@ describe('wallet routes', () => {
     assert.equal(stranger.status, 401)
     assert.equal(core.status, 200)
     assert.equal(body.challengeId, 'challenge-1')
+  })
+
+  // Built from the environment, as index.ts builds them: whichever way the flag says
+  // live, the routes are Circle's and the core token guards them.
+  it('asks for the core token whenever the flag is live, however it is spelled', async () => {
+    for (const value of ['0', 'no', 'off']) {
+      const { circle } = fakeCircle()
+      const service = createWalletService(
+        walletConfig({ MISTHOS_SIMULATED: value, ...CREDENTIALS }),
+        circle,
+      )
+      assert.throws(() => walletRouter(service, ''), /EDGE_CORE_TOKEN/, value)
+
+      const app = await serve(walletRouter(service, 'secret'))
+      const session = await fetch(`${app.base}/contributor/CON-1/session`, { method: 'POST' })
+      const wallet = await fetch(`${app.base}/contributor/CON-1`)
+      const wrong = await fetch(`${app.base}/contributor/CON-1`, {
+        headers: { 'X-Misthos-Core-Token': 'guess' },
+      })
+      const core = await fetch(`${app.base}/contributor/CON-1/session`, {
+        method: 'POST',
+        headers: { 'X-Misthos-Core-Token': 'secret' },
+      })
+      const body = (await core.json()) as { simulated: boolean; challengeId: string }
+      await app.close()
+
+      assert.equal(session.status, 401, value)
+      assert.equal(wallet.status, 401, value)
+      assert.equal(wrong.status, 401, value)
+      assert.equal(core.status, 200, value)
+      assert.equal(body.simulated, false, value)
+      assert.equal(body.challengeId, 'challenge-1', value)
+    }
   })
 
   it('rejects a party it does not know', async () => {
