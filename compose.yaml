@@ -14,12 +14,15 @@ x-backend: &backend
     MISTHOS_DATABASE_URL: postgresql+psycopg://misthos:misthos@postgres:5432/misthos
     MISTHOS_REDIS_URL: redis://redis:6379/0
     MISTHOS_LOG_JSON: "true"
-    # Anything else from backend/.env.example, such as the GitHub App or the review
-    # agent's key, can be passed through from your shell or an .env file here.
+    # The rest of backend/.env.example reaches the container the same way: one line
+    # here, reading your shell or an .env file next to this one.
     MISTHOS_GITHUB_APP_ID: ${MISTHOS_GITHUB_APP_ID:-}
     MISTHOS_GITHUB_APP_PRIVATE_KEY: ${MISTHOS_GITHUB_APP_PRIVATE_KEY:-}
     MISTHOS_GITHUB_WEBHOOK_SECRET: ${MISTHOS_GITHUB_WEBHOOK_SECRET:-dev-secret}
+    # The key and the endpoint it belongs to; empty here leaves the built-in
+    # DeepSeek endpoint, so only the key is needed.
     MISTHOS_ANTHROPIC_API_KEY: ${MISTHOS_ANTHROPIC_API_KEY:-}
+    MISTHOS_ANTHROPIC_API_URL: ${MISTHOS_ANTHROPIC_API_URL:-}
     MISTHOS_PUBLIC_URL: ${MISTHOS_PUBLIC_URL:-http://localhost:5173}
     MISTHOS_SESSION_SECRET: ${MISTHOS_SESSION_SECRET:-}
     MISTHOS_GITHUB_OAUTH_CLIENT_ID: ${MISTHOS_GITHUB_OAUTH_CLIENT_ID:-}

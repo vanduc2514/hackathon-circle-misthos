@@ -67,12 +67,16 @@ class Settings(BaseSettings):
     edge_url: str = "http://127.0.0.1:8080"
     edge_core_token: str = ""
 
-    # The review agent. With a key, Claude judges each pull request against its
+    # The review agent. With a key, a model judges each pull request against its
     # acceptance criteria; without one, the rule reviewer judges what the file list
-    # proves. Prices are dollars per million tokens, for the cost of each verdict;
-    # check them, and the model id, against Anthropic's models page.
+    # proves. The URL is any Anthropic-compatible /v1/messages endpoint, and it is
+    # DeepSeek's by default so a DeepSeek key is all this needs; set it to
+    # https://api.anthropic.com to send the review to Claude instead. Prices are
+    # dollars per million tokens, for the cost of each verdict; check them, and the
+    # model id, against the provider's models page. DeepSeek maps an unknown
+    # `claude-*` name onto its own model, so the default model id still resolves.
     anthropic_api_key: str = ""
-    anthropic_api_url: str = "https://api.anthropic.com"
+    anthropic_api_url: str = "https://api.deepseek.com/anthropic"
     review_model: str = "claude-sonnet-5-5"
     review_input_usd_per_mtok: float = 2.0
     review_output_usd_per_mtok: float = 10.0

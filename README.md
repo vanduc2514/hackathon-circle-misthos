@@ -246,9 +246,11 @@ and deploying the escrow to Arc testnet.
 ### The review agent
 
 Every submitted commit is reviewed against the issue's acceptance criteria without
-anyone asking. Set `MISTHOS_ANTHROPIC_API_KEY` and Claude reads the diff; without
-it, a rule reviewer judges only what the file list proves. To see how well the
-reviewer agrees with the hand-labelled regression corpus, by complexity band:
+anyone asking. Set `MISTHOS_ANTHROPIC_API_KEY` and a model reads the diff; without
+it, a rule reviewer judges only what the file list proves. The key is spent at
+`MISTHOS_ANTHROPIC_API_URL`, an Anthropic-compatible endpoint that is DeepSeek's by
+default. To see how well the reviewer agrees with the hand-labelled regression
+corpus, by complexity band:
 
 ```bash
 mise run review:harness

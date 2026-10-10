@@ -168,7 +168,7 @@ class GitHubApp:
             body=issue.get("body") or "",
             labels=tuple(label["name"] for label in issue.get("labels", [])),
             tree=classify_tree(paths),
-            prior_attempts=_abandoned_attempts(timeline or []),
+            prior_attempts=abandoned_attempts(timeline or []),
         )
 
     def read_pull_request(self, repo: str, number: int) -> PullRequest:
@@ -241,7 +241,7 @@ def pull_request_from(repo: str, pr: dict[str, Any]) -> PullRequest:
     )
 
 
-def _abandoned_attempts(timeline: list[dict[str, Any]]) -> int:
+def abandoned_attempts(timeline: list[dict[str, Any]]) -> int:
     """Pull requests that referenced the issue and were closed without merging."""
     seen: set[int] = set()
     for event in timeline:
