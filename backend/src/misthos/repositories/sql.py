@@ -1094,16 +1094,16 @@ def _sso(conn: Connection, where: Any) -> SsoConnection | None:
     if row is None:
         return None
     domains = conn.execute(
-        select(t.sso_domains.c.domain)
-        .where(t.sso_domains.c.publisher_id == row["publisher_id"])
-        .order_by(t.sso_domains.c.domain)
+        select(t.sso_domains.c.domain).where(t.sso_domains.c.publisher_id == row["publisher_id"])
     ).scalars()
     return SsoConnection(
         publisher_id=row["publisher_id"],
         issuer=row["issuer"],
         client_id=row["client_id"],
         client_secret_ref=row["client_secret_ref"],
-        domains=list(domains),
+        # Sorted here, not by the database: Postgres collates by locale and puts
+        # `acme.example` before `acme-labs.example`, which the memory store does not.
+        domains=sorted(domains),
         required=row["required"],
         configured_at=_utc(row["configured_at"]),
     )
