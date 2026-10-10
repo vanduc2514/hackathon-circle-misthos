@@ -48,6 +48,7 @@ from misthos.repositories.base import (
     AppendOnlyViolation,
     PaymentAlreadyUsed,
     Seed,
+    SsoDomainTaken,
     StaleIssue,
 )
 from misthos.schemas import (
@@ -60,6 +61,7 @@ from misthos.schemas import (
     Publisher,
     RepoConnection,
     Review,
+    SsoConnection,
     Submission,
     Subscription,
     SubscriptionPayment,
@@ -350,6 +352,67 @@ class SqlRepository:
         with self.engine.connect() as conn:
             rows = conn.execute(select(t.repo_connections)).mappings().all()
         return [_connection(r) for r in rows]
+
+    # --------------------------------------------------------- single sign-on
+
+    def get_sso(self, publisher_id: str) -> SsoConnection | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            return _sso(conn, t.sso_connections.c.publisher_id == publisher_id)
+
+    def get_sso_by_domain(self, domain: str) -> SsoConnection | None:
+        self.migrate()
+        owner = select(t.sso_domains.c.publisher_id).where(
+            t.sso_domains.c.domain == domain.lower()
+        )
+        with self.engine.connect() as conn:
+            return _sso(conn, t.sso_connections.c.publisher_id.in_(owner))
+
+    def save_sso(self, connection: SsoConnection) -> None:
+        self.migrate()
+        domains = [d.lower() for d in connection.domains]
+        values = {
+            "issuer": connection.issuer,
+            "client_id": connection.client_id,
+            "client_secret_ref": connection.client_secret_ref,
+            "required": connection.required,
+            "configured_at": connection.configured_at,
+        }
+        try:
+            with self.engine.begin() as conn:
+                taken = conn.execute(
+                    select(t.sso_domains.c.domain).where(
+                        t.sso_domains.c.domain.in_(domains),
+                        t.sso_domains.c.publisher_id != connection.publisher_id,
+                    )
+                ).scalars().first()
+                if taken is not None:
+                    raise SsoDomainTaken(
+                        f"{taken} signs in to another organisation's identity provider"
+                    )
+                _upsert(conn, t.sso_connections, {"publisher_id": connection.publisher_id}, values)
+                conn.execute(
+                    delete(t.sso_domains).where(
+                        t.sso_domains.c.publisher_id == connection.publisher_id
+                    )
+                )
+                conn.execute(
+                    insert(t.sso_domains),
+                    [{"domain": d, "publisher_id": connection.publisher_id} for d in domains],
+                )
+        except IntegrityError as exc:
+            # Two organisations claiming one domain at once: the primary key settles it.
+            raise SsoDomainTaken(
+                "one of those domains signs in to another organisation's identity provider"
+            ) from exc
+
+    def delete_sso(self, publisher_id: str) -> None:
+        self.migrate()
+        with self.engine.begin() as conn:
+            conn.execute(delete(t.sso_domains).where(t.sso_domains.c.publisher_id == publisher_id))
+            conn.execute(
+                delete(t.sso_connections).where(t.sso_connections.c.publisher_id == publisher_id)
+            )
 
     # ---------------------------------------------------------- plans
 
@@ -708,6 +771,7 @@ def _save_escrow(conn: Connection, rec: IssueRecord) -> None:
         {
             "contract": e.contract,
             "chain": e.chain,
+            "money": e.money,
             "tx_hash": e.tx_hash,
             "amount_base_units": int(e.amount["base_units"]),
             "deadline": e.deadline,
@@ -1026,6 +1090,26 @@ def _connection(row) -> RepoConnection:  # type: ignore[no-untyped-def]
     )
 
 
+def _sso(conn: Connection, where: Any) -> SsoConnection | None:
+    row = conn.execute(select(t.sso_connections).where(where)).mappings().first()
+    if row is None:
+        return None
+    domains = conn.execute(
+        select(t.sso_domains.c.domain).where(t.sso_domains.c.publisher_id == row["publisher_id"])
+    ).scalars()
+    return SsoConnection(
+        publisher_id=row["publisher_id"],
+        issuer=row["issuer"],
+        client_id=row["client_id"],
+        client_secret_ref=row["client_secret_ref"],
+        # Sorted here, not by the database: Postgres collates by locale and puts
+        # `acme.example` before `acme-labs.example`, which the memory store does not.
+        domains=sorted(domains),
+        required=row["required"],
+        configured_at=_utc(row["configured_at"]),
+    )
+
+
 def _subscription(row) -> Subscription:  # type: ignore[no-untyped-def]
     return Subscription(
         publisher_id=row["publisher_id"],
@@ -1044,6 +1128,7 @@ def _escrow(row: Row) -> EscrowCommitment:
         issue_id=row["issue_id"],
         contract=row["contract"],
         chain=row["chain"],
+        money=row["money"],
         tx_hash=row["tx_hash"],
         amount=money(Usdc(row["amount_base_units"])),
         deadline=_utc(row["deadline"]),

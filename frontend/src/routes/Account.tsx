@@ -1,12 +1,22 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, shortHash, unwrap, type Account, type HealthOut, type MeOut } from '../lib/client'
+import {
+  api,
+  shortHash,
+  unwrap,
+  type Account,
+  type HealthOut,
+  type MeOut,
+  type SsoOut,
+} from '../lib/client'
 import {
   connectWallet,
   demoGitHubSignIn,
+  demoSsoSignIn,
   signIn,
   signInWithGitHub,
+  signInWithSso,
   signOut,
   useHealth,
   useMe,
@@ -15,6 +25,7 @@ import { browserProvider, browserWallet, demoWallet, demoWalletFor, type Signer 
 import { setUpWallet } from '../lib/circle-wallet'
 import { linking } from '../lib/github-link'
 import { signedInAs } from '../lib/identity'
+import { parseDomains, ssoStep } from '../lib/sso'
 import { Panel } from '../components/ui'
 
 /**
@@ -57,6 +68,17 @@ export default function AccountPage() {
       {params.get('linked') === 'github' && account?.github_login && (
         <div className="banner">Your GitHub account {account.github_login} is linked.</div>
       )}
+      {params.get('signed_in') === 'sso' && me.data?.sso_email && (
+        <div className="banner">
+          You are signed in through your organisation's single sign-on as {me.data.sso_email}.
+        </div>
+      )}
+      {me.data?.sso_required && account && (
+        <div className="error-box" role="note">
+          {account.party_id} acts only through its single sign-on. Sign out, then sign in with
+          your work e-mail to act for it.
+        </div>
+      )}
 
       <div className="form-stack">
         {me.isLoading ? (
@@ -69,7 +91,12 @@ export default function AccountPage() {
               <dl className="kv">
                 <dt>Signed in with</dt>
                 <dd>
-                  {me.data.method === 'github' ? 'GitHub' : 'a wallet'}, as {signedInAs(me.data)}
+                  {me.data.method === 'github'
+                    ? 'GitHub'
+                    : me.data.method === 'sso'
+                      ? "your organisation's single sign-on"
+                      : 'a wallet'}
+                  , as {signedInAs(me.data)}
                 </dd>
                 <dt>Wallet</dt>
                 <dd className="muted" title={me.data.address ?? undefined}>
@@ -110,6 +137,9 @@ export default function AccountPage() {
 
             {account?.role === 'publisher' && account.github_login && (
               <Repositories publisherId={account.party_id} />
+            )}
+            {account?.role === 'publisher' && !me.data.sso_required && (
+              <SingleSignOn me={me.data} publisherId={account.party_id} onDone={changed} />
             )}
             {!account && <ChooseSide github={me.data.method === 'github'} onDone={changed} />}
             {!account && me.data.method === 'github' && (
@@ -224,6 +254,8 @@ function SignIn({
           </form>
         )}
       </Panel>
+
+      <SsoSignIn simulated={simulated} onDone={onDone} />
 
       <Panel title="Or sign in with a wallet">
         <p className="dim" style={{ marginBottom: 14 }}>
@@ -631,5 +663,241 @@ function LinkGitHub({
         </form>
       )}
     </Panel>
+  )
+}
+
+/**
+ * The way in for an Enterprise organisation's staff (#53): the work e-mail's domain
+ * finds the organisation's identity provider. In the simulation a typed address stands
+ * in for the provider.
+ */
+function SsoSignIn({ simulated, onDone }: { simulated: boolean; onDone: () => void }) {
+  const [email, setEmail] = useState('')
+  // The provider asks the user, then sends them back to /account?signed_in=sso.
+  const start = useMutation({ mutationFn: () => signInWithSso(email.trim()) })
+  const demo = useMutation({ mutationFn: () => demoSsoSignIn(email.trim()), onSuccess: onDone })
+
+  return (
+    <Panel title="Or sign in with single sign-on">
+      <p className="dim" style={{ marginBottom: 14 }}>
+        If your organisation signs in to Misthos through its identity provider, use your work
+        e-mail. You act for the organisation, and what you do is recorded under your address.
+      </p>
+      <form
+        className="form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          start.mutate()
+        }}
+      >
+        <label className="field">
+          <span>Work e-mail</span>
+          <input
+            className="input"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            maxLength={254}
+            placeholder="you@company.com"
+            required
+          />
+        </label>
+        <div className="btn-row">
+          <button className="btn" type="submit" disabled={start.isPending || !email.trim()}>
+            Continue with single sign-on
+          </button>
+          {simulated && (
+            <button
+              className="btn"
+              type="button"
+              disabled={demo.isPending || !email.trim()}
+              onClick={() => demo.mutate()}
+            >
+              Sign in as this address (simulation)
+            </button>
+          )}
+        </div>
+        {start.error && <div className="error-box form-error">{start.error.message}</div>}
+        {demo.error && <div className="error-box form-error">{demo.error.message}</div>}
+      </form>
+    </Panel>
+  )
+}
+
+/**
+ * The organisation's connection to its own identity provider (#53). Enterprise only.
+ * Requiring it is offered only to a session that came through it, as the API insists:
+ * a provider that has never signed anyone in cannot lock the organisation out.
+ */
+function SingleSignOn({
+  me,
+  publisherId,
+  onDone,
+}: {
+  me: MeOut
+  publisherId: string
+  onDone: () => void
+}) {
+  const path = { params: { path: { publisher_id: publisherId } } }
+  const sso = useQuery({
+    queryKey: ['sso', publisherId],
+    queryFn: async () => unwrap(await api.GET('/api/v1/publishers/{publisher_id}/sso', path)),
+  })
+  if (!sso.data) return null
+  const step = ssoStep(sso.data, me)
+
+  return (
+    <Panel title="Single sign-on">
+      {step === 'upgrade' ? (
+        <p className="dim">
+          Let your staff sign in through your own identity provider, and turn them off there
+          the day they leave. Single sign-on is in the Enterprise plan.{' '}
+          <Link to="/plans">See the plans</Link>.
+        </p>
+      ) : (
+        <SsoForm
+          sso={sso.data}
+          step={step}
+          publisherId={publisherId}
+          onDone={onDone}
+        />
+      )}
+    </Panel>
+  )
+}
+
+function SsoForm({
+  sso,
+  step,
+  publisherId,
+  onDone,
+}: {
+  sso: SsoOut
+  step: ReturnType<typeof ssoStep>
+  publisherId: string
+  onDone: () => void
+}) {
+  const kept = sso.connection
+  const [issuer, setIssuer] = useState(kept?.issuer ?? '')
+  const [clientId, setClientId] = useState(kept?.client_id ?? '')
+  const [secretRef, setSecretRef] = useState(kept?.client_secret_ref ?? '')
+  const [domains, setDomains] = useState(kept?.domains.join(', ') ?? '')
+  const path = { params: { path: { publisher_id: publisherId } } }
+
+  const save = useMutation({
+    mutationFn: async (required: boolean) =>
+      unwrap(
+        await api.PUT('/api/v1/publishers/{publisher_id}/sso', {
+          ...path,
+          body: {
+            issuer: issuer.trim(),
+            client_id: clientId.trim(),
+            client_secret_ref: secretRef.trim(),
+            domains: parseDomains(domains),
+            required,
+          },
+        }),
+      ),
+    onSuccess: onDone,
+  })
+  const remove = useMutation({
+    mutationFn: async () => {
+      const result = await api.DELETE('/api/v1/publishers/{publisher_id}/sso', path)
+      if (!result.response.ok) unwrap(result)
+    },
+    onSuccess: onDone,
+  })
+  const required = kept?.required ?? false
+
+  return (
+    <>
+      <p className="dim" style={{ marginBottom: 14 }}>
+        Register Misthos with your identity provider as an OpenID Connect web application with
+        the redirect URI <code>{sso.callback_url}</code>. The client secret goes into our secret
+        store during onboarding; name it here by its reference.
+      </p>
+      {step === 'try' && (
+        <div className="banner" role="note">
+          Connected. Sign out and sign in with your work e-mail to try it: requiring single
+          sign-on is offered only to a session that came through it.
+        </div>
+      )}
+      {step === 'required' && (
+        <div className="banner" role="note">
+          Required: this organisation is acted for only through its single sign-on.
+        </div>
+      )}
+      <form
+        className="form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          save.mutate(required)
+        }}
+      >
+        <label className="field">
+          <span>Issuer URL</span>
+          <input
+            className="input"
+            value={issuer}
+            onChange={(e) => setIssuer(e.target.value)}
+            placeholder="https://company.okta.com"
+            required
+          />
+        </label>
+        <label className="field">
+          <span>Client id</span>
+          <input
+            className="input"
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            maxLength={256}
+            required
+          />
+        </label>
+        <label className="field">
+          <span>Client secret reference</span>
+          <input
+            className="input"
+            value={secretRef}
+            onChange={(e) => setSecretRef(e.target.value)}
+            maxLength={128}
+            placeholder="company-oidc"
+            required
+          />
+        </label>
+        <label className="field">
+          <span>E-mail domains it speaks for</span>
+          <input
+            className="input"
+            value={domains}
+            onChange={(e) => setDomains(e.target.value)}
+            placeholder="company.com, labs.company.com"
+            required
+          />
+        </label>
+        <div className="btn-row">
+          <button className="btn primary" type="submit" disabled={save.isPending}>
+            {kept ? 'Save the connection' : 'Connect your provider'}
+          </button>
+          {step === 'require' && (
+            <button className="btn" type="button" onClick={() => save.mutate(true)}>
+              Require single sign-on
+            </button>
+          )}
+          {step === 'required' && (
+            <button className="btn" type="button" onClick={() => save.mutate(false)}>
+              Stop requiring it
+            </button>
+          )}
+          {kept && (
+            <button className="btn" type="button" onClick={() => remove.mutate()}>
+              Remove single sign-on
+            </button>
+          )}
+        </div>
+        {save.error && <div className="error-box form-error">{save.error.message}</div>}
+        {remove.error && <div className="error-box form-error">{remove.error.message}</div>}
+      </form>
+    </>
   )
 }

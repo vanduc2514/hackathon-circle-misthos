@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, money, relativeTime, type LoopOut } from '../lib/client'
 import { Panel, Stat } from '../components/ui'
+import { valueMovedStat } from '../lib/value-moved'
 
 /**
  * The loop in public: what was funded, settled and paid, for one repository or all
@@ -44,7 +45,7 @@ export default function Loop() {
       <div className="grid k4">
         <Stat label="Settled this week" value={l?.settled_issues_7d ?? '—'} />
         <Stat label="Settled in all" value={l?.settled_issues ?? '—'} />
-        <Stat label="Paid to contributors" value={`$${money(l?.matched_volume_usdc)}`} />
+        <Stat label="Paid to contributors" {...valueMovedStat(l?.value_moved)} />
         <Stat label="Funded and open" value={l?.funded_open ?? '—'} hint="Waiting for a fix" />
       </div>
 

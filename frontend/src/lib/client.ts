@@ -11,6 +11,7 @@ export type IssueOut = components['schemas']['IssueOut']
 export type EscrowReadback = components['schemas']['EscrowReadback']
 export type IssueSummaryOut = components['schemas']['IssueSummaryOut']
 export type MetricsOut = components['schemas']['MetricsOut']
+export type ValueMoved = components['schemas']['ValueMoved']
 export type TimelineEntry = components['schemas']['TimelineEntry']
 export type Decision = components['schemas']['Decision']
 // Anyone sees every publisher; its budget and policy only it, or the simulation.
@@ -23,6 +24,7 @@ export type HealthOut = components['schemas']['HealthOut']
 export type Account = components['schemas']['Account']
 export type MeOut = components['schemas']['MeOut']
 export type SessionOut = components['schemas']['SessionOut']
+export type SsoOut = components['schemas']['SsoOut']
 
 /** A refusal from the API, carrying the reason it gave. */
 export class ApiError extends Error {

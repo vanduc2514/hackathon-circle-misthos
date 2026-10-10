@@ -167,10 +167,18 @@ class PriceProposalOut(BaseModel):
     """Closest first. Confidence follows these, and nothing else."""
 
 
+MoneyKind = Literal["simulated", "test", "real", "unknown"]
+
+
 class EscrowCommitment(BaseModel):
     issue_id: str
     contract: str
     chain: str
+    money: MoneyKind | None = None
+    """What the committed money was, recorded when it was committed (#31): simulated,
+    test USDC, real USDC, or USDC on a chain that is not Arc. `chain` alone cannot say:
+    the simulation and Arc testnet share a chain id. None for a commitment recorded
+    before this was kept."""
     tx_hash: str
     amount: dict[str, str | int]
     deadline: datetime
@@ -321,6 +329,19 @@ class IssueSummaryOut(BaseModel):
     github_url: str
 
 
+class ValueMoved(BaseModel):
+    """What settled on one network with one kind of money (#31). Test money and real
+    money are never added into one figure, and neither is the simulation's."""
+
+    chain: str = Field(description="arc-mainnet, arc-testnet or chain-<id>")
+    money: Literal["simulated", "test", "real", "unknown", "unrecorded"] = Field(
+        description="What the money was; `unrecorded` for a commitment made before it was kept"
+    )
+    settled_issues: int
+    settled_usdc: str
+    platform_fees_usdc: str
+
+
 class MetricsOut(BaseModel):
     """Every number is computed from the ledger and the lifecycle records (09)."""
 
@@ -339,8 +360,12 @@ class MetricsOut(BaseModel):
     repeat_publisher_rate: float
     """Publishers who funded a second issue within 60 days of an earlier one."""
     matched_volume_usdc: str
+    """Every network together. Report `value_moved` instead, which keeps test money,
+    real money and the simulation apart (#31)."""
     platform_fees_usdc: str
-    """The take-rate revenue actually collected across settled issues."""
+    """The take-rate revenue actually collected across settled issues, every network
+    together; `value_moved` splits it."""
+    value_moved: list[ValueMoved] = Field(default_factory=list)
     median_hours_to_payout: float | None
     refund_rate: float = 0.0
     """Of the commitments that closed, the share refunded rather than paid."""
@@ -426,8 +451,9 @@ class SignInRequest(BaseModel):
 class MeOut(BaseModel):
     """Who is signed in, how, and the account they act as (#131)."""
 
-    method: Literal["github", "wallet"] = Field(
-        description="How this session signed in: with GitHub, or by signing with a wallet"
+    method: Literal["github", "wallet", "sso"] = Field(
+        description="How this session signed in: with GitHub, by signing with a wallet, or "
+        "through an organisation's single sign-on (#53)"
     )
     address: str | None = Field(
         description="The wallet, lowercase: the one this session signed in with, or the "
@@ -445,6 +471,17 @@ class MeOut(BaseModel):
         description="The wallet this account's money moves through: a publisher's funding "
         "wallet, or a contributor's payout wallet (connected or Circle). Null until there "
         "is one; approving a price or claiming waits for it.",
+    )
+    sso_email: str | None = Field(
+        default=None,
+        description="Signed in through the organisation's single sign-on: the person, by "
+        "the verified e-mail their identity provider asserted. What the decision log "
+        "records for what they do.",
+    )
+    sso_required: bool = Field(
+        default=False,
+        description="The account acts only through its organisation's single sign-on, and "
+        "this session did not come through it: sign in with a work e-mail to act.",
     )
 
 
@@ -476,6 +513,21 @@ class GitHubSignInStart(BaseModel):
     short-lived HttpOnly cookie, which the callback checks."""
 
     authorize_url: str
+
+
+class SsoSignInRequest(BaseModel):
+    """A work e-mail. Its domain says which organisation's identity provider to use."""
+
+    email: str = Field(min_length=3, max_length=254)
+
+
+class SsoSignInStart(BaseModel):
+    """Where to send the user to sign in through their organisation's identity provider.
+    The state in it is also set in a short-lived HttpOnly cookie, which the callback
+    checks."""
+
+    authorize_url: str
+    organisation: str = Field(description="The organisation the provider signs in to")
 
 
 class AlreadyPublished(BaseModel):
@@ -678,6 +730,8 @@ class LoopOut(BaseModel):
     settled_issues: int
     settled_issues_7d: int
     matched_volume_usdc: str
+    """Every network together; `value_moved` keeps them apart (#31)."""
+    value_moved: list[ValueMoved] = Field(default_factory=list)
     recent: list[LoopSettlement]
 
 
@@ -835,6 +889,45 @@ class RepoConnection(BaseModel):
     """The GitHub login that installed the App: the publisher, once that login is linked."""
     publisher_id: str | None = None
     connected_at: datetime
+
+
+class SsoConnection(BaseModel):
+    """An Enterprise organisation's connection to its own identity provider (#53)."""
+
+    publisher_id: str
+    issuer: str = Field(description="The OpenID Connect issuer URL, without a trailing slash")
+    client_id: str
+    client_secret_ref: str = Field(
+        description="The client secret's name in the secret store. Never the secret."
+    )
+    domains: list[str] = Field(
+        description="The e-mail domains the provider speaks for, lowercase. A sign-in is "
+        "admitted only for a verified address in one of them."
+    )
+    required: bool = Field(
+        default=False,
+        description="The organisation's account acts only through this sign-on. Any other "
+        "session of it can read the public pages and nothing of the organisation's own.",
+    )
+    configured_at: datetime
+
+
+class SsoRequest(BaseModel):
+    issuer: str = Field(min_length=8, max_length=300)
+    client_id: str = Field(min_length=1, max_length=256)
+    client_secret_ref: str = Field(min_length=1, max_length=128)
+    domains: list[str] = Field(min_length=1, max_length=10)
+    required: bool = False
+    """Turned on only from a session that came through this sign-on, so an organisation
+    never locks itself out with a provider it has not seen work."""
+
+
+class SsoOut(BaseModel):
+    """An organisation's single sign-on, and what to register with its provider."""
+
+    connection: SsoConnection | None = Field(description="Null until one is configured")
+    callback_url: str = Field(description="The redirect URI to register with the provider")
+    entitled: bool = Field(description="Whether the organisation's plan includes single sign-on")
 
 
 class RepositoriesOut(BaseModel):

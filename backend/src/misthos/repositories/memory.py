@@ -21,6 +21,7 @@ from misthos.repositories.base import (
     AppendOnlyViolation,
     PaymentAlreadyUsed,
     Seed,
+    SsoDomainTaken,
     StaleIssue,
 )
 from misthos.schemas import (
@@ -29,6 +30,7 @@ from misthos.schemas import (
     Decision,
     Publisher,
     RepoConnection,
+    SsoConnection,
     Subscription,
     SubscriptionPayment,
 )
@@ -61,6 +63,7 @@ class MemoryRepository:
             self._accounts: dict[str, Account] = {}
             self._subscriptions: dict[str, Subscription] = {}
             self._connections: dict[str, RepoConnection] = {}
+            self._sso: dict[str, SsoConnection] = {}
             self._subscription_payments: list[SubscriptionPayment] = []
             if seed is None:
                 return
@@ -85,6 +88,7 @@ class MemoryRepository:
                 or self._accounts
                 or self._subscriptions
                 or self._connections
+                or self._sso
                 or self._subscription_payments
             ), "a seed holds publishers, contributors, issues and counters only"
             return Seed(
@@ -226,6 +230,36 @@ class MemoryRepository:
     def list_connections(self) -> list[RepoConnection]:
         with self._guard:
             return [c.model_copy(deep=True) for c in self._connections.values()]
+
+    # ------------------------------------------------------- single sign-on
+
+    def get_sso(self, publisher_id: str) -> SsoConnection | None:
+        with self._guard:
+            found = self._sso.get(publisher_id)
+            return found.model_copy(deep=True) if found else None
+
+    def get_sso_by_domain(self, domain: str) -> SsoConnection | None:
+        with self._guard:
+            domain = domain.lower()
+            found = next((c for c in self._sso.values() if domain in c.domains), None)
+            return found.model_copy(deep=True) if found else None
+
+    def save_sso(self, connection: SsoConnection) -> None:
+        with self._guard:
+            domains = [d.lower() for d in connection.domains]
+            for other in self._sso.values():
+                taken = set(domains) & set(other.domains)
+                if other.publisher_id != connection.publisher_id and taken:
+                    raise SsoDomainTaken(
+                        f"{min(taken)} signs in to another organisation's identity provider"
+                    )
+            self._sso[connection.publisher_id] = connection.model_copy(
+                update={"domains": domains}, deep=True
+            )
+
+    def delete_sso(self, publisher_id: str) -> None:
+        with self._guard:
+            self._sso.pop(publisher_id, None)
 
     # ------------------------------------------------------------ plans
 

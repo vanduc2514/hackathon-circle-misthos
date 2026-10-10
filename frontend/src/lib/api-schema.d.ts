@@ -125,6 +125,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/sso/signin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in through your organisation's single sign-on
+         * @description Start signing in through an organisation's identity provider.
+         *
+         *     The work e-mail's domain says which. Answers with the URL to send the browser to,
+         *     and sets a short-lived HttpOnly cookie holding the same state; the provider sends
+         *     the user back to `/auth/sso/callback`, which signs them in only if the two match.
+         */
+        post: operations["start_sso_signin_api_v1_auth_sso_signin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sso/simulate-signin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with a typed work e-mail (simulation only)
+         * @description Sign in as a work e-mail without a provider: the simulation's demo only. The
+         *     address stands for one the organisation's provider verified.
+         */
+        post: operations["simulate_sso_signin_api_v1_auth_sso_simulate_signin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sso/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where an organisation's identity provider returns
+         * @description Where the provider sends the user back. The state is spent on first use, must
+         *     come back to the browser that started it, and the redirect goes only to this app's
+         *     own Account page.
+         */
+        get: operations["sso_callback_api_v1_auth_sso_callback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/logout": {
         parameters: {
             query?: never;
@@ -835,6 +902,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/publishers/{publisher_id}/sso": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sso
+         * @description The organisation's single sign-on, the redirect URI to register with its
+         *     provider, and whether its plan includes it.
+         */
+        get: operations["sso_api_v1_publishers__publisher_id__sso_get"];
+        /**
+         * Set Sso
+         * @description Connect the organisation to its identity provider, or replace the connection.
+         *
+         *     `required` makes single sign-on the only way to act for the organisation. It is
+         *     turned on only from a session that came through this sign-on, so a provider that
+         *     has never worked cannot lock the organisation out.
+         */
+        put: operations["set_sso_api_v1_publishers__publisher_id__sso_put"];
+        post?: never;
+        /**
+         * Remove Sso
+         * @description Remove the organisation's single sign-on. Every session that came through it
+         *     stops acting for the organisation at once. Needs no plan: an organisation can
+         *     always take a protection off from a session the protection lets in.
+         */
+        delete: operations["remove_sso_api_v1_publishers__publisher_id__sso_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/publishers/{publisher_id}/spend": {
         parameters: {
             query?: never;
@@ -1384,6 +1486,8 @@ export interface components {
             contract: string;
             /** Chain */
             chain: string;
+            /** Money */
+            money?: ("simulated" | "test" | "real" | "unknown") | null;
             /** Tx Hash */
             tx_hash: string;
             /** Amount */
@@ -1669,6 +1773,8 @@ export interface components {
             settled_issues_7d: number;
             /** Matched Volume Usdc */
             matched_volume_usdc: string;
+            /** Value Moved */
+            value_moved?: components["schemas"]["ValueMoved"][];
             /** Recent */
             recent: components["schemas"]["LoopSettlement"][];
         };
@@ -1703,10 +1809,10 @@ export interface components {
         MeOut: {
             /**
              * Method
-             * @description How this session signed in: with GitHub, or by signing with a wallet
+             * @description How this session signed in: with GitHub, by signing with a wallet, or through an organisation's single sign-on (#53)
              * @enum {string}
              */
-            method: "github" | "wallet";
+            method: "github" | "wallet" | "sso";
             /**
              * Address
              * @description The wallet, lowercase: the one this session signed in with, or the account's connected wallet. Null when there is neither.
@@ -1726,6 +1832,17 @@ export interface components {
             account: components["schemas"]["Account"] | null;
             /** @description The wallet this account's money moves through: a publisher's funding wallet, or a contributor's payout wallet (connected or Circle). Null until there is one; approving a price or claiming waits for it. */
             wallet?: components["schemas"]["Wallet"] | null;
+            /**
+             * Sso Email
+             * @description Signed in through the organisation's single sign-on: the person, by the verified e-mail their identity provider asserted. What the decision log records for what they do.
+             */
+            sso_email?: string | null;
+            /**
+             * Sso Required
+             * @description The account acts only through its organisation's single sign-on, and this session did not come through it: sign in with a work e-mail to act.
+             * @default false
+             */
+            sso_required: boolean;
         };
         /**
          * MetricsOut
@@ -1756,6 +1873,8 @@ export interface components {
             matched_volume_usdc: string;
             /** Platform Fees Usdc */
             platform_fees_usdc: string;
+            /** Value Moved */
+            value_moved?: components["schemas"]["ValueMoved"][];
             /** Median Hours To Payout */
             median_hours_to_payout: number | null;
             /**
@@ -2105,10 +2224,10 @@ export interface components {
         SessionOut: {
             /**
              * Method
-             * @description How this session signed in: with GitHub, or by signing with a wallet
+             * @description How this session signed in: with GitHub, by signing with a wallet, or through an organisation's single sign-on (#53)
              * @enum {string}
              */
-            method: "github" | "wallet";
+            method: "github" | "wallet" | "sso";
             /**
              * Address
              * @description The wallet, lowercase: the one this session signed in with, or the account's connected wallet. Null when there is neither.
@@ -2128,6 +2247,17 @@ export interface components {
             account: components["schemas"]["Account"] | null;
             /** @description The wallet this account's money moves through: a publisher's funding wallet, or a contributor's payout wallet (connected or Circle). Null until there is one; approving a price or claiming waits for it. */
             wallet?: components["schemas"]["Wallet"] | null;
+            /**
+             * Sso Email
+             * @description Signed in through the organisation's single sign-on: the person, by the verified e-mail their identity provider asserted. What the decision log records for what they do.
+             */
+            sso_email?: string | null;
+            /**
+             * Sso Required
+             * @description The account acts only through its organisation's single sign-on, and this session did not come through it: sign in with a work e-mail to act.
+             * @default false
+             */
+            sso_required: boolean;
             /** Token */
             token: string;
         };
@@ -2209,6 +2339,99 @@ export interface components {
             by_category: components["schemas"]["SpendCategory"][];
             /** Fileable */
             fileable: components["schemas"]["FileableItem"][];
+        };
+        /**
+         * SsoConnection
+         * @description An Enterprise organisation's connection to its own identity provider (#53).
+         */
+        SsoConnection: {
+            /** Publisher Id */
+            publisher_id: string;
+            /**
+             * Issuer
+             * @description The OpenID Connect issuer URL, without a trailing slash
+             */
+            issuer: string;
+            /** Client Id */
+            client_id: string;
+            /**
+             * Client Secret Ref
+             * @description The client secret's name in the secret store. Never the secret.
+             */
+            client_secret_ref: string;
+            /**
+             * Domains
+             * @description The e-mail domains the provider speaks for, lowercase. A sign-in is admitted only for a verified address in one of them.
+             */
+            domains: string[];
+            /**
+             * Required
+             * @description The organisation's account acts only through this sign-on. Any other session of it can read the public pages and nothing of the organisation's own.
+             * @default false
+             */
+            required: boolean;
+            /**
+             * Configured At
+             * Format: date-time
+             */
+            configured_at: string;
+        };
+        /**
+         * SsoOut
+         * @description An organisation's single sign-on, and what to register with its provider.
+         */
+        SsoOut: {
+            /** @description Null until one is configured */
+            connection: components["schemas"]["SsoConnection"] | null;
+            /**
+             * Callback Url
+             * @description The redirect URI to register with the provider
+             */
+            callback_url: string;
+            /**
+             * Entitled
+             * @description Whether the organisation's plan includes single sign-on
+             */
+            entitled: boolean;
+        };
+        /** SsoRequest */
+        SsoRequest: {
+            /** Issuer */
+            issuer: string;
+            /** Client Id */
+            client_id: string;
+            /** Client Secret Ref */
+            client_secret_ref: string;
+            /** Domains */
+            domains: string[];
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+        };
+        /**
+         * SsoSignInRequest
+         * @description A work e-mail. Its domain says which organisation's identity provider to use.
+         */
+        SsoSignInRequest: {
+            /** Email */
+            email: string;
+        };
+        /**
+         * SsoSignInStart
+         * @description Where to send the user to sign in through their organisation's identity provider.
+         *     The state in it is also set in a short-lived HttpOnly cookie, which the callback
+         *     checks.
+         */
+        SsoSignInStart: {
+            /** Authorize Url */
+            authorize_url: string;
+            /**
+             * Organisation
+             * @description The organisation the provider signs in to
+             */
+            organisation: string;
         };
         /** StatementLine */
         StatementLine: {
@@ -2363,6 +2586,30 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * ValueMoved
+         * @description What settled on one network with one kind of money (#31). Test money and real
+         *     money are never added into one figure, and neither is the simulation's.
+         */
+        ValueMoved: {
+            /**
+             * Chain
+             * @description arc-mainnet, arc-testnet or chain-<id>
+             */
+            chain: string;
+            /**
+             * Money
+             * @description What the money was; `unrecorded` for a commitment made before it was kept
+             * @enum {string}
+             */
+            money: "simulated" | "test" | "real" | "unknown" | "unrecorded";
+            /** Settled Issues */
+            settled_issues: number;
+            /** Settled Usdc */
+            settled_usdc: string;
+            /** Platform Fees Usdc */
+            platform_fees_usdc: string;
         };
         /** Wallet */
         Wallet: {
@@ -2673,6 +2920,201 @@ export interface operations {
                 content?: never;
             };
             /** @description No GitHub OAuth App is configured; the detail says what to set */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    start_sso_signin_api_v1_auth_sso_signin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoSignInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoSignInStart"];
+                };
+            };
+            /** @description No organisation signs in with single sign-on at that domain */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The browser is on another address than GitHub returns to; the detail says which address to open */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many sign-in attempts from this client in a minute */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The identity provider could not be reached or answered wrong */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The organisation's client secret is not in the secret store */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    simulate_sso_signin_api_v1_auth_sso_simulate_signin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoSignInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Outside the simulation, where the identity provider signs in */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No organisation signs in with single sign-on at that domain */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The organisation has no account to act as */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many sign-in attempts from this client in a minute */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sso_callback_api_v1_auth_sso_callback_get: {
+        parameters: {
+            query: {
+                state: string;
+                code?: string | null;
+                error?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed in; on to the Account page */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The state is unknown, used or expired, or no code came back */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description This browser did not start the sign-in, the provider refused it, or the address it asserted is not admitted. No session is issued. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The organisation's sign-on changed mid-flight, or it has no account */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The provider refused the code, or its ID token does not check out */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The organisation's client secret is not in the secret store */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -3299,7 +3741,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssueOut"];
                 };
             };
-            /** @description Not signed in with a GitHub login the organisation named, or the contributor being paid */
+            /** @description Not signed in with a GitHub login the organisation named, signed in through single sign-on, or the contributor being paid */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3931,6 +4373,127 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Publisher"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sso_api_v1_publishers__publisher_id__sso_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoOut"];
+                };
+            };
+            /** @description Not this organisation, or not through its sign-on */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_sso_api_v1_publishers__publisher_id__sso_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoOut"];
+                };
+            };
+            /** @description The plan does not include single sign-on */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not this organisation; or requiring single sign-on from a session that did not come through it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A domain already signs in to another organisation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The connection cannot work: a bad issuer or domain, the secret not in the secret store, or a provider that does not answer discovery */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_sso_api_v1_publishers__publisher_id__sso_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed; every session it issued has ended */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

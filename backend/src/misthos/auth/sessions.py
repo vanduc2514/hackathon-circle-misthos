@@ -1,10 +1,12 @@
 """Sessions: a signed token naming who signed in, in a cookie or a bearer header.
 
-Someone signs in with a wallet or with GitHub (#131), and the token says which. It
-is an HMAC-signed JWT with a twelve-hour life whose subject is `wallet:<address>` or
-`github:<numeric GitHub user id>`; a GitHub session also carries the login it had
-then, for display. The numeric id is the identity because a login can be renamed,
-and the next person to take it is somebody else.
+Someone signs in with a wallet or with GitHub (#131), or through their organisation's
+single sign-on (#53), and the token says which. It is an HMAC-signed JWT with a
+twelve-hour life whose subject is `wallet:<address>`, `github:<numeric GitHub user
+id>` or `sso:<publisher id>`; a GitHub session also carries the login it had then, for
+display, and a single sign-on session the verified e-mail its provider asserted. The
+numeric id is the identity because a login can be renamed, and the next person to
+take it is somebody else.
 
 A token issued before this change has a bare `0x…` address as its subject. It is
 read as the wallet session it was, so nobody is signed out by the upgrade.
@@ -36,13 +38,15 @@ log = logging.getLogger("misthos.auth")
 _SECRET = settings.session_secret or secrets.token_hex(32)
 _ADDRESS = re.compile(r"^0x[0-9a-f]{40}$")
 _NUMBER = re.compile(r"^[0-9]{1,20}$")
+_PARTY = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
-Method = Literal["wallet", "github"]
+Method = Literal["wallet", "github", "sso"]
 
 
 @dataclass(frozen=True)
 class Identity:
-    """Who a session proves: a wallet, or a GitHub account.
+    """Who a session proves: a wallet, a GitHub account, or a person an organisation's
+    identity provider vouched for.
 
     Only what the signature proved is here. Whether that wallet or GitHub account has
     an account, and which, is the store's to answer, so a session issued before the
@@ -56,6 +60,10 @@ class Identity:
     """GitHub's numeric user id. Set for a GitHub session only."""
     github_login: str | None = None
     """The login when the session was issued. Display only: the id is the identity."""
+    organisation: str | None = None
+    """The publisher whose single sign-on issued the session. Set for an SSO session only."""
+    email: str | None = None
+    """The verified address the organisation's provider asserted. Set for an SSO session."""
 
     @classmethod
     def wallet(cls, address: str) -> Identity:
@@ -65,10 +73,16 @@ class Identity:
     def github(cls, github_id: int, login: str) -> Identity:
         return cls(method="github", github_id=github_id, github_login=login)
 
+    @classmethod
+    def sso(cls, organisation: str, email: str) -> Identity:
+        return cls(method="sso", organisation=organisation, email=email.lower())
+
     @property
     def subject(self) -> str:
         if self.method == "github":
             return f"github:{self.github_id}"
+        if self.method == "sso":
+            return f"sso:{self.organisation}"
         return f"wallet:{self.address}"
 
 
@@ -90,6 +104,8 @@ def issue(identity: Identity, now: datetime | None = None) -> str:
     }
     if identity.method == "github":
         claims["login"] = identity.github_login
+    if identity.method == "sso":
+        claims["email"] = identity.email
     return jwt.encode(claims, _SECRET, algorithm="HS256")
 
 
@@ -112,6 +128,12 @@ def identity_in(token: str) -> Identity | None:
         if not _NUMBER.match(number) or not isinstance(login, str):
             return None
         return Identity.github(int(number), login)
+    if subject.startswith("sso:"):
+        organisation = subject.removeprefix("sso:")
+        email = claims.get("email")
+        if not _PARTY.match(organisation) or not isinstance(email, str) or "@" not in email:
+            return None
+        return Identity.sso(organisation, email)
     address = subject.removeprefix("wallet:").lower()
     # A bare address is a session issued before GitHub sign-in existed.
     return Identity.wallet(address) if _ADDRESS.match(address) else None

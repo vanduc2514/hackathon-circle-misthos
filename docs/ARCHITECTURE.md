@@ -589,7 +589,9 @@ Every CSV the platform serves, the audit export and a contributor's statement al
 - **When a period ends.** The sweeper marks a period that ended unpaid as past due, gives it seven days' grace, and then moves the organisation back to Open. A cancelled plan ends at its period end.
 - **Enterprise** is agreed in a contract and recorded by an operator (`python -m misthos.services.contracts`).
 - **The simulation** has its own rail, so the demo can buy Team with a button.
-- **Not built yet:** SSO, which needs organisation membership beyond one wallet per party.
+- **Single sign-on** (`domain/sso.py`, `services/sso.py`, Enterprise only). An organisation connects its own OpenID Connect provider at `PUT /publishers/{id}/sso`: the issuer, the client id, the client secret *by reference* in the secret store (put there during onboarding, never in the database), and the e-mail domains it speaks for. A public mail domain is refused, and a domain routes to one organisation only. Staff sign in with a work e-mail (`POST /auth/sso/signin`): the authorization code flow with PKCE, a nonce and the same state-cookie check as GitHub sign-in, and the ID token is checked against the provider's published keys, its issuer and our client id. The session (`sso:<publisher id>`) acts as the organisation's account, and the decision log records the person's verified address. The session is checked against the connection on every request, so removing the connection, or a domain from it, ends its sessions at once.
+- **Requiring single sign-on.** `required` makes it the only way to act for the organisation; any other session of its account gets a 403 on everything of the organisation's own. It is turned on only from a session that came through the sign-on, so a provider that has never worked cannot lock the organisation out, and like a spending policy it keeps being enforced when the plan lapses.
+- **Not built yet:** the support commitment is a line on the plan, with no mechanism behind it. Single sign-on admits whoever the provider admits in the named domains; narrowing that to a group claim is the provider's assignment to configure, not ours.
 
 ## Trust boundaries
 
@@ -728,7 +730,9 @@ These are unresolved. Each one has a real constraint behind it, and none should 
 
 **Nanopayments require EOA signatures.** Gateway Nanopayments and x402 batch settlement do not support ERC-1271. If a contributor is paid to a smart contract account, Path B is unavailable to them. Path A is unaffected, which is another argument for keeping escrow as the primary rail.
 
-**Testnet or mainnet for the demo.** Testnet is free and repeatable. Mainnet is what the judges weight more heavily, and it is the only place the spending-policy guardrail exists. This is a product decision as much as a technical one.
+**Testnet or mainnet for the demo: Arc testnet (#31).** The submission settles on Arc testnet, chain 5042002, in test USDC from the faucet and the event's TestMint allocation. That is the network the organisers host, the one `DEPLOY.md` deploys to, and the only one with a recorded task: mainnet needs `MISTHOS_CONFIRM_MAINNET=5042` on purpose. Mainnet is what the judges weight more heavily, and the only place Circle's spending policies exist, but the escrow's per-issue ceiling already holds the guardrail on either network, and moving a design partner's real USDC is a step to take after the loop has run on testnet. Choosing mainnet later is a chain id and a deploy, nothing else.
+
+It is labelled the same way everywhere the result appears. The network and what its money is come from the chain id (`domain/network.py`, `/health`, the header chip). Each escrow commitment records what its money was when it was committed, because the simulation shares testnet's chain id: `simulated`, `test`, `real`, or `unknown` for a chain that is not Arc. `/metrics` and `/loop` report `value_moved` one row per network and kind of money, real money first, and the dashboard leads with that row, never with a sum of real, test and simulated USDC.
 
 **Yield on committed funds.** USYC would make idle escrow productive, and it adds a redemption step between acceptance and payment plus an eligibility restriction on who can hold it. Worth doing after the core loop works.
 

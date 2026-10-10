@@ -154,6 +154,9 @@ escrow_commitments = Table(
     Column("issue_id", Id, ForeignKey("issues.id"), primary_key=True),
     Column("contract", String(64), nullable=False),
     Column("chain", String(32), nullable=False),
+    # What the money was (#31): the simulation and Arc testnet share a chain id, so the
+    # chain alone cannot tell test money from none. Null before it was kept.
+    Column("money", String(16)),
     Column("tx_hash", String(80), nullable=False, unique=True),
     Column("amount_base_units", BigInteger, nullable=False),
     Column("deadline", Timestamp, nullable=False),
@@ -364,4 +367,29 @@ repo_connections = Table(
     Column("installed_by", String(64), nullable=False),
     Column("publisher_id", Id, ForeignKey("publishers.id")),
     Column("connected_at", Timestamp, nullable=False),
+)
+
+
+# An Enterprise organisation's connection to its own identity provider (#53). The
+# client secret is named by reference in the secret store, never kept here.
+sso_connections = Table(
+    "sso_connections",
+    metadata,
+    Column("publisher_id", Id, ForeignKey("publishers.id"), primary_key=True),
+    Column("issuer", String(300), nullable=False),
+    Column("client_id", String(256), nullable=False),
+    Column("client_secret_ref", String(128), nullable=False),
+    Column("required", Boolean, nullable=False),
+    Column("configured_at", Timestamp, nullable=False),
+)
+
+# The e-mail domains each connection speaks for. A domain routes sign-ins to one
+# organisation only, and the primary key is what makes that hold across processes.
+sso_domains = Table(
+    "sso_domains",
+    metadata,
+    Column("domain", String(253), primary_key=True),
+    Column(
+        "publisher_id", Id, ForeignKey("sso_connections.publisher_id"), nullable=False
+    ),
 )
