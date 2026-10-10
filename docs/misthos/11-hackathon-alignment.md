@@ -118,7 +118,7 @@ The brief asks specific questions and it is worth answering them in the same sha
 | How much value has the agent moved? | The total USDC settled, reported separately as testnet or mainnet. Do not blur this. |
 | What problems are you solving for them? | One worked case: the repository, the issue, the price, the merged pull request, the payout, and what would have happened without it. |
 
-The brief is explicit that on a testnet, genuine usage still counts, and that real customers transacting in real USDC on mainnet count more. The honest submission reports which one it is.
+The brief is explicit that on a testnet, genuine usage still counts, and that real customers transacting in real USDC on mainnet count more. The honest submission reports which one it is. Ours is Arc testnet (#31): the dashboard and the public loop report what settled one row per network and kind of money, so test USDC is never shown as real and the simulation is never shown as either.
 
 ## Logistics
 

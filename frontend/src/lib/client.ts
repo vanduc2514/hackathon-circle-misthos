@@ -11,6 +11,7 @@ export type IssueOut = components['schemas']['IssueOut']
 export type EscrowReadback = components['schemas']['EscrowReadback']
 export type IssueSummaryOut = components['schemas']['IssueSummaryOut']
 export type MetricsOut = components['schemas']['MetricsOut']
+export type ValueMoved = components['schemas']['ValueMoved']
 export type TimelineEntry = components['schemas']['TimelineEntry']
 export type Decision = components['schemas']['Decision']
 // Anyone sees every publisher; its budget and policy only it, or the simulation.
