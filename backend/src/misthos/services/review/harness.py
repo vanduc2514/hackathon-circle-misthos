@@ -162,7 +162,17 @@ def render(report: Report) -> str:
 
 
 def baseline_regressions(report: Report, baseline: dict[str, Any]) -> list[str]:
-    """What the reviewer agreed on when the baseline was recorded and no longer does."""
+    """What the reviewer agreed on when the baseline was recorded and no longer does.
+
+    A baseline is one reviewer's. Another reviewer measured against it would report
+    the difference between two reviewers as a regression, so that is refused instead.
+    """
+    recorded_for = baseline.get("reviewer")
+    if recorded_for is not None and recorded_for != report.reviewer:
+        return [
+            f"the baseline was recorded for {recorded_for}, not {report.reviewer}; record "
+            "one for this reviewer with --record-baseline"
+        ]
     now = {d["id"] for d in report.disagreements}
     problems = [f"no longer agrees on {case}" for case in sorted(set(baseline["agreed"]) & now)]
     # Compared at the precision the baseline is stored at, so the run that recorded it
@@ -205,6 +215,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reviewer", choices=["rules", "model"], default="rules")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     args = parser.parse_args(argv)
+    if (args.against_baseline or args.record_baseline) and args.corpus != HISTORICAL:
+        # The one baseline there is was recorded on the historical corpus.
+        parser.error("--against-baseline and --record-baseline take --corpus historical")
 
     if args.reviewer == "model":
         from misthos.store import store

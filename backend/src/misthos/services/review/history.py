@@ -210,12 +210,32 @@ def load_sources(path: Path = SOURCES) -> tuple[str, list[Source]]:
             raise ValueError(f"{s.pr}: {s.expected} is not a verdict")
         if not s.why.strip():
             raise ValueError(f"{s.pr}: a case needs the decision a person made, and where")
+    _licensed(raw.get("licence"), sources)
     return raw["description"], sources
+
+
+def load_licence(path: Path = SOURCES) -> dict[str, Any]:
+    """Whose text the corpus carries and under what terms, as the sources record it."""
+    return json.loads(path.read_text(encoding="utf-8"))["licence"]
+
+
+def _licensed(licence: object, sources: list[Source]) -> None:
+    """A case copies its pull request's text, so its repository's licence is named
+    before the case is taken. A repository nobody has checked is refused, not assumed."""
+    upstream = licence.get("upstream", {}) if isinstance(licence, dict) else {}
+    for s in sources:
+        repo = s.pr.split("#")[0]
+        if not str(upstream.get(repo, "")).strip():
+            raise ValueError(f"{s.pr}: name the licence {repo} publishes its text under first")
 
 
 def build(gh: GitHub, sources_path: Path = SOURCES) -> dict[str, Any]:
     description, sources = load_sources(sources_path)
-    return {"description": description, "cases": [fetch(gh, s) for s in sources]}
+    return {
+        "description": description,
+        "licence": load_licence(sources_path),
+        "cases": [fetch(gh, s) for s in sources],
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

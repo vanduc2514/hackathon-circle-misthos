@@ -1,5 +1,15 @@
 {
   "description": "Historical pull requests a maintainer already decided, for replaying the review agent (#36). accept: merged after approval with no changes requested, judged as merged. rework: a review that requested changes on a pull request that later merged, judged as the reviewer saw it at that commit. reject: closed unmerged by a maintainer after a review that declined the change on its merits. Excluded on purpose: pull requests declined for how they were written (the '[rejected AI]' closures), closures that were abandonment rather than a decision, bot updates, and reviews that only praised. Each case keeps the URL of the decision it is labelled with.",
+  "licence": {
+    "note": "Each case carries text from the pull request it names: its title, its issue's checklist, the decision's quoted words and its diff hunks (cut to a few thousand characters a file). That text is the upstream project's, under the licence named for its repository below and with its notice kept by this attribution and the URL on every case; it is here so the review agent can be replayed on it, not as part of Misthos. In python/mypy three mypyc/lib-rt files are under the PSF License 2.0 instead, and no case touches them. Everything else in this file and in historical-sources.json is Misthos's own, under the MIT licence in the repository's LICENSE (see README.md).",
+    "upstream": {
+      "pallets/click": "BSD-3-Clause (https://github.com/pallets/click/blob/main/LICENSE.txt)",
+      "psf/black": "MIT (https://github.com/psf/black/blob/main/LICENSE)",
+      "pydantic/pydantic": "MIT (https://github.com/pydantic/pydantic/blob/main/LICENSE)",
+      "pytest-dev/pytest": "MIT (https://github.com/pytest-dev/pytest/blob/main/LICENSE)",
+      "python/mypy": "MIT (https://github.com/python/mypy/blob/master/LICENSE)"
+    }
+  },
   "cases": [
     {
       "id": "pytest-dev-pytest-15058",

@@ -23,6 +23,7 @@ from misthos.services.review.history import (
     checks_from,
     criteria_from,
     fetch,
+    load_licence,
     load_sources,
 )
 from misthos.services.review.rules import RuleReviewer
@@ -50,6 +51,25 @@ class TestTheCorpus:
         fetched = {(f"{c['repo']}#{c['pr_number']}", c["expected"]) for c in CORPUS["cases"]}
         assert fetched == listed
 
+    def test_every_repository_it_copies_text_from_has_its_licence_named(self) -> None:
+        # The corpus carries other projects' diffs, so it says whose and on what terms,
+        # and the built file says it the same way the curated sources do.
+        licence = load_licence()
+        assert CORPUS["licence"] == licence
+        assert "MIT licence in the repository's LICENSE" in licence["note"]
+        for case in CORPUS["cases"]:
+            assert licence["upstream"][case["repo"]].strip(), case["id"]
+
+    def test_a_source_from_a_repository_with_no_licence_named_is_refused(self, tmp_path) -> None:
+        path = tmp_path / "sources.json"
+        path.write_text(json.dumps({
+            "description": "", "licence": {"upstream": {"o/r": "MIT"}},
+            "sources": [{"pr": "o/r#1", "expected": "accept", "why": "merged"},
+                        {"pr": "x/y#2", "expected": "accept", "why": "merged"}],
+        }))  # fmt: skip
+        with pytest.raises(ValueError, match="name the licence x/y"):
+            load_sources(path)
+
     def test_it_holds_every_verdict_in_numbers_worth_measuring(self) -> None:
         counts = Counter(case["expected"] for case in CORPUS["cases"])
         assert counts == {"accept": 12, "rework": 12, "reject": 12}
@@ -74,6 +94,20 @@ class TestTheRatchet:
         lost = report.disagreements[0]["id"]
         baseline = {"agreed": [lost], "rate": 0.0}
         assert baseline_regressions(report, baseline) == [f"no longer agrees on {lost}"]
+
+    def test_a_baseline_judges_only_the_reviewer_it_was_recorded_for(self) -> None:
+        # Claude measured against the rule reviewer's baseline would show the gap between
+        # two reviewers as a regression.
+        report = replay(RuleReviewer(), load(HISTORICAL))
+        baseline = {"reviewer": "claude-x", "agreed": [], "rate": 0.0}
+        (problem,) = baseline_regressions(report, baseline)
+        assert "recorded for claude-x, not rules_v1" in problem
+
+    def test_the_baseline_is_for_the_historical_corpus_only(self) -> None:
+        for flag in ("--against-baseline", "--record-baseline"):
+            with pytest.raises(SystemExit) as refused:
+                main(["--corpus", "regression", flag])
+            assert refused.value.code == 2
 
     def test_the_command_reads_the_corpus_by_name(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main(["--corpus", "historical", "--against-baseline"]) == 0
