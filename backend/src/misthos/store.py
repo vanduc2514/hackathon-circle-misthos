@@ -37,7 +37,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from misthos.config import settings
-from misthos.domain import comparables, compliance, ledger, plans, pricing, timers
+from misthos.domain import comparables, compliance, ledger, plans, timers
 from misthos.domain import criteria as acceptance
 from misthos.domain import issue as lifecycle
 from misthos.domain.comparables import Comparable, SettledWork
@@ -67,11 +67,11 @@ from misthos.domain.policy import (
 from misthos.domain.pricing import (
     WEIGHTS,
     ComplexitySignals,
-    UnfundableIssue,
-    choose,
+    PriceRefused,
+    check_price,
     effort,
+    fee_bps,
     propose,
-    take_rate_bps,
 )
 from misthos.domain.review import (
     ChangedFile,
@@ -456,16 +456,16 @@ class Store:
             comparables=self._comparables_for(signals, spec["repo"]),
             urgency=Usdc.from_decimal(spec["urgency"]) if spec.get("urgency") else None,
             risk_premium=Usdc.from_decimal(spec["risk"]) if spec.get("risk") else None,
-            # The publisher's remaining budget actually constrains the price, which
-            # is the whole point of reading it. Seeded demo issues declare none.
-            affordability_ceiling=spec.get("affordability_ceiling"),
-            ceiling_source=spec.get("ceiling_source"),
-            # The floor depends on the tier's take rate, so the tier has to reach
-            # the engine rather than being assumed.
-            tier=publisher.tier,
         )
         target = IssueState(spec["state"])
         now = _now()
+        if "price" in spec:
+            # Named by the publisher, or None on an issue the GitHub flow listed without
+            # one: it stays unpriced until they name a number, and funding waits (#142).
+            price = Usdc.from_decimal(spec["price"]) if spec["price"] else None
+        else:
+            # A seeded issue stands in for one a publisher priced at the suggestion.
+            price = proposal.recommended
         rec = IssueRecord(
             id=self._next_issue_id(),
             repo=spec["repo"],
@@ -481,6 +481,7 @@ class Store:
             publisher_id=spec["publisher_id"],
             created_at=now - timedelta(days=spec["age_days"]),
             proposal=proposal,
+            price=price,
         )
 
         if spec.get("signals_read"):
@@ -494,9 +495,12 @@ class Store:
         self._log(
             rec,
             actor="agent",
-            action="price_proposed",
+            action="price_suggested",
             rule="complexity_score_v1",
-            outcome=f"proposed {proposal.recommended} for {proposal.estimated_hours}h",
+            outcome=(
+                f"suggested {proposal.recommended} for {proposal.estimated_hours}h; "
+                "advice only, the publisher's price is what binds"
+            ),
             cost="0.00",
         )
 
@@ -690,9 +694,7 @@ class Store:
         assert held is not None, f"{rec.id} has no commitment to settle"
         return held.committed
 
-    def _fund(
-        self, rec: IssueRecord, when: datetime | None = None, amount: Usdc | None = None
-    ) -> None:
+    def _fund(self, rec: IssueRecord, when: datetime | None = None) -> None:
         assert rec.proposal is not None
         if rec.criteria_approved_at is None:
             raise CriteriaNotApproved(
@@ -704,23 +706,23 @@ class Store:
         # chain refuses, nothing is saved and the copy in hand is thrown away.
         self._move(rec, IssueState.FUNDED)
         at = when or _now()
-        # The publisher's own price when they named one, inside the band and under what
-        # their budget allows; the engine's recommendation otherwise.
-        committed = rec.proposal.recommended
-        if amount is not None:
-            ceiling, _ = self._ceiling(publisher)
-            committed = choose(rec.proposal, amount, ceiling=ceiling, tier=publisher.tier)
+        # The publisher's own price, set when the issue was published and bound here
+        # without a second opinion (#142). The engine is not consulted: what the buyer
+        # said the work is worth is what the contributor is owed.
+        if rec.price is None:
+            raise PriceRefused(f"{rec.id} has no price, so there is nothing to commit")
+        committed = check_price(rec.price)
         deadline = at + lifecycle.ESCROW_TERM
         # The approved price goes to the escrow as its ceiling first: the escrow
         # refuses any commitment without one or above it, so what an agent can commit
         # is bounded by what a person approved, on chain and not in this code.
         self.chain.set_ceiling(rec.id, committed, at)
         # The rate is fixed here, with the money. The escrow enforces the rate it was
-        # given on release, so reading the publisher's plan at settlement time instead
-        # would let a plan that lapses mid-flight move the fee after the price was
-        # approved, and the record would stop matching the transfer (#32).
-        fee_bps = take_rate_bps(publisher.tier)
-        tx = self.chain.commit(rec.id, publisher.wallet.address, committed, deadline, at, fee_bps)
+        # given on release, so reading a plan at settlement time instead would let a
+        # subscription that lapses mid-flight move the fee after the price was approved,
+        # and the record would stop matching the transfer (#32, #142).
+        rate_bps = fee_bps()
+        tx = self.chain.commit(rec.id, publisher.wallet.address, committed, deadline, at, rate_bps)
         self._book(rec, MoneyEventKind.COMMITTED, committed, publisher.id, tx, at)
         rec.escrow = EscrowCommitment(
             issue_id=rec.id,
@@ -729,7 +731,7 @@ class Store:
             tx_hash=tx,
             amount=money(committed),
             deadline=deadline,
-            fee_bps=fee_bps,
+            fee_bps=rate_bps,
         )
         rec.deadline = rec.escrow.deadline
         criteria = _criteria_comment(rec)
@@ -903,67 +905,6 @@ class Store:
             outcome=f"{holder} opened no pull request in time, the issue is back in the pool",
             when=when,
         )
-
-    def _relist(self, rec: IssueRecord, when: datetime) -> IssueRecord | None:
-        """Offer a refunded, never-claimed issue again at a higher band.
-
-        A silent empty listing teaches the publisher to stop funding, so the issue
-        comes back priced to draw a claim. It comes back awaiting approval: a higher
-        price is a new obligation, and only the publisher can take that on.
-        """
-        if rec.proposal is None or any(d.action == "claimed" for d in rec.decisions):
-            return None
-        publisher = self.repo.get_publisher(rec.publisher_id)
-        assert publisher is not None
-        proposal = pricing.relist(rec.proposal, ceiling=self._ceiling(publisher)[0])
-        if proposal is None:
-            self._log(
-                rec,
-                actor="agent",
-                action="relist_declined",
-                rule="affordability_ceiling",
-                # The log is public and the budget is not, so the figure stays out.
-                outcome="what remains of the publisher's budget cannot carry a higher "
-                "price, so the issue was not re-listed",
-                when=when,
-            )
-            return None
-
-        relisted = IssueRecord(
-            id=self._next_issue_id(),
-            repo=rec.repo,
-            number=rec.number,
-            title=rec.title,
-            summary=rec.summary,
-            state=IssueState.PRICED,
-            labels=list(rec.labels),
-            compliance_driven=rec.compliance_driven,
-            acceptance_criteria=list(rec.acceptance_criteria),
-            publisher_id=rec.publisher_id,
-            created_at=when,
-            proposal=proposal,
-            relisted_from=rec.id,
-        )
-        self._log(
-            relisted,
-            actor="agent",
-            action="price_proposed",
-            rule="relist_uplift",
-            outcome=f"re-priced {rec.id} at {proposal.recommended}, up from "
-            f"{rec.proposal.recommended}, after it drew no claim",
-            when=when,
-        )
-        self._move(relisted, IssueState.AWAITING_APPROVAL)
-        self._log(
-            rec,
-            actor="agent",
-            action="relisted",
-            rule="unclaimed_until_deadline",
-            outcome=f"nobody claimed it, so it is re-listed as {relisted.id} at "
-            f"{proposal.recommended} for the publisher to approve",
-            when=when,
-        )
-        return relisted
 
     # ------------------------------------------------------------- compliance
 
@@ -1404,9 +1345,6 @@ class Store:
                     self._expire_claim(rec, rule=rule, when=now)
                 case TimedAction.REFUND:
                     self._refund(rec, rule="deadline_passed", when=now)
-                    relisted = self._relist(rec, when=now)
-                    if relisted is not None:
-                        created.append(relisted)
             applied.append(action)
         return applied, created
 
@@ -1607,16 +1545,18 @@ class Store:
                 raise UnreadableIssue(
                     f"could not read {payload.repo}#{number} from GitHub: {exc}"
                 ) from exc
-        ceiling, ceiling_source = self._ceiling(publisher)
+        # The publisher's price, and the only thing that bounds what the escrow commits
+        # (#142). Absent on an issue the GitHub flow listed, which is priced later by
+        # `/misthos price`; nothing is funded until it is named.
+        price = check_price(Usdc.from_decimal(payload.price)) if payload.price is not None else None
         spec = {
-            "affordability_ceiling": ceiling,
-            "ceiling_source": ceiling_source,
             "repo": payload.repo,
             "number": number or self._unlisted_number(payload.repo),
             "title": payload.title,
             "summary": payload.summary or "Published through the web application.",
             "state": IssueState.PRICED,
-            "labels": payload.labels or ["needs-price"],
+            "labels": list(payload.labels),
+            "price": str(price.decimal) if price is not None else None,
             "compliance_driven": payload.compliance_driven,
             # Drafted from the issue, every one checkable (#38); the publisher edits
             # and approves them before any money is committed.
@@ -1643,16 +1583,18 @@ class Store:
             spec["signals"] = reading.signals.as_dict()
             spec["signals_read"] = f"read {facts.repo}#{facts.number}: {reading.summary()}"
         rec = self._build(spec)
-        if rec.proposal is not None and not rec.proposal.fundable:
-            # Refuse rather than publish a price the platform would lose money on.
-            raise UnfundableIssue(rec.proposal.justification)
         self._move(rec, IssueState.AWAITING_APPROVAL)
         self._log(
             rec,
-            actor="system",
-            action="published",
-            rule="publisher_created_issue",
-            outcome="issue published and price proposed",
+            actor="publisher",
+            action="price_set",
+            rule="publisher_names_the_price",
+            outcome=(
+                f"published at the publisher's price of {price}"
+                if price is not None
+                else "published with no price yet; nothing is funded until the publisher "
+                "names what the work is worth"
+            ),
         )
         with self._listing_exclusive(rec.repo, rec.number):
             self._refuse_listed(rec.repo, rec.number)
@@ -2013,23 +1955,6 @@ class Store:
             repo=repo,
             exclude=exclude,
         )
-
-    def _ceiling(self, publisher: Publisher) -> tuple[Usdc, str | None]:
-        """What a price may not exceed: the declared budget, or less where the
-        publisher's connected books say less is left (#43). The books failing to answer
-        never blocks a price; the declared budget still holds."""
-        declared = _budget(publisher)
-        source = self.finance(publisher.id)
-        if source is None:
-            return declared, None
-        try:
-            read = source.read(_now())
-        except FinanceError as exc:
-            log.warning("finance for %s could not be read: %s", publisher.id, exc)
-            return declared, None
-        if read.budget_remaining is None or declared < read.budget_remaining:
-            return declared, None
-        return read.budget_remaining, read.source
 
     def finance_context(self, publisher_id: str) -> tuple[Publisher, FinanceContext | None, str]:
         """The publisher's declared budget and what its books say, for its own eyes."""
@@ -2751,17 +2676,13 @@ class Store:
             return rec
 
     def approve_price(
-        self,
-        issue_id: str,
-        by: str,
-        now: datetime | None = None,
-        amount: Usdc | None = None,
+        self, issue_id: str, by: str, now: datetime | None = None
     ) -> IssueRecord:
-        """The publisher approves a price, and the money is committed.
+        """The publisher approves the price they set, and the money is committed.
 
-        The price is the engine's recommendation unless the publisher names their own,
-        which has to sit inside the band the engine disclosed -- a range exists so the
-        buyer can pick a position in it (docs/misthos/06-pricing-engine.md).
+        There is no number to pass. The price was named when the issue was published
+        and can be changed with `set_price` until someone claims it, so approving is
+        the publisher's signature on what the escrow takes and on nothing else (#142).
         """
         self.ensure_ready()
         with self._exclusive(issue_id), self._posting():
@@ -2773,15 +2694,46 @@ class Store:
             self._approve_and_fund(
                 rec,
                 now or _now(),
-                f"{by} approved the price and committed the funds",
-                amount=amount,
+                f"{by} approved the price of {rec.price} and committed the funds",
             )
             self.repo.save_issues(rec)
             return rec
 
-    def _approve_and_fund(
-        self, rec: IssueRecord, now: datetime, outcome: str, amount: Usdc | None = None
-    ) -> None:
+    def set_price(
+        self, issue_id: str, amount: Usdc, by: str, now: datetime | None = None
+    ) -> IssueRecord:
+        """The publisher names a new price, while the issue is still unclaimed.
+
+        Allowed from the moment the issue is published until a contributor holds it.
+        A price that could move after a claim is a promise to the contributor that the
+        publisher can break, so the claim closes the door: past it the price is what the
+        escrow holds, and only a refund moves the money. Replaces the automatic
+        re-listing that used to raise the price on the publisher's behalf (#142).
+        """
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.state not in _PRE_FUNDING:
+                raise lifecycle.IllegalTransition(rec.state, IssueState.PRICED)
+            price = check_price(amount)
+            previous = rec.price
+            if previous == price:
+                return rec
+            rec.price = price
+            self._log(
+                rec,
+                actor="publisher",
+                action="price_set",
+                rule="publisher_names_the_price",
+                outcome=f"{by} moved the price from {previous} to {price}",
+                when=now or _now(),
+            )
+            self.repo.save_issues(rec)
+            return rec
+
+    def _approve_and_fund(self, rec: IssueRecord, now: datetime, outcome: str) -> None:
         if rec.criteria_approved_at is None:
             raise CriteriaNotApproved(
                 f"{rec.id} cannot be funded until the publisher approves its acceptance criteria"
@@ -2792,7 +2744,7 @@ class Store:
         # concurrent fundings of different issues both pass the check.
         with self._publisher_exclusive(rec.publisher_id):
             self._check_category_limits(rec, now)
-            self._fund(rec, amount=amount)
+            self._fund(rec)
         self._log(
             rec,
             actor="publisher",
@@ -2921,11 +2873,12 @@ class Store:
         return None
 
     def reprice(self, issue_id: str, now: datetime | None = None) -> IssueRecord:
-        """Price an issue again from what GitHub says now, while it is still unfunded.
+        """Read the issue again and refresh the engine's suggestion, while unfunded.
 
-        A changed issue is a changed job: the new price is a new proposal, and it
-        waits for the publisher's approval like the first one did. Once money is
-        committed the price is a promise and an edit does not move it.
+        A changed issue is a changed job, so the advice changes with it. **The price
+        does not.** That is the publisher's number, and an edit to the issue body on
+        GitHub is not the publisher changing their mind about what they will pay
+        (#142). Once money is committed nothing here moves at all.
         """
         self.ensure_ready()
         with self._exclusive(issue_id), self._posting():
@@ -2938,17 +2891,11 @@ class Store:
             facts = self.github.read_issue(rec.repo, rec.number)
             if facts is None or rec.proposal is None:
                 return rec
-            publisher = self.repo.get_publisher(rec.publisher_id)
-            assert publisher is not None
             reading = read_signals(facts)
-            ceiling, ceiling_source = self._ceiling(publisher)
             proposal = propose(
                 reading.signals,
                 compliance_driven=rec.compliance_driven,
                 comparables=self._comparables_for(reading.signals, rec.repo, exclude=rec.id),
-                affordability_ceiling=ceiling,
-                ceiling_source=ceiling_source,
-                tier=publisher.tier,
             )
             rec.title, rec.labels = facts.title, list(facts.labels) or rec.labels
             if proposal.recommended == rec.proposal.recommended:
@@ -2968,10 +2915,11 @@ class Store:
             self._log(
                 rec,
                 actor="agent",
-                action="price_proposed",
+                action="price_suggested",
                 rule="issue_changed",
-                outcome=f"the issue changed, so it is re-priced at {proposal.recommended}, "
-                f"from {previous}, for the publisher to approve",
+                outcome=f"the issue changed, so the suggestion moved to "
+                f"{proposal.recommended} from {previous}. The publisher's price of "
+                f"{rec.price} is unchanged",
                 when=when,
             )
             self.repo.save_issues(rec)
@@ -3198,6 +3146,7 @@ class Store:
             publisher_name=publisher.name,
             created_at=rec.created_at,
             deadline=rec.deadline,
+            price_usdc=_display_price(rec),
             proposal=proposal_out,
             escrow=rec.escrow,
             claim=rec.claim,
@@ -3223,7 +3172,7 @@ class Store:
                 labels=rec.labels,
                 compliance_driven=rec.compliance_driven,
                 publisher_name=names[rec.publisher_id],
-                price_usdc=f"{rec.proposal.recommended.decimal:.2f}" if rec.proposal else None,
+                price_usdc=_display_price(rec),
                 confidence=rec.proposal.confidence if rec.proposal else None,
                 deadline=rec.deadline,
                 github_url=rec.github_url,
@@ -3313,14 +3262,29 @@ def _observe_price(rec: IssueRecord, source: str, started: float) -> None:
     seconds = time.perf_counter() - started
     PRICE_SECONDS.labels(source=source).observe(seconds)
     log.info(
-        "price proposed",
+        "price set",
         extra={
             "issue_id": rec.id,
             "source": source,
             "seconds": round(seconds, 3),
-            "price_usdc": f"{rec.proposal.recommended.decimal:.2f}" if rec.proposal else None,
+            # The publisher's number, which is the one that binds. The suggestion is
+            # logged beside it so a divergence between the two stays visible (#142).
+            "price_usdc": f"{rec.price.decimal:.2f}" if rec.price else None,
+            "suggested_usdc": (
+                f"{rec.proposal.recommended.decimal:.2f}" if rec.proposal else None
+            ),
         },
     )
+
+
+def _display_price(rec: IssueRecord) -> str | None:
+    """The price to show for an issue: the publisher's, or the suggestion on an issue
+    published before #142 and never re-priced."""
+    if rec.price is not None:
+        return f"{rec.price.decimal:.2f}"
+    if rec.proposal is not None:
+        return f"{rec.proposal.recommended.decimal:.2f}"
+    return None
 
 
 def _alert(divergence: Divergence) -> None:

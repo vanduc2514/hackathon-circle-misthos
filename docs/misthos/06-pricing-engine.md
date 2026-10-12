@@ -1,38 +1,109 @@
-# The pricing engine
+# The fee, and what the engine is for
 
-There are two pricing problems here and they are easy to confuse.
+There are two pricing questions and they are easy to confuse.
 
-The first is how we put a price on someone else's issue. That is the product feature our customers judge us on.
+The first is what the platform charges. It is one number, and it takes a paragraph.
 
-The second is how we charge for the platform. That is a straightforward take rate and a subscription, and the industry has already settled what it looks like.
+The second is what the pricing engine does now. It used to decide the price. It does not
+any more, and the reason is the most interesting thing in this document.
 
-This document covers both, and it is honest about the parts we have not proven.
+## The fee
 
-## How the price is settled
+**Ten percent of the committed amount, taken when the work settles, and refunded in full
+if it never does.**
 
-One model, no variants. The price is fixed before the issue is published and it does not move afterwards.
+| The publisher commits | The contributor receives | The platform keeps |
+| --- | --- | --- |
+| $50 | $45.00 | $5.00 |
+| $500 | $450.00 | $50.00 |
+| $5,000 | $4,500.00 | $500.00 |
 
-That rules out three things people usually assume a marketplace like this includes. There is no bidding, so contributors do not submit competing prices for the same issue. There is no auction, so the platform never runs a round to discover a clearing price. There is no negotiation, so the publisher sets one number, commits the funds, and the issue is either taken at that number or left alone.
+The publisher pays the price and nothing else, so the number a manager approves is the
+number on the issue. The escrow carves the fee out on acceptance
+(`MisthosEscrow.release`), paying the contributor the remainder and the platform's wallet
+the fee in the same call, so the rate is a transfer rather than a reporting-layer number.
+The contract bounds it at 15 percent (`MAX_FEE_BPS`).
 
-The reason sits in the assignment model described in [05 How it works](./05-how-it-works.md). Work goes to whoever claims the issue first. There is nothing to bid against, because the price is already public and the first claim takes the job.
+**One rate for everyone.** It used to be 12 percent at the free tier, 10 at Team and 8 at
+Enterprise. That is a second price for the same service, and it had a second effect nobody
+wanted: because the published price floor was derived from the take rate, the plan a
+publisher bought decided the lowest price they were allowed to pay. The fee does not get
+cheaper because a company bought a subscription, so it no longer moves with one. Plans
+still exist and still gate what they always gated: budget rules, approval thresholds, spend
+reporting, the audit export, SSO and support.
 
-Removing the bidding round buys two things and costs one.
+### What a settled issue earns, and where it does not
 
-The publisher learns what the fix costs before committing money, so the budget conversation happens at the moment of decision rather than three days later when the bids close. The contributor knows what they will be paid before starting work, which matters most to whoever has the least runway. Both of those are worth more to us than the price discovery an auction would provide.
+Review costs the platform about **$6.31** an issue: agent inference, settlement and
+amortised screening. It is not a line on the publisher's invoice, so it comes out of the
+fee.
 
-What it costs is adaptability. A fixed price cannot absorb a surprise found once work begins, so a badly scoped issue will either sit unclaimed or cost the contributor more than they budgeted. That is why requirement clarity carries weight in the complexity signals below, and why the engine flags an issue whose band rests on a vague description.
+| Price | Fee | Review cost | The platform's result |
+| --- | --- | --- | --- |
+| $20 | $2.00 | $6.31 | -$4.31 |
+| $50 | $5.00 | $6.31 | -$1.31 |
+| $63 | $6.30 | $6.31 | $0.00 |
+| $100 | $10.00 | $6.31 | +$3.69 |
+| $5,000 | $500.00 | $6.31 | +$493.69 |
 
-This also sidesteps a failure documented in [03 Market research](./03-market-research.md). Selecting on lowest price picks the bidder who spent least time understanding the issue, and the platform pays for that in review time it did not need to spend. Price competition rewards the wrong behaviour when quality cannot be judged before work starts.
+Break-even is a **$63** price. **Below it the platform loses money, and that is
+deliberate.** A settled $50 fix costs $1.31 and buys the transaction, the publisher, the
+public payout record and one more row of settled-price history. Refusing that work to
+protect $1.31 was the original sin of the previous model. The lever for abuse is a
+per-publisher allowance, applied when there is evidence for it and not before.
 
-## Part one: pricing an issue
+### The only two bounds
 
-### Why this is a product feature and not a formula
+A price must be between **$5 and $100,000**. Outside that it is refused with the bounds,
+and that is the whole of it.
 
-Every existing platform asks the buyer to type a number. That is the step where a good intention dies, because most people have no idea what a fix should cost and no way to find out. The buyer either guesses low and gets no submissions, or guesses high and overpays, or gives up.
+The minimum is there to catch a typo and to damp spam. It is **not** derived from the
+platform's costs, which is what the old floor was and why it read as arbitrary: it was the
+one price at which a 12 percent fee happened to equal a flat $6.31 bill, rounded up to the
+next $5. That number said nothing about the work. It only said when the platform stopped
+being out of pocket, and it governed the publisher's price anyway.
 
-An agent that proposes a number, shows its work, and lets the buyer adjust removes the hardest part of publishing. It is also the only part of the product that gets better with every issue settled, because the comparables come from our own transaction history.
+## The publisher names the price
 
-### The inputs
+This is the rule the rest of the product follows.
+
+The buyer types a number. Nothing re-prices it. The escrow commits it. The contributor is
+paid it, less the fee, when the pull request merges; if nobody claims the issue by its
+deadline the money goes back.
+
+The publisher may change the number themselves while the issue is unfunded and unclaimed,
+and no further. Once the money is committed it is what the escrow holds, and once a
+contributor holds a claim it is what they are working for. A price that could move under
+either of them would be a promise someone can break.
+
+### Why, given that the whole product was built on pricing
+
+Because the buyer is the only party who knows what the work is worth to them, and the
+platform is the only party with nothing at stake. A system where the engine proposes and
+the publisher may move the number only inside a window the engine chose is a system where
+the engine sets the price and the human nudges it. That is what was in the code.
+
+The cost of getting it wrong was not an argument on a forum. It was a refused transaction.
+A publisher who knew a fix was worth $200 to them, and was told the floor was $910, did not
+raise their number to $910. They left.
+
+### The second reason, which matters more
+
+Every approval used to be the engine's own recommendation echoed back: the field arrived
+pre-filled with it, the default was to take it, and the seed data replayed it. So the
+**settled-price dataset** that [07](./07-business-model-and-economics.md) names as the
+unfair advantage recorded nothing but the engine's opinion of itself. The platform could
+not learn what work costs while it was the only party naming the price.
+
+That is now measurable. The metric is the **label rate**: the share of published issues
+where the buyer's price differs from what the engine suggested. If that stays near zero,
+the platform is still recording its own opinion and has learned nothing, however good the
+copy on the page is.
+
+## What the engine does now
+
+It reads the issue and says what it thinks, in a form the publisher can check. It is advice
+on the page and it never bounds anything.
 
 ```mermaid
 flowchart TB
@@ -40,30 +111,20 @@ flowchart TB
         T1["Complexity signals"]
         T2["Effort estimate"]
         T3["Risk of rejection"]
-        T4["Urgency"]
     end
     subgraph Market["What work like this costs"]
         M1["Settled issues with a similar shape"]
-        M2["Going rate for the language and stack"]
+        M2["The going rate for the language and stack"]
     end
-    subgraph Buyer["What this buyer should pay"]
-        B1["Declared budget band"]
-        B2["Department budget remaining"]
-        B3["Cash position and runway"]
-        B4["Compliance obligation attached"]
-    end
-    Task --> BAND["Price band plus confidence"]
-    Market --> BAND
-    Buyer --> CEIL["Affordability ceiling"]
-    BAND --> OUT["Proposal to the publisher"]
-    CEIL --> OUT
+    Task --> OUT["A suggested price, a range, and the reasoning"]
+    Market --> OUT
+    PUB["The publisher"] --> PRICE["The price"]
+    OUT -.->|"advice"| PUB
+    PRICE --> ESCROW["The escrow commits it"]
+    style OUT stroke-dasharray: 4 4
 ```
 
-Task and market inputs set what the work is worth. Buyer inputs set what this specific publisher should be asked, and whether the payment structure should change.
-
-### The complexity signals
-
-We score six things on a scale of one to five and combine them. The weights below are a starting guess and should be tuned against actual settlements.
+### The inputs
 
 | Signal | What raises the score | Weight |
 | --- | --- | --- |
@@ -74,215 +135,102 @@ We score six things on a scale of one to five and combine them. The weights belo
 | Prior attempts | Earlier pull requests were opened and abandoned or rejected | 15% |
 | Blast radius | A security path, a breaking change, or a public interface | 10% |
 
-The score produces an effort estimate in hours, which is the number a buyer can actually reason about.
+The six signals produce an effort estimate in hours, and the hours produce a suggested
+price. Settled issues of a similar shape then move that suggestion toward what comparable
+work actually paid, and they alone set the confidence. Nothing is declared by a caller: an
+issue with no history behind it is priced on its signals alone and says so.
 
-### The formula, at business level
+### The output
 
-```
-fix price     = hours × rate × complexity multiplier + risk premium + urgency premium
-price band    = fix price × 0.7  to  fix price × 1.4
-publisher ask = fix price
-```
+Not a number on its own. A short brief:
 
-The band is deliberately wide. A single point estimate invites a fight over the exact number. A range invites the buyer to pick a position inside it, which is the behaviour we want.
-
-The rate comes from the going cost of competent work in that technology and region. The low end of the band should be a price at which a talented contributor in a lower-cost market still says yes, because that is where most of the supply will come from.
-
-### Three worked examples
-
-| | Small fix | Medium feature | Compliance-driven remediation |
-| --- | --- | --- | --- |
-| Issue | Currency rounding off by one cent | Add a plugin system to a CLI | Fix a memory-safety bug reachable from a network parser |
-| Complexity score | 1.8 | 3.4 | 4.6 |
-| Estimated hours | 3 | 24 | 40 |
-| Rate applied | $60 | $90 | $110 |
-| Complexity multiplier | 1.0 | 1.3 | 1.6 |
-| Risk premium | $0 | $300 | $1,200 |
-| Urgency premium | $0 | $0 | $800 |
-| Publisher pays | $180 | $3,108 | $9,040 |
-| Band shown to the buyer | $126 to $252 | $2,176 to $4,351 | $6,328 to $12,656 |
-| Typical outcome | Publishes at the bottom | Publishes near the middle | Publishes near the top, because the alternative is a 2027 filing problem |
-
-The third column is the one that matters commercially. A compliance obligation changes the buyer's willingness to pay far more than any complexity score does, which is why urgency and obligation sit in the model at all.
-
-### The output the publisher sees
-
-Not a number. A short brief:
-
-- The price band, with the recommended point in it.
+- The suggested price, with the range around it.
 - Where the effort estimate came from, in plain language.
 - The two or three comparable issues that settled recently, with their prices.
 - A confidence level, low, medium or high, based on how much comparable history exists.
-- A one-paragraph justification the publisher can forward to whoever approves budgets.
+- A one-paragraph justification, which is the part a publisher can forward to whoever
+  approves budgets.
 
-**The band is a choice, not a report.** The publisher names any price from the low end
-to the high end, and that price is what the escrow records as its ceiling: an agent can
-later commit up to it and no further, so the number a person picked is what bounds the
-money. Leaving the band alone takes the recommendation, which is the midpoint. Two
-floors apply, and a price outside them is refused with the range rather than quietly
-adjusted: the bottom of the tier's minimum, below which review costs more than the take
-it earns, and the publisher's own remaining budget, which caps the top.
+That last item is the feature with the outsized effect. The buyer's hardest step is not
+knowing the price; it is getting the price approved.
 
-That last item is a small feature with an outsized effect. The buyer's hardest step is not knowing the price, it is getting the price approved. Writing the email for them is cheaper than any training data.
+### What it is not good at
 
-### When the buyer cannot afford the work
+The suggestion is a bottom-up cost model: score the work, multiply by hours, multiply by a
+rate. That method has the worst track record in the field, and ours is no exception. The
+repository carries the measurement (`services/calibration.py`, `calibration-report.json`,
+#41): thirty GitHub issues that carried a real paid bounty of known worth, from sixteen
+organisations.
 
-The engine reads a budget ceiling and can respond three ways, in this order.
-
-1. Re-scope. Split the issue into a fundable first step and a follow-up. This is the best outcome and the hardest to automate well.
-2. Change the terms. Same price, later payment, or a milestone split.
-3. Say no. Decline to fund, and say what budget would make it possible next quarter.
-
-Publishers will trust a system that tells them no. A system that always finds a way to spend their budget is a system they turn off.
-
-### Anti-gaming
-
-| Attack | Defence |
-| --- | --- |
-| Publisher understates the issue to get a cheaper price | The engine reads the repository and the issue itself, not the publisher's description of it |
-| Contributor inflates effort | Payment is for a merged result, not for time |
-| The platform rejects work it should have passed | Every verdict is recorded with its findings, and the contributor can force a re-review against the published criteria |
-| Two accounts colluding to farm a payout | The publisher and the contributor must be distinct identities, and payout wallets are screened |
-| Publisher merges without accepting to avoid payment | A merge triggers acceptance and releases the payment |
-
-### What the first calibration found
-
-The first comparison against real money (#41) used thirty GitHub issues that carried a bounty priced up front and paid on acceptance, from sixteen organisations, at most three each. Each worth is the amount the bounty platform's bot announced as paid, with the URL of that announcement; each issue's six signals are the engine's own reading of it (`domain/signals.read`), not a hand score. `mise run pricing:calibrate` replays it; `services/bounties.py` rebuilds it, and `calibration-report.json` beside the corpus is the run recorded here.
-
-| | Rate | Worth inside the band | Median error |
+| | Rate | Worth inside the suggested range | Median error |
 | --- | --- | --- | --- |
 | The engine as it stands | $90/h | 3.3% | 1,599% |
-| The fit to these bounties | $8.09/h | 46.7% | 52% |
+| The fit to those bounties | $8.09/h | 46.7% | 52% |
 
-The paid bounties have a median of $100 (from $15 to $2,000); the engine recommends a median of $1,667 for the same issues. Nine of the thirty paid less than the Open tier's $55 floor.
+The paid bounties have a median of $100, from $15 to $2,000; the engine's suggestion for
+the same issues has a median of $1,667. Two things follow, and both are load-bearing for
+the decision above.
 
-**The weights were not changed, and the fitted ones should not be adopted.** Two reasons, both in the data rather than in a preference:
+**The weights were not fitted to that corpus, deliberately.** The fit is degenerate: it puts
+70 percent of the weight on blast radius, but twenty-seven of the thirty issues carry the
+same blast-radius score because almost none of them is labelled, so a weight on a signal
+that barely varies is fitting the rate rather than the signal. And a bounty is a different
+market: a price posted to many competing hunters, often as marketing, a third of it below
+the floor at which the platform's own review pays for itself.
 
-- The fit is degenerate. It puts 70% of the weight on blast radius, but twenty-seven of the thirty issues carry the same blast-radius score, because almost none of them is labelled. A weight on a signal that barely varies is fitting the rate, not the signal.
-- A bounty is a different market. It is a price posted to many competing hunters, often as marketing, and a third of it sits below the floor at which the platform's own review pays for itself. Pricing to it would move the engine to a price the business cannot carry, for contributors it is not built for.
+**The absolute level is untested against professional work.** That is the honest
+conclusion, and it is why the suggestion is not allowed to refuse anything. A number whose
+error is measured in hundreds of percent, in the region it has never seen a transaction, is
+in no position to be a boundary. It is in an excellent position to be a starting point.
 
-What the comparison does establish is that the engine's absolute level is untested against professional work, and that requirement clarity, code surface and prior attempts vary enough across real issues to be fitted once a corpus of buyer-valued work exists: consultancy invoices, or a buyer's own engineer's estimate (assumption 1 below). Until then this corpus stays as the floor of the market, and as a regression set the calibration is replayed against.
+### Why it lands high, in three lines
 
-### What is not in the model yet
+Nothing in the rules names $1,000, and yet that is where an ordinary issue lands. Three
+things do it:
 
-No reputation-priced component. A contributor with twenty accepted patches in a repository should eventually be able to charge more than a stranger for the same work, and a publisher with a bad payment record should pay more. Both are straightforward once there is transaction history, and neither is worth building before that.
+1. **The score is a weighted average of six signals**, so it cannot be extreme. To score
+   1.0 every signal must sit at its floor. Real readings cluster between 1.7 and 3.3,
+   which is already the middle of the range by construction. Averaging is the right way to
+   combine signals and the wrong way to produce a price.
+2. **The hours map stretches that bounded score by 6.5.** `2 + (score - 1) × 6.5` turns a
+   1-to-5 mean into 2 to 28 hours, so a small change in the score moves the estimate by a
+   quarter.
+3. **One flat hourly rate, $90, applied to everyone**, when the supply it is priced for
+   spans a factor of four: from about $25 an hour in South and South-East Asia to about $95
+   in North America.
 
-## Part two: the finance integration
+Eleven hours at $90 is about $1,000. That is the arithmetic, and it is why the suggestion
+is labelled a suggestion.
 
-This is the part of the design that makes the pricing engine different from a spreadsheet, and it is also the part with the most caveats.
+## What changed, and what it cost
 
-### What we read
-
-| Signal | Why the engine wants it |
+| Removed | Why |
 | --- | --- |
-| Department or category budget remaining | Sets the affordability ceiling |
-| Cash position and runway | Changes whether the buyer should pay now or defer |
-| Existing vendor and contractor spend | Shows where this payment sits in the pattern |
-| Obligation attached to the component | Marks the issue as compliance-driven, which raises the band |
+| The published price floor ($55/$65/$80) | A break-even solve dressed as a business rule. Every floor landed within 29 cents of zero margin, and the tier with the thinnest take rate got the highest floor. Nine of the thirty known prices in the calibration corpus would have been refused. |
+| The affordability ceiling | It could only ever lower a price and never raise one, so the buyer's own budget was a one-way constraint on the buyer's own decision. |
+| Per-tier take rates (12/10/8) | A second price for the same service, and the reason the floor moved with a subscription. |
+| The band as a validation window | A range is advice. Enforcing it is what made the engine the price-setter. |
+| The compliance multiplier, and the risk and urgency premiums | Premiums applied as coefficients rather than earned, and the buyer cannot check a coefficient. |
+| The automatic re-list uplift | Raising a price on the publisher's behalf is guessing at their budget. They can move the number themselves, and they can publish the issue again after a refund. |
 
-### Firefly III first, and its limits
+| Kept | Why |
+| --- | --- |
+| The escrow contract and USDC settlement | This is the product. It works, it is tested, and it costs about a cent. |
+| The agent review and the acceptance criteria | The verification is what the 10 percent pays for. Without it this is a payment link. |
+| The comparables, the signals and the suggestion | It is the one part of the engine that gets better with every settlement, and it costs the publisher nothing to ignore. |
+| First claim wins, with a time-boxed claim | It needs no bidding machinery, and the price is already public. |
 
-The Tameion brief points at Firefly III in its prior-art section, noting that it already has a rules engine and has never been connected to money that moves. That is the reason to start there, and it is not a reason to depend on it.
+## Assumptions that need validating
 
-The honest position, drawn from Canteen's own analysis of nine open-source accounting systems:
-
-- Firefly III is a personal finance manager, not an enterprise accounting system. It has no chart of accounts. (Sourced: Canteen, Agents and Ledgers in 2026.)
-- Its own documentation refuses programmatic write access, describing automated entry as impossible to do reliably and accurately. (Sourced: same.)
-- Rules in Firefly III can delete a journal, which means an agent's rules and a user's rules can fight each other. (Sourced: same.)
-
-So the integration is read-only, and it is a convenience rather than a foundation. An agent that writes to a publisher's books is a liability, and the value we need is on the read side anyway: what is left in the budget and what the cash looks like.
-
-### The adapter we actually want
-
-```mermaid
-flowchart LR
-    AGENT["Pricing agent<br/>needs budget context"]
-    ADAPTER["Finance context adapter<br/>read-only, publisher-consented"]
-    AGENT --> ADAPTER
-    ADAPTER --> F["Firefly III<br/>first, per the hackathon brief"]
-    ADAPTER --> B["beancount<br/>plain-text ledger"]
-    ADAPTER --> O["Odoo or ERPNext<br/>full ERP"]
-    ADAPTER --> I["Invoice Ninja<br/>invoicing and payments"]
-    ADAPTER --> M["Manual budget band<br/>always available fallback"]
-```
-
-The correct first deliverable for the hackathon is Firefly III plus the manual band. The adapter shape is what stops this from becoming a rewrite when the first enterprise customer turns up running Odoo.
-
-### What we do not do
-
-We do not post entries to anyone's books. We do not reconcile anyone's bank statements. We do not hold customer funds. The moment we write to a ledger we inherit a class of liability that has nothing to do with our product, and the market research has an entire company's bankruptcy to teach us what happens when a platform holds money it should not.
-
-If the publisher wants the payment recorded in their books, we emit a record they can import. Their accounting system, their control.
-
-## Part three: what we charge
-
-### The take rate
-
-A commission on matched work, in the range of 8 to 12 percent. Comparable platforms sit at ten percent for network marketplaces and at zero for the commission-free entrants, so anything above 15 percent needs a reason.
-
-Our reason is that we do two things a marketplace normally does not: we price the work, and we verify it. That is a defensible reason for a rate at the top of the range, and it stops being defensible the moment a competitor prices for free and matches us on verification.
-
-| | Take rate | Why a buyer accepts it |
-| --- | --- | --- |
-| Below 8% | Unsustainable | Nothing. We would be subsidising every transaction. |
-| 8% | Enterprise | Below our own floor for the tier, and deliberately so: the subscription is what pays for the compliance reporting, so the per-issue rate can be the thinnest on the list |
-| 10% | Team | Matches Braintrust and Upwork, so it needs no explanation, and the subscription covers the rest |
-| 12% | Open, and the target | We price and verify the work, which neither of them does. This is also the rate the published price floor is derived from |
-| Above 15% | Renegotiated | Buyers start routing around us and paying directly |
-
-The tier table in the section below is the single source of truth for these numbers. Every rate quoted anywhere else in this set is one of those three.
-
-The publisher pays the fix price and nothing else. The take rate is charged on that amount rather than added to it, so the price a manager approves is the price on the issue. The escrow carves the rate out on acceptance (`MisthosEscrow.release`), paying the contributor the remainder and the platform's take-rate wallet the fee in the same call, so the rate is a transfer rather than a reporting-layer number. The per-issue rate is set in the contract and bounded there at 15 percent, which is the ceiling above.
-
-### The price floor
-
-Review costs the platform about $6.31 an issue. It is not a line item on the publisher's invoice, so it has to come out of the take rate, and that sets a floor: at the Open tier's 12 percent a fix has to be worth about $52.58 before review pays for itself, so the published minimum is the break-even rounded up to the next $5, which is $55. A thinner take rate needs a higher price: Team's 10 percent breaks even at $63.10 and publishes at $65, and Enterprise's 8 percent breaks even at $78.88 and publishes at $80.
-
-The floor is enforced when an issue is published, per the tier of the publisher asking. Below it the platform declines the work and says why, rather than subsidising it or quietly capping the contributor's pay.
-
-### Tiers
-
-| Tier | Price | Who it is for | What they get | Take rate |
-| --- | --- | --- | --- | --- |
-| Open | Free | Maintainers and individuals | Per-issue flow, pricing engine, automated review, USDC payout | 12% |
-| Team | $249 per month | Companies of 10 to 200 engineers | Everything in Open, plus budget rules, approval thresholds, spend reporting | 10% |
-| Enterprise | From $2,000 per month | Companies with a compliance obligation | Everything in Team, plus compliance reporting, audit export, policy-enforced limits, SSO, and a support commitment | 8% |
-
-Prices are anchored against what the buyer already pays for adjacent tools. CodeRabbit charges $30 per developer per month for AI review of pull requests, so a 300-developer company is already spending roughly $9,000 a month on reviewing code. A $2,000 Enterprise tier that also funds the fixes and produces the compliance report is a rounding error next to that number. (Sourced: CodeRabbit pricing page.)
-
-The tier structure is also a wedge against the competitive risk in the market research. Algora has the contributor network and the enterprise conversations. Neither of us has the compliance reporting, and Enterprise is where the durable revenue is.
-
-### Free for maintainers, and why that is not generosity
-
-Maintainers are the supply of well-scoped issues. Charging them would be charging the side of the market that has no budget, and the platform has nothing to sell without their issues. The 12 percent comes off the publisher's side of their transactions.
-
-### Unit economics of a single transaction
-
-| Line | $55 fix (the floor) | $500 fix | $5,000 fix |
-| --- | --- | --- | --- |
-| Fix price | $55 | $500 | $5,000 |
-| Publisher pays | $55 | $500 | $5,000 |
-| Platform take at 12% | $6.60 | $60 | $600 |
-| Settlement cost, one transfer | $0.01 | $0.01 | $0.01 |
-| Agent review cost, 15 minutes at $0.40 | $6.00 | $6.00 | $6.00 |
-| Screening, amortised | $0.30 | $0.30 | $0.30 |
-| Contribution margin | $0.29 | $53.69 | $593.69 |
-
-The floor column is where the rail matters most. At a 12 percent take there is 29 cents left after review, so anything more than a few cents of settlement cost would wipe the transaction out, and a card fee would make it negative on its own. Above $500 none of this is close to mattering, which is why the floor is the only interesting column.
-
-### Pricing experiments to run
-
-| Experiment | Question | How |
-| --- | --- | --- |
-| Take rate sensitivity | Does 12% lose deals that 8% would win? | Quote both to the first ten publisher conversations |
-| Price band width | Does a wider band increase publishing rates? | Compare 0.7 to 1.4 against a narrower 0.85 to 1.2 |
-| Reasoning transparency | Does showing comparables increase approval? | Publish the brief for half the issues, hide it for the other half |
-| Tier boundary | Is $249 the right Team price? | Founder-led sales, ask what they currently pay for code review tooling |
-
-## Assumptions that need validating before launch
-
-1. A buyer will accept an agent-generated price without an independent quote. Confidence: medium. Test by comparing our band against what the buyer's own engineer estimates.
-2. A maintainer will accept a funded issue they never review, only merge. Confidence: low. If they still want to read every diff themselves, the platform's review saves them nothing and the product is administration software with a payment rail attached.
-3. Twelve percent does not push buyers into paying contributors directly. Confidence: medium. The verification is the lock-in, and it needs to be good enough to be worth the rate.
-4. Firefly III gives us budget context that is actually useful. Confidence: low. Firefly III is personal finance software and may simply not hold the data an enterprise needs. The manual band fallback exists for this reason.
-5. Review can be done for roughly six dollars of agent time. Confidence: medium. Based on a publicly listed agent minute price, not on our own measurements.
+1. **A $6.31 review cost holds at small issue sizes**, where the diff is small and the
+   criteria are short. Confidence: medium. It came from a published agent minute rate, not
+   from our own measurements. Test by measuring agent spend per review by issue size.
+2. **Buyers who name their own price name a sensible one.** They may name $1 and expect a
+   fix. Confidence: medium. The mitigation is showing comparable settled prices on the
+   page, which is the whole reason the suggestion exists.
+3. **A permissive price does not collapse the median below the point where supply stops
+   answering.** Confidence: low. Test by watching time to first claim against price.
+4. **Review can be done for roughly six dollars of agent time** at the depth the criteria
+   require. Confidence: medium, and the same measurement as the first assumption.
+5. **The suggestion earns its place on the page** rather than being decoration a publisher
+   scrolls past. Confidence: low. Test with the label rate above, which is what it is for.

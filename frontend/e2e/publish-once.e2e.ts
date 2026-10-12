@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 /**
- * #120: a double click on "Publish and get a price" published the same GitHub issue
+ * #120: a double click on "Publish at this price" published the same GitHub issue
  * twice, and so did publishing it again later, which let one pull request be paid on
  * both. The button sends the form once, and a second publish of an open issue is
  * refused with a link to the listing it already has.
@@ -33,16 +33,17 @@ test('a GitHub issue is published once, and publishing it again links to it', as
     await page.getByLabel('Repository').fill(repo)
     await page.getByLabel('Issue number').fill('77')
     await page.getByLabel('Title').fill('Retry on 503')
+    await page.getByLabel('What the work is worth, in USDC').fill('250')
   }
 
   await fill('acme/widgets')
-  await page.getByRole('button', { name: 'Publish and get a price' }).dblclick()
+  await page.getByRole('button', { name: 'Publish at this price' }).dblclick()
   await expect(page).toHaveURL(/\/issues\/ISS-\d+$/)
   const first = page.url()
   expect(published).toHaveLength(1)
 
   await fill('Acme/Widgets')
-  await page.getByRole('button', { name: 'Publish and get a price' }).click()
+  await page.getByRole('button', { name: 'Publish at this price' }).click()
   const refused = page.locator('.error-box')
   await expect(refused).toContainText(/acme\/widgets#77 is already on Misthos as ISS-\d+/)
   await refused.getByRole('link', { name: /^Open ISS-\d+$/ }).click()

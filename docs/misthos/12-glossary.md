@@ -6,17 +6,17 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **Funded issue.** A GitHub issue that has money committed against it. Distinguished from an ordinary issue by having a price, acceptance criteria and a deadline attached.
 
-**Price band.** The range the pricing agent proposes rather than a single number. A band invites the publisher to choose a position; a single figure invites an argument about whether it is exactly right.
+**Price band.** The range the pricing agent offers as advice: a low and a high around a recommendation, for the publisher to weigh against their own sense of the work. The publisher names the price, and the band never refuses or caps one.
 
 **Acceptance criteria.** The written conditions a submission has to meet. Drafted by the agent from the issue and the project's test suite, edited and approved by the publisher, then shown to contributors before they start work. These are what the platform reviews the pull request against, and the publisher is not expected to read the diff themselves.
 
-**Price floor.** The lowest fix price the platform will publish: $55 at the Open tier, $65 at Team and $80 at Enterprise. Derived from break-even rather than chosen, and rounded up to the next $5, because below it review costs more than the take rate earns. The thinner a tier's take rate, the higher its floor, and publishing under it is refused.
+**Minimum price.** The lowest price the platform will publish, $5, with $100,000 at the top. Both bounds live with the fee and are checked in one place; a price outside them is refused. The floor catches a typo and damps spam rather than covering the cost of review, so a price below break-even is accepted and the platform carries the loss on it. There is no per-tier minimum, and the take rate does not move with the plan.
 
 **Claim.** A contributor's exclusive, time-boxed reservation of a funded issue. Expires if no pull request appears, so desirable work cannot be squatted on. First claim wins, and there is nothing to bid against because the price is already published.
 
-**Fixed price.** The only pricing model the platform uses. The publisher approves one number before publication, commits the funds, and the issue is taken at that number or left alone. There is no bidding, no auction and no negotiation.
+**Fixed price.** The only pricing model the platform uses. The publisher names one number before publication, commits the funds, and the issue is taken at that number or left alone. There is no bidding, no auction and no negotiation.
 
-**Take rate.** The platform's commission on matched work, between 8 and 12 percent depending on the publisher's tier. It funds the review: the publisher pays the fix price and nothing else.
+**Take rate.** The platform's commission on matched work: a flat 10 percent, the same for every publisher on every plan. It is carved out of the committed amount, so the publisher pays the price and nothing else and the contributor receives the rest, and the escrow contract will not accept a rate above 15 percent. It funds the review.
 
 **Settled issue.** The unit the business counts. An issue where a pull request merged and the payment released. This is the North Star metric.
 
@@ -76,7 +76,7 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **Bounty platform.** A site where money is attached to a task and paid on completion. The category Misthos belongs to, and the category that has already produced one bankruptcy and two strategic pivots.
 
-**Take rate compression.** What happens when competitors price at zero and a platform's fee stops being defensible. The reason our Enterprise tier exists.
+**Take rate compression.** What happens when competitors price at zero and a platform's fee stops being defensible. Our answer is subscriptions that sell controls and compliance, since the rate itself is the same for everyone.
 
 ## Metrics terms
 
@@ -92,7 +92,7 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **CAC.** Customer acquisition cost. What it costs to win one customer.
 
-**Unit economics.** Whether a single transaction makes money. Ours does at $55 and above, which is where the published price floor comes from.
+**Unit economics.** Whether a single transaction makes money. Ours is covered from about $63 an issue, where the 10 percent fee meets the cost of review. Below that the platform loses money on anything that settles, and it accepts the price anyway: the $5 minimum is there to catch a typo, not to protect the margin.
 
 ## Historical terms from the brief
 

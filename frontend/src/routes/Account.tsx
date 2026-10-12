@@ -320,7 +320,7 @@ function ChooseSide({ onDone }: { onDone: () => void }) {
         </label>
         {role === 'publisher' && (
           <label className="field">
-            <span>Budget in USDC, which caps every price you are offered</span>
+            <span>Budget in USDC, for your own reporting</span>
             <input
               className="input"
               value={budget}

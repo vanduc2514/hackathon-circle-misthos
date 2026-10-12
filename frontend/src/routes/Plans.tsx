@@ -124,7 +124,7 @@ export default function Plans() {
               </p>
               <dl className="kv prose" style={{ marginBottom: 12 }}>
                 <dt>Take rate</dt>
-                <dd>{plan.take_rate_percent}% of each settled issue</dd>
+                <dd>{plan.take_rate_percent}% of each settled issue, the same on every plan</dd>
                 <dt>Smallest fix</dt>
                 <dd>${money(plan.minimum_fix_usdc)}</dd>
                 <dt>Support</dt>

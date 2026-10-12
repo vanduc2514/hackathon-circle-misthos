@@ -65,9 +65,9 @@ flowchart TB
 
 ### 1. Funded issues published per week
 
-Demand activation. The number of issues a publisher has approved a price for and committed funds against.
+Demand activation. The number of issues a publisher has named a price for and committed funds against.
 
-Why it matters: if this is flat, nothing downstream can grow. It is the cleanest read on whether the pricing engine is producing numbers publishers will actually sign.
+Why it matters: if this is flat, nothing downstream can grow. It is the cleanest read on whether publishers will put money against the work the platform surfaces, and on whether they take the engine's advice or name their own number.
 
 Where it breaks: a publisher can fund twenty issues, get nothing, and stop. That is why the refund rate sits next to it.
 
@@ -152,7 +152,7 @@ The question in each arrow is the only question that matters at that stage. Do n
 
 ## How we would know the North Star is wrong
 
-If publishers settle issues happily and contributors keep coming back, and the business still does not grow, then the transaction count was the wrong thing to count. The likely reason would be that average issue value is collapsing toward the minimum, which means we built a marketplace for $50 work with the margins of a commodity. Matched volume is the metric that would show it, and it is in the constellation for exactly this reason.
+If publishers settle issues happily and contributors keep coming back, and the business still does not grow, then the transaction count was the wrong thing to count. The likely reason would be that average issue value is collapsing toward the $5 minimum, which means we built a marketplace for $5 work with the margins of a commodity. Matched volume is the metric that would show it, and it is in the constellation for exactly this reason.
 
 The other failure mode is a high settled-issue count concentrated in one buyer. Recompute the North Star without the largest publisher every quarter and look at what is left.
 

@@ -286,8 +286,9 @@ class TestTheWholeLoopWithoutTheDemoStepper:
         )
         published = publisher.post(
             f"{API}/issues",
-            json={"repo": REPO, "number": 5, "title": "x", "publisher_id": "PUB-1"},
-        )
+            json={"repo": REPO, "number": 5, "title": "x", "publisher_id": "PUB-1",
+                  "price": "500"},
+        )  # fmt: skip
         assert published.status_code == 201, published.text
         issue = published.json()
         assert issue["publisher_id"] != "PUB-1"  # a signed-in publisher publishes as itself
@@ -341,7 +342,7 @@ class TestTheWholeLoopWithoutTheDemoStepper:
         rec = store.get(iid)
         assert rec is not None and rec.state is IssueState.PAID
         actions = [d.action for d in rec.decisions]
-        for step in ("published", "criteria_approved", "price_approved", "claimed",
+        for step in ("price_set", "criteria_approved", "price_approved", "claimed",
                      "submitted", "verdict_issued", "merged", "released"):  # fmt: skip
             assert step in actions, step
         assert rec.contributor_id == alice["party_id"]
@@ -512,7 +513,8 @@ class TestTheSimulatedGitHubFromTheBrowser:
 
     def _funded(self, publisher: TestClient) -> str:
         issue = publisher.post(
-            f"{API}/issues", json={"repo": REPO, "title": "Retry on 503", "publisher_id": "x"}
+            f"{API}/issues",
+            json={"repo": REPO, "title": "Retry on 503", "publisher_id": "x", "price": "500"},
         ).json()
         iid = issue["id"]
         assert issue["criteria_approved_at"] is None
@@ -697,7 +699,7 @@ class TestCriteriaAReviewerCanJudge:
         issue = client.post(
             f"{API}/issues",
             json={"repo": "acme/x", "title": "CSV export breaks on commas inside fields",
-                  "labels": ["bug"], "publisher_id": "PUB-1"},
+                  "labels": ["bug"], "publisher_id": "PUB-1", "price": "500"},
         ).json()  # fmt: skip
         approved = client.post(
             f"{API}/issues/{issue['id']}/criteria",

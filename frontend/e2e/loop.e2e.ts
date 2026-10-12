@@ -60,13 +60,14 @@ test('a publisher and a contributor take an issue from publication to payment', 
     await publisher.getByLabel('Repository').fill('acme/ledger-core')
     await publisher.getByLabel('Title').fill('Retry idempotently when settlement returns 503')
     await publisher.getByLabel('Labels, comma separated').fill('bug, reliability')
-    await publisher.getByRole('button', { name: 'Publish and get a price' }).click()
+    await publisher.getByLabel('What the work is worth, in USDC').fill('250')
+    await publisher.getByRole('button', { name: 'Publish at this price' }).click()
     await expect(publisher).toHaveURL(/\/issues\/ISS-\d+$/)
   })
   const issueUrl = publisher.url()
 
   await test.step('it is funded only after the criteria are approved', async () => {
-    const fund = publisher.getByRole('button', { name: /^Approve the price and commit/ })
+    const fund = publisher.getByRole('button', { name: /^Approve and commit \$/ })
     await expect(fund).toBeDisabled()
     await publisher.getByRole('button', { name: 'Approve these criteria' }).click()
     await expect(publisher.getByRole('button', { name: 'Criteria approved' })).toBeVisible()

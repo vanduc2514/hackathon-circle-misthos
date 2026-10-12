@@ -8,6 +8,7 @@ which view it is looking at.
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -271,6 +272,9 @@ class IssueOut(BaseModel):
     publisher_name: str
     created_at: datetime
     deadline: datetime | None = None
+    price_usdc: str | None = None
+    """What the publisher said the work is worth, and what the escrow commits (#142).
+    Null on an issue published before #142, whose amount came from the recommendation."""
     proposal: PriceProposalOut | None = None
     escrow: EscrowCommitment | None = None
     claim: Claim | None = None
@@ -278,9 +282,9 @@ class IssueOut(BaseModel):
     review: Review | None = None
     contributor_id: str | None = None
     paid_usdc: str | None = None
-    """What the contributor received: the commitment less the platform's take rate."""
+    """What the contributor received: the commitment less the platform's fee."""
     platform_fee_usdc: str | None = None
-    """The platform's commission on this settlement, at the publisher's tier rate."""
+    """The platform's commission on this settlement: 10 percent of the commitment."""
     github_url: str
     criteria_approved_at: datetime | None = None
     """When the publisher approved the acceptance criteria; funding waits for it (#21)."""
@@ -361,6 +365,13 @@ class PublishRequest(BaseModel):
     summary: str = ""
     labels: list[str] = Field(default_factory=list)
     publisher_id: str
+    price: Decimal | None = None
+    """USDC, as the publisher types it. Their number, and the amount the escrow
+    commits: the engine's suggestion is advice beside it, never a bound (#142).
+
+    Optional because the GitHub flow has no form: an issue listed by a `/misthos`
+    label arrives unpriced, the publisher names the price with `/misthos price`, and
+    funding is refused until they do. The web form always sends one."""
     compliance_driven: bool = False
     signals: dict[str, float] = Field(default_factory=dict)
 
@@ -435,14 +446,19 @@ class RoleRequest(BaseModel):
 
 
 class FundRequest(BaseModel):
-    """The price the publisher commits, when they name one of their own.
+    """Approving the price the publisher already set.
 
-    Empty means the engine's recommendation, which is what the form did before a
-    publisher could choose a position in the band.
+    Empty on purpose. An amount here would be a second place to change the number
+    after it was published and audited, so the price is set at publish time and moved
+    with `PATCH /issues/{issue_id}/price` until someone claims the issue (#142).
     """
 
-    amount: str | None = None
-    """USDC, as decimal text. Checked against the issue's band by the pricing engine."""
+
+class PriceRequest(BaseModel):
+    """A new price for an issue nobody has claimed yet."""
+
+    amount: str
+    """USDC, as decimal text. Checked against the platform's bounds and nothing else."""
 
 
 class GitHubLinkStart(BaseModel):
@@ -487,8 +503,12 @@ class FinanceOut(BaseModel):
     """What the books say remains of the budget this work comes out of."""
     cash_usdc: str | None = None
     as_of: datetime | None = None
-    caps_prices_at_usdc: str
-    """The lower of the declared budget and what the books say remains."""
+    spendable_usdc: str
+    """The lower of the declared budget and what the books say remains.
+
+    Informational only since #142. It used to cap every price the publisher was
+    offered, which made their own money a one-way constraint on their own decision;
+    it now tells them what they have to spend and nothing else."""
     note: str = ""
 
 

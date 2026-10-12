@@ -15,7 +15,7 @@ The existing platforms prove the demand exists and then struggle to monetise it.
 Four pieces, described here at the level of who decides what.
 
 1. Issue publishing with a price on it. A company or maintainer turns an issue into a funded contract at one fixed price, with acceptance criteria attached. A human approves that price before it goes live.
-2. A valuation agent. It reads the issue, the repository, the surrounding code and the buyer's financial context, then proposes a price band with a written reason. The buyer can accept or override.
+2. A valuation agent. It reads the issue, the repository and the surrounding code, then shows what comparable work has settled for, with an effort estimate and a written reason. The publisher names the price; this is the advice beside it, and it never refuses or caps the number they type.
 3. A claim and review pipeline. The first contributor to claim the issue holds it exclusively, opens a pull request, and the platform reviews it against the acceptance criteria and the project's test suite. The publisher then merges, and the merge is the acceptance call.
 4. Settlement in USDC. Funds are committed when the issue is published, released when the work is accepted, and refunded on a timeout if nothing acceptable arrives.
 
@@ -33,13 +33,13 @@ The supply of fixes arrived before the market for them. GitHub's 2025 data cover
 
 ## How we make money
 
-A take rate on matched work, in the range of 8 to 12 percent, split between the publisher and the contributor depending on who brought the demand. Subscription seats for organisations that want budget rules, approval thresholds and reporting are the second line, and the more durable one, because the compliance deadline makes the reporting a requirement rather than a preference.
+A flat 10 percent of every issue that settles, carved out of the amount the publisher committed and charged only when the work is accepted. Nothing on an issue that never settles. Subscription seats for organisations that want budget rules, approval thresholds and reporting are the second line, and the more durable one, because the compliance deadline makes the reporting a requirement rather than a preference. A subscription gates features, never the rate: the fee is the same 10 percent on every plan, because charging a company more or less for the same verification work is a second price for one service.
 
-Settlement costs us roughly a cent per payment, so the gross margin on a $500 fix at a 12 percent take rate is thin in absolute terms and fine in percentage terms. Volume is the whole game, which is why the product has to work for small fixes as well as $4,000 ones, and why the published floor sits at about $55.
+Settlement costs us roughly a cent per payment, so the gross margin on a $500 fix is $50 less that cent. Review costs about $6.31 an issue, which is where the fee stops covering our own cost: a $63 price is break-even, and below it we run the issue at a loss on purpose, because a publisher's first small fix is the cheapest way to win them. Volume is the whole game, which is why the product has to work for small fixes as well as $4,000 ones, and why we let the publisher set the price rather than refusing the ones we would have found unprofitable.
 
 ## Where we are
 
-The problem and the competitors are researched against live sources. The product flow is decided. The pricing engine is designed but the financial-data input is unproven. There is one design partner conversation and no paying customer.
+The problem and the competitors are researched against live sources. The product flow is decided. The pricing model is decided: the publisher names the price and we take a flat 10 percent when the work settles. What is unproven is the recommendation beside it, which reads comparable settled issues rather than the publisher's books. There is one design partner conversation and no paying customer.
 
 Two assumptions carry the entire thesis and neither is tested:
 

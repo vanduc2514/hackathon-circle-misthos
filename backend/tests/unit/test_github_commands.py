@@ -54,8 +54,8 @@ class TestWhatIsACommand:
     def test_every_command_line_in_order_with_the_list_after_it(self) -> None:
         body = "/misthos criteria\n- A\n- [x] B\n1. C\n/misthos approve\n- not a criterion"
         assert commands_in(body) == [
-            Command("criteria", ("A", "B", "C")),
-            Command("approve", ("not a criterion",)),
+            Command("criteria", "", ("A", "B", "C")),
+            Command("approve", "", ("not a criterion",)),
         ]
 
     def test_up_to_three_spaces_of_indentation_and_any_case(self) -> None:
@@ -66,4 +66,4 @@ class TestWhatIsACommand:
 
     def test_a_list_in_code_or_a_quote_is_not_part_of_the_criteria(self) -> None:
         body = "/misthos criteria\n- A\n```\n- B\n```\n> - C\n<!-- - D -->"
-        assert commands_in(body) == [Command("criteria", ("A",))]
+        assert commands_in(body) == [Command("criteria", "", ("A",))]

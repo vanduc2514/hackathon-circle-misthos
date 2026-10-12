@@ -44,7 +44,8 @@ test('the criteria box follows the issue, not the previous page', async ({ page,
     await page.getByLabel('Repository').fill('acme/ledger-core')
     await page.getByLabel('Title').fill(title)
     await page.getByLabel('Labels, comma separated').fill('bug')
-    await page.getByRole('button', { name: 'Publish and get a price' }).click()
+    await page.getByLabel('What the work is worth, in USDC').fill('250')
+    await page.getByRole('button', { name: 'Publish at this price' }).click()
     await expect(page).toHaveURL(/\/issues\/ISS-\d+$/)
     published.push(page.url())
     // Replace the drafted criteria with a marker only this issue carries, so the two

@@ -394,6 +394,7 @@ class TestReadPath:
                 "number": 777,
                 "title": "ignored",
                 "publisher_id": "PUB-1",
+                "price": "500",
             },
         )
         assert r.status_code == 201, r.text
@@ -412,8 +413,9 @@ class TestReadPath:
         github.put_issue(self.FACTS)
         published = client.post(
             f"{API}/issues",
-            json={"repo": "acme/ledger-core", "number": 777, "title": "x", "publisher_id": "PUB-1"},
-        ).json()
+            json={"repo": "acme/ledger-core", "number": 777, "title": "x",
+                  "publisher_id": "PUB-1", "price": "500"},
+        ).json()  # fmt: skip
         before = published["proposal"]["recommended"]["usdc"]
 
         from dataclasses import replace
@@ -461,8 +463,9 @@ class TestReadPath:
         monkeypatch.setattr(github, "read_issue", refuse)
         r = client.post(
             f"{API}/issues",
-            json={"repo": "acme/private", "number": 5, "title": "x", "publisher_id": "PUB-1"},
-        )
+            json={"repo": "acme/private", "number": 5, "title": "x",
+                  "publisher_id": "PUB-1", "price": "500"},
+        )  # fmt: skip
         assert r.status_code == 422
         assert "could not read acme/private#5" in r.json()["detail"]
 

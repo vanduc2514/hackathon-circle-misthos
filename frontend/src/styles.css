@@ -580,44 +580,6 @@ button {
   border-bottom: none;
 }
 
-.band {
-  margin: 16px 0 6px;
-}
-
-.band-track {
-  position: relative;
-  height: 22px;
-  background: var(--line-soft);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.band-range {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  background: var(--accent-soft);
-  border-left: 1px solid var(--accent-line);
-  border-right: 1px solid var(--accent-line);
-}
-
-.band-marker {
-  position: absolute;
-  top: -3px;
-  bottom: -3px;
-  width: 2px;
-  background: var(--accent);
-}
-
-.band-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: var(--g500);
-  margin-top: 5px;
-  letter-spacing: 0.04em;
-}
-
 .justify {
   font-size: 12.5px;
   color: var(--g100);

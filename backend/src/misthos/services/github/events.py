@@ -47,8 +47,9 @@ from typing import Any
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.issue import IllegalTransition, IssueState
+from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
-from misthos.domain.pricing import UnfundableIssue
+from misthos.domain.pricing import PriceRefused
 from misthos.models.records import IssueRecord
 from misthos.repositories import StaleIssue
 from misthos.schemas import PublishRequest
@@ -70,15 +71,19 @@ log = logging.getLogger("misthos.github.events")
 HANDLED_EVENTS = {
     "installation": "connect the App's repositories to the publisher who installed it",
     "installation_repositories": "connect or disconnect the repositories added or removed",
-    "issues": "price an issue labelled for Misthos; re-price an unfunded one when it changes",
-    "issue_comment": "/misthos approve, /misthos criteria, /misthos claim and /misthos help",
+    "issues": "price an issue labelled for Misthos; refresh the suggestion when it changes",
+    "issue_comment": (
+        "/misthos price, /misthos approve, /misthos criteria, /misthos claim and "
+        "/misthos help"
+    ),
     "pull_request": "submit the claimant's pull request for review; a merge releases the payout",
     "check_run": "record whether the project's own checks passed on the submitted commit",
     "ping": "acknowledged",
 }
 
 # Matched against a line of the commenter's own prose, with its indentation removed.
-_COMMAND = re.compile(r"/misthos\s+([a-z]+)\b", re.IGNORECASE)
+# The rest of the line is kept: `/misthos price 250` has to carry its amount.
+_COMMAND = re.compile(r"/misthos\s+([a-z]+)\b(.*)$", re.IGNORECASE)
 _LIST_ITEM = re.compile(r"(?:[-*]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.+?)\s*$")
 _FENCE = re.compile(r"(`{3,}|~{3,})(.*)")
 _HTML_COMMENT = re.compile(r"<!--.*?-->")
@@ -89,6 +94,8 @@ HELP = (
     "**Misthos commands**, each on its own line in a comment. They run in order, up to "
     f"{MAX_COMMANDS} a comment, and the first one refused stops the rest. A command in a "
     "code block, a quote or an HTML comment is not run.\n\n"
+    "- `/misthos price 250`: the publisher names what the work is worth, in USDC. Nothing "
+    "is funded until they do, and they can change it until a contributor claims.\n"
     "- `/misthos approve`: the publisher approves the criteria and the price, which "
     "commits the funds to escrow.\n"
     "- `/misthos criteria` followed by a list: the publisher approves these criteria "
@@ -203,11 +210,9 @@ def _list_issue(store: Store, repo: str, number: int, payload: dict[str, Any]) -
     )
     try:
         rec = store.publish(request)
-    except UnfundableIssue as exc:
-        _reply(
-            store, repo, number, f"**Misthos will not price this as scoped.** {exc.justification}"
-        )
-        return Handled(True, f"{repo}#{number} is not fundable as scoped")
+    except PriceRefused as exc:
+        _reply(store, repo, number, f"**The price was refused.** {exc.justification}")
+        return Handled(True, f"{repo}#{number} was published at a price outside the bounds")
     except UnreadableIssue as exc:
         return Handled(False, f"ignored: {exc}")
     except AlreadyListed as exc:
@@ -220,12 +225,13 @@ def _list_issue(store: Store, repo: str, number: int, payload: dict[str, Any]) -
     criteria = "\n".join(f"- {c}" for c in rec.acceptance_criteria)
     _reply(
         store, repo, number,
-        f"**Priced on Misthos: {p.recommended}**, in a band of {p.band_low} to "
-        f"{p.band_high} (confidence {p.confidence}).\n\n{p.justification}\n\n"
-        f"Proposed acceptance criteria:\n\n{criteria}\n\n"
-        "The publisher funds it by commenting `/misthos approve`, or approves other "
-        "criteria with `/misthos criteria` followed by a list. Nothing is committed until "
-        f"then. Details: {settings.public_url}/issues/{rec.id}",
+        f"**Listed on Misthos, with no price yet.** The engine suggests {p.recommended}, "
+        f"in a range of {p.band_low} to {p.band_high} (confidence {p.confidence}) — advice "
+        f"only, and nothing is funded until the publisher names what the work is worth.\n\n"
+        f"{p.justification}\n\nProposed acceptance criteria:\n\n{criteria}\n\n"
+        "The publisher prices it with `/misthos price 250`, approves other criteria with "
+        "`/misthos criteria` followed by a list, and commits the funds with "
+        f"`/misthos approve`. Details: {settings.public_url}/issues/{rec.id}",
     )  # fmt: skip
     return Handled(True, f"{repo}#{number} priced as {rec.id}", (rec.id,))
 
@@ -245,7 +251,11 @@ def _issue(store: Store, repo: str, action: str, payload: dict[str, Any]) -> Han
     except IllegalTransition:
         return Handled(False, f"{rec.id} is funded, so its price stands", (rec.id,))
     after = rec.proposal.recommended if rec.proposal else None
-    outcome = f"re-priced at {after}" if after != before else "price unchanged"
+    outcome = (
+        f"the suggestion moved to {after}; the publisher's price stands"
+        if after != before
+        else "the suggestion is unchanged"
+    )
     return Handled(True, outcome, (rec.id,))
 
 
@@ -317,6 +327,8 @@ class Command:
 
     name: str
     """Lower case, as written after `/misthos`."""
+    argument: str = ""
+    """What followed the name on the same line: the amount a `/misthos price` names."""
     items: tuple[str, ...] = ()
     """The list items on the lines after it, up to the next command: the criteria a
     `/misthos criteria` approves."""
@@ -330,13 +342,13 @@ def commands_in(body: str) -> list[Command]:
     as an example, quoted back by GitHub's "Quote reply" or left in a template, and
     running one of those can commit a publisher's funds.
     """
-    found: list[tuple[str, list[str]]] = []
+    found: list[tuple[str, str, list[str]]] = []
     for line in _prose(body):
         if command := _COMMAND.match(line):
-            found.append((command.group(1).lower(), []))
+            found.append((command.group(1).lower(), command.group(2).strip(), []))
         elif found and (item := _LIST_ITEM.match(line)):
-            found[-1][1].append(item.group(1))
-    return [Command(name, tuple(items)) for name, items in found]
+            found[-1][2].append(item.group(1))
+    return [Command(name, argument, tuple(items)) for name, argument, items in found]
 
 
 def _prose(body: str) -> Iterator[str]:
@@ -464,7 +476,7 @@ def _command(
     name = command.name
     if name == "help":
         return _Ran(True, HELP.format(url=settings.public_url))
-    if name not in {"approve", "criteria", "claim"}:
+    if name not in {"approve", "criteria", "claim", "price"}:
         return _Ran(
             False, f"`/misthos {name}` is not a command. Comment `/misthos help` for the list."
         )
@@ -498,6 +510,23 @@ def _command(
             )
         if account.party_id != rec.publisher_id:
             return _Ran(False, f"@{login}, only the publisher of this issue can {name} it.")
+        if name == "price":
+            if not command.argument:
+                return _Ran(
+                    False,
+                    "Name the amount, as `/misthos price 250`, in USDC. Nothing is funded "
+                    "until you do, and you can name a new one until someone claims it.",
+                )
+            try:
+                amount = Usdc.from_decimal(command.argument.replace(",", "").lstrip("$"))
+            except (ArithmeticError, ValueError):
+                return _Ran(False, f"`{command.argument}` is not an amount in USDC.")
+            store.set_price(rec.id, amount, by=login)
+            return _Ran(
+                True,
+                f"@{login} priced this at {amount}. Comment `/misthos approve` to commit it, "
+                "or `/misthos price` again to change it.",
+            )
         if name == "criteria":
             if not command.items:
                 return _Ran(
@@ -530,6 +559,8 @@ def _command(
         )
     except (CriteriaNotApproved, ComplianceRefusal, PolicyRefusal) as exc:
         return _Ran(False, f"Refused: {exc}")
+    except PriceRefused as exc:
+        return _Ran(False, f"That price was refused: {exc.justification}")
     except ChainRevert as exc:
         return _Ran(False, f"The escrow refused the commitment: {exc}")
 

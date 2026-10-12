@@ -372,6 +372,7 @@ class TestStatements:
                 repo="+evil/repo",
                 title=title,
                 publisher_id=account.party_id,
+                price=Decimal("500"),
                 signals={"blast_radius": 2},
             )
         )

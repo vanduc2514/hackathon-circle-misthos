@@ -3,10 +3,11 @@
 A marketplace where the unit of sale is a single GitHub issue.
 
 A company or an open source maintainer attaches a fixed price to an issue. An AI agent
-reads the issue, the repository and the publisher's budget, then proposes a price band
-with a written justification. A contributor claims the issue and opens a pull request. An
-agent reviews the submission against the acceptance criteria and the project's own checks.
-Payment settles in USDC on Arc once the work is accepted.
+reads the issue and the repository, then suggests an effort estimate, a range and a
+written justification. The suggestion is advice: the publisher names the price, and the
+only thing that refuses one is the $5 to $100,000 bound. A contributor claims the issue
+and opens a pull request. An agent reviews the submission against the acceptance criteria
+and the project's own checks. Payment settles in USDC on Arc once the work is accepted.
 
 ## The problem
 
@@ -24,16 +25,16 @@ for the transaction to become routine.
 ## How it works
 
 An enterprise or a maintainer picks an issue and attaches money to it. The pricing agent
-reads the issue, the surrounding code and the buyer's financial context, then proposes a
-price band with its reasoning. The publisher names a price anywhere in that band, and
-it becomes the escrow ceiling, so the band is something to choose from rather than a
-figure to accept. The funds are committed to an escrow contract on Arc. The first contributor to claim the issue holds it
+reads the issue and the surrounding code, then suggests an effort estimate, a range and
+its reasoning, as advice the publisher is free to ignore. The publisher types the price,
+and it is theirs to move while the issue is unfunded and unclaimed. The funds are
+committed to an escrow contract on Arc. The first contributor to claim the issue holds it
 exclusively, opens a pull request, and gets an automated review against the acceptance
 criteria and the repository's own checks. A human on the publisher's side makes the final
 acceptance call, and the contract releases payment.
 
-Two decisions stay with a human: approving the price, and accepting the work. Scoping,
-pricing, triage and first-pass review are agent work.
+Two decisions stay with a human: naming the price, and accepting the work. Scoping,
+pricing and first-pass review are agent work.
 
 Nothing in the flow involves bidding. One price is set before publication and it is taken
 or left, which lets the publisher answer the budget question before committing money and
@@ -155,17 +156,19 @@ MISTHOS_GITHUB_WEBHOOK_SECRET=... \
 mise run dev:api
 ```
 
-Publishing an issue with its number then reads it from GitHub and prices it from the
-issue and the repository. A pull request from the claimant that says `Fixes #<n>`
+Publishing an issue with its number then reads it from GitHub and posts the engine's
+suggestion. The publisher names the price with `/misthos price 250`; nothing can be
+funded until they do. A pull request from the claimant that says `Fixes #<n>`
 puts the issue in review, and merging it releases the payment.
 
 Once the publisher who installed the App has signed in and linked that GitHub login,
 the repository runs the loop from GitHub alone:
 
-1. Label an issue `misthos` to have it priced.
-2. Comment `/misthos approve` to fund it.
-3. A contributor comments `/misthos claim`, then opens the pull request.
-4. The sweeper reviews it, and the merge pays.
+1. Label an issue `misthos` to have it listed, with the engine's suggestion and no price.
+2. Comment `/misthos price 250` to name the price.
+3. Comment `/misthos approve` to fund it.
+4. A contributor comments `/misthos claim`, then opens the pull request.
+5. The sweeper reviews it, and the merge pays.
 
 [docs/DEPLOY.md](docs/DEPLOY.md#4-a-real-repository-end-to-end) walks through it
 against a real repository.
@@ -180,8 +183,9 @@ submits only a pull request it opened. The loop then runs through explicit actio
 
 | Who | Action | Endpoint |
 | --- | --- | --- |
-| Publisher | Publish an issue and get a price | `POST /issues` |
-| Publisher | Approve the acceptance criteria, then the price, which commits the funds | `POST /issues/{id}/criteria`, then `/fund` |
+| Publisher | Publish an issue and name its price | `POST /issues` |
+| Publisher | Name a new price, while the issue is unfunded and unclaimed | `PATCH /issues/{id}/price` |
+| Publisher | Approve the acceptance criteria, then the price they named, which commits the funds | `POST /issues/{id}/criteria`, then `/fund` |
 | Contributor | Claim the issue, then submit the pull request | `POST /issues/{id}/claim`, then `/submit` |
 | Either | Have the review agent judge it now rather than on the sweeper's next pass | `POST /issues/{id}/review` |
 | Publisher | Merge on GitHub, which releases the payment | The webhook |
@@ -203,11 +207,12 @@ be both sides at once.
 
 ### Pricing from history and from the publisher's books
 
-A price moves toward what similar work settled at on the platform, and its confidence
-is only as high as that history allows. A publisher's own books can cap it too: the
-operator connects Firefly III, or a beancount ledger with a Fava budget, in
-`MISTHOS_FINANCE_CONNECTIONS` (see `backend/.env.example`), and the lower of the
-declared budget and what the books say remains caps every price. To check the weights
+The engine's suggestion moves toward what similar work settled at on the platform, and its
+confidence is only as high as that history allows. It is advice: the publisher names the
+price, and the only thing that refuses one is the $5 to $100,000 bound. A publisher's own
+books are still read for display rather than to cap a price: the operator connects Firefly
+III, or a beancount ledger with a Fava budget, in `MISTHOS_FINANCE_CONNECTIONS` (see
+`backend/.env.example`), and the publisher sees what is left. To check the weights
 against issues whose worth is known:
 
 ```bash
@@ -215,9 +220,9 @@ mise run pricing:calibrate                       # the corpus of real, scored is
 ```
 
 `--settled` replays the platform's own settlements instead. It is not a check against
-known worth: the amount a settled issue paid is the price the engine recommended, so
-the engine agrees with it by construction. It measures self-consistency (how far
-today's engine has moved from the one that priced those issues), and it fits nothing.
+known worth: a settled amount is what a publisher paid rather than an independent
+valuation, so it measures self-consistency (how far today's engine has moved from the one
+that priced those issues), and it fits nothing.
 
 ```bash
 cd backend && uv run python -m misthos.services.calibration --settled

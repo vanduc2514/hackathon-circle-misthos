@@ -58,7 +58,10 @@ class TestThePlans:
         rows = {p["id"]: p for p in TestClient(app).get(f"{API}/plans").json()}
         assert rows["team"]["monthly_usdc"] == "249.00" and rows["team"]["self_serve"]
         assert rows["enterprise"]["price_from"] and not rows["enterprise"]["self_serve"]
-        assert rows["open"]["minimum_fix_usdc"] == "55.00"
+        # One floor and one fee on every plan: the tier buys features, not a price
+        # for the work (#142).
+        assert {p["minimum_fix_usdc"] for p in rows.values()} == {"5.00"}
+        assert {p["take_rate_percent"] for p in rows.values()} == {10.0}
         assert "Single sign-on" in rows["enterprise"]["features"]
 
     def test_open_does_not_include_the_organisation_tools(self, publisher) -> None:  # type: ignore[no-untyped-def]

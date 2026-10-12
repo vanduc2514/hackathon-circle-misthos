@@ -8,6 +8,7 @@ import {
   sameAsStored,
   tooLong,
 } from '../lib/criteria'
+import { MINIMUM_PRICE, contributorShare, parseAmount, platformFee } from '../lib/fee'
 import { fundFromWallet, type Wallet } from '../lib/fund'
 
 function browserWallet(): Wallet | null {
@@ -17,7 +18,8 @@ function browserWallet(): Wallet | null {
 /** Every explicit action an issue page can take, as the API names them. */
 export type Act =
   | { kind: 'criteria'; criteria: string[] }
-  | { kind: 'fund'; amount?: string }
+  | { kind: 'price'; amount: string }
+  | { kind: 'fund' }
   | { kind: 'claim' }
   | { kind: 'submit'; prNumber: number }
   | { kind: 'review' }
@@ -38,19 +40,21 @@ export async function perform(issueId: string, act: Act): Promise<IssueOut> {
           body: { criteria: act.criteria },
         }),
       )
+    case 'price':
+      // The publisher's own number, movable until the money is committed (#142).
+      return unwrap(
+        await api.PATCH('/api/v1/issues/{issue_id}/price', {
+          ...path,
+          body: { amount: act.amount },
+        }),
+      )
     case 'fund':
       // In the simulation the first approval books the funding. On Arc it records the
-      // ceiling and waits for the publisher's own wallet to commit (see lib/fund).
-      // The amount is the publisher's own position in the band, or absent to take the
-      // engine's recommendation.
+      // ceiling and waits for the publisher's own wallet to commit (see lib/fund). The
+      // amount is the price the publisher set when they published the issue, so there is
+      // none to pass: a second place to name it would be a second thing to audit.
       return fundFromWallet(
-        async () =>
-          unwrap(
-            await api.POST(
-              '/api/v1/issues/{issue_id}/fund',
-              act.amount ? { ...path, body: { amount: act.amount } } : path,
-            ),
-          ),
+        async () => unwrap(await api.POST('/api/v1/issues/{issue_id}/fund', path)),
         async () => unwrap(await api.GET('/api/v1/issues/{issue_id}/commitment', path)),
         browserWallet(),
       )
@@ -150,7 +154,7 @@ export default function IssueActions({
             nothing but trying.
           </p>
           <button className="btn primary" disabled={busy} onClick={() => run({ kind: 'claim' })}>
-            Claim for ${money(issue.escrow?.amount ?? issue.proposal?.recommended)}
+            Claim for ${money(issue.escrow?.amount ?? issue.price_usdc)}
           </button>
         </>
       ) : (
@@ -289,16 +293,11 @@ function SignInTo({
 
 function ApproveAndFund({ issue, simulated, busy, run }: Step & { simulated: boolean }) {
   const [draft, setDraft] = useState(issue.acceptance_criteria.join('\n'))
-  // The price, pre-filled with the engine's recommendation and changeable inside the
-  // band it disclosed. The band is deliberately wide so the buyer picks a position in
-  // it rather than arguing over one number (docs/misthos/06-pricing-engine.md) -- and
-  // the server checks the choice, because a price is money.
-  const [price, setPrice] = useState(String(issue.proposal?.recommended?.usdc ?? ''))
-  const low = Number(issue.proposal?.band_low?.usdc ?? 0)
-  const high = Number(issue.proposal?.band_high?.usdc ?? 0)
-  const named = Number(price.replace(/,/g, ''))
-  const chosen = Number.isFinite(named) && price.trim() !== '' ? named : NaN
-  const inBand = !Number.isNaN(chosen) && chosen >= low && chosen <= high
+  // The price is the publisher's, named when they published the issue. This step approves
+  // what they set rather than picking a number: the engine's reading of the issue sits
+  // beside it as advice, and nothing it says can refuse a price (#142).
+  const price = Number(issue.price_usdc ?? 0)
+  const priced = issue.price_usdc != null
   const criteria = criteriaLines(draft)
   const approved = Boolean(issue.criteria_approved_at)
   // The server keeps the first MAX_CRITERION characters of each criterion, so the
@@ -343,40 +342,72 @@ function ApproveAndFund({ issue, simulated, busy, run }: Step & { simulated: boo
         </button>
       </div>
       <p className="dim action-hint" style={{ marginTop: 6 }}>
-        2. The price. The engine put this issue in a band of ${money(issue.proposal?.band_low)}{' '}
-        to ${money(issue.proposal?.band_high)}, and recommends the middle at $
-        {money(issue.proposal?.recommended)}. Name any price in the band: approving it
-        commits that to the escrow contract, which only a merge, the grace period or the
-        deadline can move.
+        2. The price. ${money(issue.price_usdc)} is what you said this work is worth, and
+        approving it commits that to the escrow contract, which only a merge, the grace period
+        or the deadline can move. The contributor receives $
+        {contributorShare(price).toFixed(2)} of it; Misthos keeps $
+        {platformFee(price).toFixed(2)}.
         {!simulated &&
           ' Your wallet sends the commitment itself: it asks you to sign two transactions, ' +
             'letting the escrow take the amount, then committing it. The platform never holds it.'}
       </p>
-      <label className="field">
-        <span>Your price, in USDC</span>
-        <input
-          className="input"
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          inputMode="decimal"
-          pattern="[0-9]*[.,]?[0-9]*"
-          placeholder={String(issue.proposal?.recommended?.usdc ?? '')}
-        />
-      </label>
-      {price.trim() !== '' && !inBand && (
-        <p className="dim action-hint" style={{ marginTop: 6 }}>
-          {Number.isNaN(chosen)
-            ? 'That is not an amount.'
-            : `Outside the band. Any price from $${money(issue.proposal?.band_low)} to $${money(issue.proposal?.band_high)} works.`}
-        </p>
-      )}
+      <ChangePrice issue={issue} busy={busy} run={run} />
+      <div style={{ marginTop: 12 }}>
+        <div className="price-total">
+          <span className="dim">The contributor receives</span>
+          <span className="mono-num">${contributorShare(price).toFixed(2)}</span>
+        </div>
+        <div className="price-total">
+          <span className="dim">Misthos keeps (10%)</span>
+          <span className="mono-num">${platformFee(price).toFixed(2)}</span>
+        </div>
+      </div>
       <div className="btn-row">
         <button
           className="btn primary"
-          disabled={busy || !approved || !unchanged || !inBand}
-          onClick={() => run({ kind: 'fund', amount: price.trim() })}
+          disabled={busy || !approved || !unchanged || !priced}
+          onClick={() => run({ kind: 'fund' })}
         >
-          Approve the price and commit ${money(inBand ? chosen : issue.proposal?.recommended)}
+          {priced ? `Approve and commit $${money(issue.price_usdc)}` : 'No price set yet'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** The publisher's price is theirs to move until the money is committed (#142). */
+function ChangePrice({ issue, busy, run }: Step) {
+  const [draft, setDraft] = useState('')
+  const named = parseAmount(draft)
+  const usable = !Number.isNaN(named) && named >= MINIMUM_PRICE
+
+  return (
+    <div className="field-row" style={{ marginTop: 12 }}>
+      <label className="field grow">
+        <span>Change the price, in USDC</span>
+        <input
+          className="input"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          inputMode="decimal"
+          pattern="[0-9]*[.,]?[0-9]*"
+          placeholder={issue.price_usdc ?? ''}
+        />
+        <span className={usable || draft.trim() === '' ? 'field-note' : 'field-note bad'}>
+          {draft.trim() === ''
+            ? `Any amount from $${MINIMUM_PRICE}. Nothing is committed until you approve it below.`
+            : usable
+              ? `You would pay $${named.toFixed(2)}: $${contributorShare(named).toFixed(2)} to the contributor, $${platformFee(named).toFixed(2)} to Misthos.`
+              : `Any amount from $${MINIMUM_PRICE}.`}
+        </span>
+      </label>
+      <div className="btn-row">
+        <button
+          className="btn"
+          disabled={busy || !usable}
+          onClick={() => run({ kind: 'price', amount: draft.trim() })}
+        >
+          Set the price
         </button>
       </div>
     </div>

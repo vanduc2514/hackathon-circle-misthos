@@ -126,9 +126,9 @@ Each of these is cheap, and each one can kill an assumption that the whole busin
 | 1 | Will a company pay for a fix delivered by a stranger? | Concierge. Find the issue, get the price agreed, get the fix written, handle the payment manually. | One signed commitment of real money | Founder time |
 | 2 | Will a maintainer accept a funded issue they never review, only merge? | Five conversations with maintainers of target repositories | Three of five say yes | Two days |
 | 3 | Is the review agent good enough to be the only review? | Run it over ten historical pull requests where a human already decided | 85 percent agreement with the human verdict, and findings a maintainer calls useful | Three days |
-| 4 | Is the proposed price plausible to a buyer? | Show ten buyers the band and ask for their own guess before revealing ours | Within 30 percent on seven of ten | Two days |
+| 4 | Does the advice beside the price change what a buyer would have paid? | Show ten buyers the comparables and the effort estimate, then ask what they would pay. Compare against the same buyers' guess with no advice. | The advice moves the median price, in either direction, on at least four of ten | Two days |
 | 5 | Will a contributor claim a funded issue? | Publish one real funded issue and wait 72 hours | One claim, one pull request | One day |
-| 6 | Is finance context actually useful, or is it a feature in search of a problem? | Read Firefly III budgets for two partners and see whether the band changes in a way they agree with | The band changes, and the buyer agrees with the change | Three days |
+| 6 | Is finance context useful to a buyer for anything? | Read Firefly III budgets for two partners and compare them against what they actually fund | The budget matches their spending, or tells them something they did not know | Three days |
 
 Experiment 1 matters more than the other five combined. It is also the one most likely to be skipped, because it requires talking to a company and the others only require a keyboard.
 

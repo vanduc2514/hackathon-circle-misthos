@@ -13,6 +13,7 @@ import {
 import { Bar, ChecksChip, Panel, StateBadge, Stepper } from '../components/ui'
 import IssueActions, { roleOn } from '../components/IssueActions'
 import { BridgeToArc } from '../components/BridgeToArc'
+import { contributorShare, platformFee } from '../lib/fee'
 import { useHealth, useMe } from '../lib/session'
 
 export default function IssueDetail() {
@@ -48,15 +49,9 @@ export default function IssueDetail() {
 
   const p = issue.proposal
   const signals = p ? Object.entries(p.signals) : []
-
-  // Place the recommended price inside the band for the visual.
-  const low = Number(p?.band_low?.usdc ?? 0)
-  const high = Number(p?.band_high?.usdc ?? 0)
-  const rec = Number(p?.recommended?.usdc ?? 0)
-  const span = Math.max(high, 1)
-  const rangeLeft = (low / span) * 100
-  const rangeWidth = ((high - low) / span) * 100
-  const markerLeft = Math.min(99.5, (rec / span) * 100)
+  // The publisher's price is the one that binds. The engine's reading of the issue is
+  // advice beside it, and nothing it says bounds the number (#142).
+  const price = Number(issue.price_usdc ?? 0)
 
   return (
     <>
@@ -190,33 +185,53 @@ export default function IssueDetail() {
 
         {/* ------------------------------------------------------ right column */}
         <div className="col">
-          {p ? (
-            <Panel title="Proposed price">
-              <div className="price-value">${money(p.recommended)}</div>
-              <div className="band">
-                <div className="band-track">
-                  <span
-                    className="band-range"
-                    style={{ left: `${rangeLeft}%`, width: `${rangeWidth}%` }}
-                  />
-                  <span className="band-marker" style={{ left: `${markerLeft}%` }} />
+          <Panel title="Price">
+            {issue.price_usdc ? (
+              <>
+                <div className="price-value">${money(issue.price_usdc)}</div>
+                <div style={{ marginTop: 16 }}>
+                  <div className="price-total">
+                    <span className="dim">The contributor receives</span>
+                    <span className="mono-num">${contributorShare(price).toFixed(2)}</span>
+                  </div>
+                  <div className="price-total">
+                    <span className="dim">Misthos keeps (10%)</span>
+                    <span className="mono-num">${platformFee(price).toFixed(2)}</span>
+                  </div>
+                  {issue.escrow && (
+                    <div className="price-total">
+                      <span className="dim">Committed</span>
+                      <span className="mono-num">${money(issue.escrow.amount)}</span>
+                    </div>
+                  )}
                 </div>
-                <div className="band-labels">
-                  <span>${money(p.band_low)}</span>
-                  <span>band</span>
-                  <span>${money(p.band_high)}</span>
-                </div>
+                <p className="stat-hint" style={{ marginTop: 12 }}>
+                  Set by the publisher, who can move it until the money is committed. Nothing
+                  re-prices it.
+                </p>
+              </>
+            ) : (
+              <div className="empty">
+                No price yet. The publisher names what the work is worth before any money moves.
               </div>
+            )}
+          </Panel>
 
-              <div style={{ marginTop: 16 }}>
-                <div className="price-total">
-                  <span className="dim">Fix price</span>
-                  <span className="mono-num">${money(p.recommended)}</span>
-                </div>
-                <div className="price-total">
-                  <span className="dim">Effort estimate</span>
-                  <span className="mono-num">{p.estimated_hours}h</span>
-                </div>
+          {p && (
+            <Panel title="The engine's suggestion">
+              <div className="price-total">
+                <span className="dim">Suggested</span>
+                <span className="mono-num">${money(p.recommended)}</span>
+              </div>
+              <div className="price-total">
+                <span className="dim">Range</span>
+                <span className="mono-num">
+                  ${money(p.band_low)} – ${money(p.band_high)}
+                </span>
+              </div>
+              <div className="price-total">
+                <span className="dim">Effort estimate</span>
+                <span className="mono-num">{p.estimated_hours}h</span>
               </div>
 
               <div className="justify">{p.justification}</div>
@@ -241,10 +256,10 @@ export default function IssueDetail() {
                   ))}
                 </ul>
               )}
-            </Panel>
-          ) : (
-            <Panel title="Proposed price">
-              <div className="empty">No proposal yet.</div>
+              <p className="stat-hint" style={{ marginTop: 12 }}>
+                Advice, not a rule. The price above is the publisher's, and no suggestion here
+                can refuse it.
+              </p>
             </Panel>
           )}
 

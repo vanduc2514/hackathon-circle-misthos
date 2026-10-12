@@ -1,4 +1,4 @@
-"""Calibrate the pricing engine against what work was actually worth (#41).
+"""Calibrate the pricing engine's *suggestion* against what work was actually worth (#41).
 
     python -m misthos.services.calibration                 # the historical corpus
     python -m misthos.services.calibration --settled       # the platform's settlements
@@ -6,20 +6,25 @@
 
 The engine's weights and rate are a starting guess. This replays it over issues whose
 worth is known, from what a buyer paid or valued the work at, and reports how often
-that worth falls inside the band and how far the recommendation was from it. It then
-fits the rate, and with at least twenty issues the weights too, and prints what to
-change. The change is a reviewed commit to `domain/pricing.py`, with the report
+that worth falls inside the suggested range and how far the recommendation was from it.
+It then fits the rate, and with at least twenty issues the weights too, and prints what
+to change. The change is a reviewed commit to `domain/pricing.py`, with the report
 beside it, never something the engine does to itself.
 
 The corpus is `calibration-corpus.json` beside this file: real issues only, each with
 where its worth came from. An empty corpus is reported as empty, not filled in.
 
-`--settled` is not a calibration. The amount a settled issue paid is the price the
-engine recommended and the publisher approved, so the engine agrees with it by
-construction: the report measures self-consistency, which shows only how far today's
-engine has moved from the one that priced those issues. Nothing is fitted from a
-settlement, because fitting the engine to its own output would fit the budget
-ceiling and the relist uplift, not what the work was worth.
+**Nothing here bounds what may be published.** Since #142 the publisher names the price
+and the engine's output is advice, so a badly calibrated suggestion costs the publisher a
+second's thought and not a transaction. Calibration is still worth doing, because advice
+that is wrong by a factor of sixteen is advice nobody reads twice.
+
+`--settled` is not a calibration, and since #142 it is more useful than it was. A settled
+amount is now what a buyer decided the work was worth, which is the independent signal
+this harness wants, and no longer the engine's own recommendation echoed back. It is still
+excluded from fitting by default, because a platform's own early prices are its own
+choices and not yet a market. Read the report as evidence about buyers, and fit to the
+independently scored corpus.
 """
 
 from __future__ import annotations
@@ -84,13 +89,14 @@ class Report:
 
 
 SELF_CONSISTENCY = [
-    "These are settled prices, which are the engine's own output: the amount paid is "
-    "the price it recommended and the publisher approved. Agreement with them is "
-    "self-consistency, not calibration; it shows only how far today's engine has moved "
-    "from the one that priced them.",
-    "Nothing is fitted from settlements: fitted to its own output, the engine would "
-    "learn the budget ceiling and the relist uplift, not what the work was worth. "
-    "Calibrate against the corpus of independently scored issues.",
+    "These are settled prices: what a buyer decided the work was worth. Since #142 the "
+    "publisher names the price, so a settlement is an independent judgement rather than "
+    "the engine's own recommendation echoed back. Read the agreement as evidence about "
+    "buyers.",
+    "It is still excluded from fitting. A platform's own first prices are its own "
+    "choices, made on a thin market, and fitting the engine to them would fit one "
+    "publisher's budget to another's rather than what the work was worth. Calibrate "
+    "against the corpus of independently scored issues.",
 ]
 
 

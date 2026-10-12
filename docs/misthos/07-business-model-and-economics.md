@@ -7,9 +7,9 @@
 | Problem | Companies depend on open-source code they cannot maintain and cannot pay to fix. Maintainers have a backlog and no budget. |
 | Segments | Companies of 50 to 2,000 people shipping software built on open source, and the maintainers of the projects they depend on |
 | Unique value proposition | Put a price on a GitHub issue and get it fixed, with the payment settled the moment the work is accepted |
-| Solution | Agent-priced issues, escrowed funds, automated review, USDC settlement on Arc |
+| Solution | Publisher-named prices, escrowed funds, automated review, USDC settlement on Arc |
 | Channels | GitHub itself, maintainer communities, open-source programme leads, security and compliance budgets |
-| Revenue | Take rate on matched work at 8 to 12 percent, plus organisation subscriptions at $249 and from $2,000 per month |
+| Revenue | A flat 10 percent take rate on matched work, plus organisation subscriptions at $249 and from $2,000 per month |
 | Cost structure | Agent inference, engineering salaries, compliance and identity verification, community and content |
 | Unfair advantage | The settled-price dataset, which only exists once issues clear on the platform |
 | Key metrics | Matched volume, issues settled, repeat publisher rate, publisher overturn rate |
@@ -18,7 +18,7 @@
 
 ### Line one: take rate on matched work
 
-The obvious one. A percentage of every settled issue, split between publisher and contributor, in the range of 8 to 12 percent depending on the tier. It scales with volume and costs nothing to sell once the marketplace works.
+The obvious one. A flat 10 percent of every settled issue, split between publisher and contributor, and the same on every plan. It scales with volume and costs nothing to sell once the marketplace works.
 
 The problem with relying on it is in the market research. Algora, the best-funded attempt at open-source bounties, has moved its homepage to recruiting. Whatever the take rate on bounties is, it did not carry a company. Treating this as the primary revenue line repeats their experience.
 
@@ -41,9 +41,9 @@ We are not building it, because a data product from a market you do not yet have
 ```mermaid
 pie showData
     title Illustrative revenue mix at year three
-    "Take rate on matched work" : 74
-    "Team subscriptions" : 11
-    "Enterprise subscriptions" : 15
+    "Take rate on matched work" : 72
+    "Team subscriptions" : 12
+    "Enterprise subscriptions" : 16
 ```
 
 ## Illustrative three-year model
@@ -56,12 +56,12 @@ Everything in this table is a projection built from the assumptions below it, no
 | Issues settled | 400 | 3,000 | 18,000 |
 | Average issue price | $700 | $900 | $1,200 |
 | Matched volume, GMV | $280,000 | $2,700,000 | $21,600,000 |
-| Blended take rate | 12% | 11.7% | 11.1% |
-| Take-rate revenue | $33,600 | $315,000 | $2,400,000 |
+| Take rate | 10% | 10% | 10% |
+| Take-rate revenue | $28,000 | $270,000 | $2,160,000 |
 | Team subscriptions | 8 | 30 | 120 |
 | Enterprise subscriptions | 0 | 4 | 20 |
 | Subscription revenue | $23,900 | $185,600 | $838,560 |
-| Total revenue | $57,500 | $500,600 | $3,238,560 |
+| Total revenue | $51,900 | $455,600 | $2,998,560 |
 | Headcount | 3 | 6 | 12 |
 | Net | Negative | Roughly breakeven | Positive |
 
@@ -69,7 +69,7 @@ Everything in this table is a projection built from the assumptions below it, no
 
 1. Average issue price rises from $700 to $1,200, which means buyers move from small fixes toward compliance-driven remediation. That is the whole bet.
 2. Twenty enterprises buy the top tier, which is a small number of the thousands of companies with open-source obligations, and a hard one because they buy on a quarterly cycle.
-3. Eleven percent blended take rate holds against competitors pricing at zero.
+3. The flat 10 percent take rate holds against competitors pricing at zero.
 4. Supply keeps up. 18,000 settled issues in a year means roughly 70 a week, which needs several hundred active contributors.
 
 Any one of these failing changes the shape of the business rather than the size of the number.
@@ -78,7 +78,7 @@ Any one of these failing changes the shape of the business rather than the size 
 
 | Cost | Year 1 driver | Notes |
 | --- | --- | --- |
-| Agent inference | About $6 per issue reviewed, at published agent minute pricing | The largest variable cost. Falls with model improvements and rises with review depth. |
+| Agent inference | $6.31 per issue reviewed, at published agent minute pricing, with settlement and amortised screening | The largest variable cost, and the figure the platform's own break-even is built from. Falls with model improvements and rises with review depth. |
 | Settlement | About $0.01 per transfer on Arc | Effectively free. This is the reason the product exists on this rail. |
 | Engineering | 1 to 2 people | Review quality is the product. This is where the money goes. |
 | Identity and sanctions screening | Per verified contributor | Deferred to payout, so the cost lands only on contributors who actually earn |
@@ -91,18 +91,14 @@ The structural choice that keeps the cost base small is not holding customer fun
 
 ### Per issue settled
 
-| | $55 fix (the floor) | $500 fix | $5,000 fix |
+| | $63 fix (break-even) | $500 fix | $5,000 fix |
 | --- | --- | --- | --- |
-| Platform revenue at 12% | $6.60 | $60.00 | $600.00 |
-| Agent review cost | ($6.00) | ($6.00) | ($6.00) |
-| Settlement | ($0.01) | ($0.01) | ($0.01) |
-| Screening, amortised | ($0.30) | ($0.30) | ($0.30) |
-| Contribution | $0.29 | $53.69 | $593.69 |
-| Margin | 4% | 89% | 99% |
+| Platform revenue at 10% | $6.30 | $50.00 | $500.00 |
+| Cost to review, all in | ($6.31) | ($6.31) | ($6.31) |
+| Contribution | ($0.01) | $43.69 | $493.69 |
+| Margin | -0.2% | 87% | 99% |
 
-The take rate is charged on the fix price alone, which is the whole of what the publisher pays. The floor is not a comfortable number: it is where review stops being a loss. Everything above $500 is unaffected.
-
-The small end of the range is the constraint. Below about $50 an issue stops paying for itself, which is why the platform needs a published minimum price rather than discovering one customer at a time.
+The take rate is charged on the price alone, which is the whole of what the publisher pays. A $500 commitment therefore pays the contributor $450 and the platform $50. At 10 percent the fee covers the review cost from about $63 an issue, and the $6.31 figure is agent inference, settlement and amortised screening together. Below that an issue that settles loses money, and the platform accepts the price anyway: the $5 minimum is there to catch a typo rather than to protect the margin. An issue that never settles is refunded in full, fee included, and is not re-listed at a higher price. Everything above $500 is unaffected.
 
 ### Per publisher
 
@@ -112,14 +108,14 @@ The small end of the range is the constraint. Below about $50 an issue stops pay
 | Issues per year | 8 | 40 |
 | Average issue price | $650 | $1,800 |
 | Matched volume | $5,200 | $72,000 |
-| Take-rate contribution | $520 | $5,760 |
-| Gross revenue per year | $3,508 | $29,760 |
+| Take-rate contribution | $520 | $7,200 |
+| Gross revenue per year | $3,508 | $31,200 |
 | Assumed retention | 80% annually | 90% annually |
 | Implied lifetime value | About $7,000 | About $100,000 |
 
 ### Acquisition cost
 
-Founder-led sales into maintainer communities and open-source programme leads, plus content. There is no paid channel that makes sense at a $3,500 annual contract value, and there is unlikely to be one at $29,760 either, because the buyer population is small enough to reach directly.
+Founder-led sales into maintainer communities and open-source programme leads, plus content. There is no paid channel that makes sense at a $3,500 annual contract value, and there is unlikely to be one at $31,200 either, because the buyer population is small enough to reach directly.
 
 Working estimate is $500 to $1,500 of mostly time cost per paying publisher in year one, which puts the payback period inside a year for Team and inside a quarter for Enterprise. Treat that as optimistic, because the whole cost sits on the founding team's calendar and stops being real the moment they stop working weekends.
 

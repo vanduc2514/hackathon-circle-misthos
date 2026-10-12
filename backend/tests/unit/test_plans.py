@@ -16,13 +16,15 @@ TX = "0x" + "ab" * 32
 
 
 class TestTheCatalogue:
-    def test_prices_take_rates_and_floors_match_the_published_tiers(self) -> None:
-        open_, team, enterprise = (plans.PLANS[k] for k in ("open", "team", "enterprise"))
-        assert (open_.monthly, team.monthly) == (Usdc(0), Usdc.from_decimal("249"))
-        assert enterprise.monthly == Usdc.from_decimal("2000") and not enterprise.self_serve
-        assert [float(p.take_rate) for p in (open_, team, enterprise)] == [0.12, 0.10, 0.08]
-        floors = [p.minimum_fix for p in (open_, team, enterprise)]
-        assert floors == [Usdc.from_decimal(v) for v in ("55", "65", "80")]
+    def test_every_plan_takes_the_same_fee_and_floor(self) -> None:
+        """The tier buys features, not a better price for the same work: the fee and
+        the floor are the same on every plan (#142)."""
+        catalog = [plans.PLANS[k] for k in ("open", "team", "enterprise")]
+        assert (catalog[0].monthly, catalog[1].monthly) == (Usdc(0), Usdc.from_decimal("249"))
+        assert catalog[2].monthly == Usdc.from_decimal("2000")
+        assert not catalog[2].self_serve
+        assert [float(p.take_rate) for p in catalog] == [0.1, 0.1, 0.1]
+        assert [p.minimum_fix for p in catalog] == [Usdc.from_decimal("5")] * 3
 
     def test_each_tier_adds_to_the_one_below(self) -> None:
         assert plans.PLANS["open"].features < plans.PLANS["team"].features

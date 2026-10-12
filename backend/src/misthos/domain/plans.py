@@ -22,7 +22,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from misthos.domain.money import Usdc
-from misthos.domain.pricing import TAKE_RATE_BY_TIER, min_fix_price
+from misthos.domain.pricing import MINIMUM_PRICE, PLATFORM_FEE_BPS
 
 PERIOD = timedelta(days=30)
 GRACE = timedelta(days=7)
@@ -61,11 +61,19 @@ class Plan:
 
     @property
     def take_rate(self) -> Decimal:
-        return TAKE_RATE_BY_TIER[self.id]
+        """The platform's share of a settled issue.
+
+        The same on every plan. The fee is what the platform charges for pricing and
+        verifying a piece of work, which does not get cheaper or dearer because the
+        publisher bought a subscription; a rate that moved with the plan is a second
+        price for the same service (#142).
+        """
+        return Decimal(PLATFORM_FEE_BPS) / Decimal(10_000)
 
     @property
     def minimum_fix(self) -> Usdc:
-        return min_fix_price(self.id)
+        """The lowest publishable price, the same on every plan."""
+        return MINIMUM_PRICE
 
 
 PLANS: dict[str, Plan] = {

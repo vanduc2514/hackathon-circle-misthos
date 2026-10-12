@@ -174,7 +174,7 @@ This process exists for exactly two reasons and both are Node-only dependencies.
 | `backend/src/misthos/store.py` | The lifecycle's single writer, and the seeded simulation | Every move is checked against the transition table and saved through a repository |
 | `backend/src/misthos/services/metrics.py` | Every dashboard number | Computed from money events and lifecycle records, so each one is reproducible from the database alone. `/loop` is the public view of the same numbers |
 | `backend/src/misthos/repositories/` | Persistence behind one protocol | Memory by default and as the test double; Postgres, or a SQLite file, when `MISTHOS_DATABASE_URL` is set. Alembic migrations in `migrations/` |
-| Pricing engine | Produces the price band and its justification | Scores six signals, then applies market context and the publisher's affordability ceiling |
+| Pricing engine | Produces the suggested band, recommendation and justification | Scores six signals, then anchors them to settled comparables. Advice only: the publisher names the price, and nothing here refuses or caps it |
 | Review service | `backend/src/misthos/services/review/`: judges each criterion against the diff, and the verdict follows by fixed rules (`domain/review.py`) | The verdict is the decision. Only a merge or the grace period moves money |
 | Settlement orchestrator | Commits, releases, refunds, reconciles | The only component that can move money, and it moves it by calling a contract |
 | Finance adapter | Reads budget and cash context, read-only | Pluggable. Firefly III first, then beancount, Odoo, ERPNext, Invoice Ninja |
@@ -193,11 +193,12 @@ The lifecycle is the single writer of issue state. Letting the pricing engine or
 | GitHub event | Lifecycle action |
 | --- | --- |
 | `installation`, `installation_repositories` | The repositories connected to the publisher whose linked GitHub login installed the App, or disconnected |
-| `issues` opened or labelled `misthos`, in a connected repository | Priced: the price, the drafted criteria and the commands are posted on the issue |
-| `issue_comment`: `/misthos approve` from the publisher's login | Criteria and price approved, and the funds committed |
+| `issues` opened or labelled `misthos`, in a connected repository | Listed with no price: the suggested band, the drafted criteria and the commands are posted, and the reply asks the publisher to name a price |
+| `issue_comment`: `/misthos price 250` from the publisher | The price the publisher names, while the issue is unfunded and unclaimed (#142) |
+| `issue_comment`: `/misthos approve` from the publisher's login | Criteria and the price already named approved, and the funds committed. Refused until a price exists |
 | `issue_comment`: `/misthos criteria` and a list, from the publisher | Those criteria approved instead of the drafted ones, refused with reasons if a reviewer could not judge them |
 | `issue_comment`: `/misthos claim` from a linked contributor | `FUNDED` to `CLAIMED` |
-| `issues` edited or relabelled | A new price proposal, while the issue is unfunded |
+| `issues` edited or relabelled | The engine's suggestion is refreshed, while the issue is unfunded. The price the publisher set does not move |
 | `pull_request` opened by the claimant, closing the issue | `CLAIMED` to `IN_REVIEW` |
 | `pull_request` synchronize during rework | `REWORK` to `IN_REVIEW` |
 | `check_run` completed | Whether the project's own checks passed on the submitted commit. Until they report it is unknown, not failing |
@@ -213,7 +214,7 @@ What the platform posts back is queued during an action and sent once the action
 
 | Component | Responsibility | Notes |
 | --- | --- | --- |
-| `backend/src/misthos/workers/` | Anything time-based | Claim expiry, refund on deadline with a higher-priced re-list, the silent-publisher release, and reconciliation of the money ledger against the chain on every pass |
+| `backend/src/misthos/workers/` | Anything time-based | Claim expiry, refund on deadline, the silent-publisher release, and reconciliation of the money ledger against the chain on every pass. A refund is terminal: an unclaimed issue is not re-listed |
 
 Today the worker is a sweeper: on an interval it asks the pure `domain/timers.py` which open issues have a timer due and has the store apply them, under an advisory lock so two processes never refund the same commitment twice. A job table in Postgres using `SELECT … FOR UPDATE SKIP LOCKED` is enough to several hundred issues a day and adds no infrastructure. Temporal is the correct answer once the saga complexity bites, and it is an unnecessary cluster before then.
 
@@ -229,7 +230,7 @@ Three rules about persistence, all of them load-bearing.
 
 The chain is the source of truth for money. Our copy of an escrow commitment is a cache with an expiry, not a record.
 
-Price proposals are immutable. An override creates a new proposal rather than editing one, because overrides are the most valuable training signal the pricing engine will ever get.
+Price proposals are append-only. A refreshed suggestion is a new row rather than an edit, because a price a publisher named and the advice they saw beside it are the signal the pricing engine learns from.
 
 Reputation derives only from settled issues. Anything else rewards activity, and activity is cheap.
 
@@ -247,9 +248,9 @@ Reputation derives only from settled issues. Anything else rewards activity, and
 2. Release requires an acceptance attestation from a key the contributor cannot obtain.
 3. Refund happens on a deadline without requiring anyone to act.
 4. A per-issue ceiling is enforced here, so an agent with a compromised key cannot drain a budget.
-5. The platform's take rate is carved out of the release in the same call, so the
-   commission is a transfer rather than a reporting number, and a per-issue rate
-   above the published 15 percent ceiling cannot be set at all.
+5. The platform's take rate, a flat 10 percent, is carved out of the release in the
+   same call, so the commission is a transfer rather than a reporting number, and a
+   per-issue rate above the contract's 15 percent ceiling cannot be set at all.
 
 Those four are checked by the fuzz and invariant tests in
 [contracts/test/](contracts/test/): the campaign drives random sequences of commit,
@@ -417,28 +418,28 @@ flowchart LR
     I["Issue from GitHub"] --> C["Complexity signals"]
     I --> S["Semantic scoping"]
     O["Prior settled issues"] --> M["Market comparables"]
-    F["Publisher finance context<br/>read-only"] --> B["Affordability ceiling"]
-    C --> A["Band and justification"]
+    F["Publisher finance context<br/>read-only, display only,<br/>not in the price path"]
+    C --> A["Advisory band, recommendation<br/>and justification"]
     M --> A
-    B --> A
     S --> A
-    A --> R["Publisher review"]
-    R -->|"approve"| P["Committed price"]
-    R -->|"override"| A
+    A --> R["Publisher names a price"]
+    R --> B{"Inside the $5 to<br/>$100,000 bounds?"}
+    B -->|"yes"| P["Committed price"]
+    B -->|"no"| X["PriceRefused"]
     A --> D["Decision log"]
 ```
 
 How it is built today (epic #11):
 
 - **Comparables are the platform's own settled issues** (`domain/comparables.py`, #42). An issue is compared with work settled in the last year whose signals are within three quarters of a point, as a weighted root mean square, with the same repository ranked first. Each settled price is scaled by how much more or less effort this issue is. The median of those moves the formula's price a quarter of the way for one comparable, and at most half of the way however many there are. Confidence follows them and nothing else: low with none, high with three or more that agree within a factor of 1.5, medium otherwise. The proposal keeps the three closest, and the issue page shows them.
-- **The books cap the price** (`services/finance`, #43). The declared budget always applies. When the operator connects a publisher's books in `MISTHOS_FINANCE_CONNECTIONS` (Firefly III, or a beancount ledger with a Fava budget), the lower of the declared budget and what the books say remains caps every price. If the books cannot be read, that never blocks a price: the declared budget still holds. Connections are configured by the operator and never through the API, because a connection carries a credential or a server path. What remains of a budget, and the cash, are shown to the publisher alone (`/publishers/{id}/finance`). The public justification says that a price was capped and by which source, never the amount.
-- **The weights are calibrated by a harness, not by the engine itself** (`python -m misthos.services.calibration`, #41). It replays the engine over issues whose worth is known and reports how often the worth falls inside the band. It fits the rate, and the weights once there are twenty issues. The corpus holds real issues only, and it is empty until the team scores them. `--settled` runs the harness on the platform's own settlements instead, as a self-consistency check only: a settled price is the engine's own recommendation, so agreement with it says nothing about worth, and nothing is fitted from it.
+- **The books inform, they do not bind** (`services/finance`, #43). The declared budget and what a connected books say are shown to the publisher alone (`/publishers/{id}/finance`, `FinanceOut`). The reader used to supply the ceiling the engine could not exceed; since #142 it is out of the price path entirely, and publishing is never refused on budget grounds. When the operator connects a publisher's books in `MISTHOS_FINANCE_CONNECTIONS` (Firefly III, or a beancount ledger with a Fava budget), the adapter still reads them, and a connection stays configured by the operator rather than through the API, because it carries a credential or a server path.
+- **The weights are calibrated by a harness, not by the engine itself** (`python -m misthos.services.calibration`, #41). It replays the engine over issues whose worth is known and reports how often the worth falls inside the band. It fits the rate, and the weights once there are twenty issues. The corpus holds real issues only, and it is empty until the team scores them. `--settled` runs the harness on the platform's own settlements instead. Now that the publisher names the price, a settled amount is what a buyer paid rather than an independent valuation, so the report stays a self-consistency check rather than a calibration, and nothing is fitted from it. The harness tunes the advice only: no fitted value refuses or caps a price.
 
 The finance adapter is read-only by design. It answers two questions: what is left in the relevant budget, and what the cash position looks like. It never writes.
 
 Firefly III is the first adapter because the hackathon brief points at it, and it comes with limits worth recording. It is a personal finance manager with no chart of accounts, its own documentation refuses programmatic write access as unreliable, and its rules engine can delete a journal. That is why the adapter interface exists rather than a Firefly integration: the first customer running Odoo should be a new adapter, not a rewrite.
 
-The adapter falls back to a declared budget band when no finance system is connected. That fallback has to work well, because most early publishers will use it.
+The adapter falls back to a declared budget when no finance system is connected. That fallback has to work well, because most early publishers will use it, and it is a figure for the publisher to read rather than an input to any price.
 
 ## The review pipeline
 
@@ -500,7 +501,7 @@ erDiagram
 | --- | --- | --- |
 | Publisher | GitHub org or user id, wallet address, tier, budget rules | Identity is the GitHub account |
 | Issue | Repo, number, acceptance criteria, state, deadline | State owned by the lifecycle service |
-| PriceProposal | Band low, band high, recommended, signals, justification, confidence | Immutable once approved. An override is a new proposal |
+| PriceProposal | Band low, band high, recommended, signals, justification, confidence, fundable | The engine's suggestion on the issue, surfaced as `IssueOut.proposal`. `fundable` is always true: it never refuses or caps the price the publisher names |
 | EscrowCommitment | Issue id, amount, chain, tx hash, deadline | Mirrors on-chain state. The chain is the source of truth |
 | Claim | Contributor, issued at, expires at | At most one active claim per issue |
 | Submission | PR number, head sha, checks result | Immutable per sha |
@@ -510,7 +511,7 @@ erDiagram
 
 Design notes worth keeping:
 
-The `PriceProposal` is immutable and an override creates a new one. Overrides are the most valuable training signal the pricing engine will ever get, and mutating them away destroys it.
+The `PriceProposal` is append-only, and it is advice rather than a decision. The price a publisher names lives on the issue as `price_usdc` and is theirs to move while the issue is unfunded and unclaimed (`PATCH /issues/{issue_id}/price`). The gap between their price and the suggestion is the most valuable training signal the pricing engine will ever get, so it is recorded rather than edited away.
 
 The `EscrowCommitment` row is a local mirror, never the authority. Reconciliation runs against the chain, and a divergence is an alert.
 
@@ -522,7 +523,7 @@ Reputation derives only from settled issues. Anything else rewards activity rath
 | --- | --- | --- |
 | Publisher | `publishers` | Keyed on the GitHub org or user id. Wallet address stored, never a key |
 | Issue | `issues` | Carries the state column. Only the lifecycle service writes it |
-| PriceProposal | `price_proposals` | Append-only. One row per proposal, including overrides |
+| PriceProposal | `price_proposals` | Append-only. One row per suggestion, newest first |
 | EscrowCommitment | `escrow_commitments` | A cache. Refreshed from the chain, and reconciled on a schedule |
 | Claim | `claims` | Partial unique index on `(issue_id) WHERE active` enforces one active claim |
 | Submission | `submissions` | Unique on `(issue_id, head_sha)` |
@@ -553,7 +554,7 @@ An organisation sets its own spending policy, and the store enforces it at the t
 
 Every CSV the platform serves, the audit export and a contributor's statement alike, carries other people's words: issue titles, repository and organisation names, reasons. A cell a spreadsheet would run as a formula, one starting with `=`, `+`, `-`, `@`, a tab or a carriage return, is written as text with a leading apostrophe. A plain number keeps its sign (`services/spreadsheet.py`).
 
-**Plans** (`domain/plans.py`, `api/v1/plans.py`, #53) follow the tier table in 06. Open costs nothing and charges 12 percent. Team costs $249 a month and charges 10 percent, and adds budget rules, approval thresholds and spend reporting. Enterprise starts at $2,000 a month and charges 8 percent, and adds the audit export, SSO and a support commitment.
+**Plans** (`domain/plans.py`, `api/v1/plans.py`, #53) follow the tier table in 06. Open costs nothing. Team costs $249 a month, and adds budget rules, approval thresholds and spend reporting. Enterprise starts at $2,000 a month, and adds the audit export, SSO and a support commitment. The take rate and the minimum price are the same on every plan, and a plan changes neither: the platform keeps a flat 10 percent (`PLATFORM_FEE_BPS`), and $5 is the lowest price any plan may publish. A subscription buys controls, reporting and support, not a different rate.
 
 - **What a plan unlocks.** Each of those routes answers 402, naming the plan that includes it. Enforcement of a policy already set never stops, even when a plan lapses, because a limit that protects an organisation's money is not a feature to switch off for non-payment.
 - **Buying Team.** Team is bought from the web app without a conversation. The publisher chooses it and is told what to send: USDC on Arc, from its own wallet, to `MISTHOS_PLATFORM_WALLET`. It confirms the transaction, and the server reads the USDC `Transfer` log from the receipt over JSON-RPC (`services/billing/arc.py`) before switching the plan on. We never hold a key that moves a publisher's money, and one transaction pays for one period.

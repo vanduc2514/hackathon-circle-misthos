@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -37,7 +38,13 @@ REPO = "acme/widgets"
 
 
 def request(number: int | None = 5, repo: str = REPO, publisher: str = "PUB-1") -> PublishRequest:
-    return PublishRequest(repo=repo, number=number, title="Retry on 503", publisher_id=publisher)
+    return PublishRequest(
+        repo=repo,
+        number=number,
+        title="Retry on 503",
+        publisher_id=publisher,
+        price=Decimal("500"),
+    )
 
 
 def get(store: Store, issue_id: str) -> IssueRecord:
@@ -151,20 +158,18 @@ class TestOneOpenListing:
         again = every_store.publish(request(number, repo=repo))
         assert open_listings(every_store, repo, number) == [again.id]
 
-    def test_a_refund_the_issue_was_re_listed_after_still_holds_it(
-        self, every_store: Store
-    ) -> None:
-        """Nobody claimed it, so the refund re-listed it higher for the publisher to
-        approve: that re-listing is the open one, and a publish is told so."""
+    def test_a_refunded_issue_is_free_to_list_again(self, every_store: Store) -> None:
+        """Nobody claimed it, so the refund closed the listing and nothing re-lists it
+        on the publisher's behalf: publishing it again is the publisher's own choice
+        (#142)."""
         funded = get(every_store, "ISS-1001")
         assert funded.deadline is not None
         sweep_once(every_store, now=funded.deadline + ESCROW_TERM)
-        [relisted] = open_listings(every_store, "acme/ledger-core", 412)
-        assert get(every_store, relisted).relisted_from == "ISS-1001"
+        assert get(every_store, "ISS-1001").state is IssueState.REFUNDED
+        assert open_listings(every_store, "acme/ledger-core", 412) == []
 
-        with pytest.raises(AlreadyListed) as refused:
-            every_store.publish(request(412, repo="acme/ledger-core"))
-        assert refused.value.issue_id == relisted
+        again = every_store.publish(request(412, repo="acme/ledger-core"))
+        assert open_listings(every_store, "acme/ledger-core", 412) == [again.id]
 
     def test_a_refund_after_a_claim_lapsed_leaves_the_issue_free_to_list(
         self, every_store: Store
@@ -281,7 +286,13 @@ class TestTheApi:
         self, fresh_api_store: SimulatedGitHub
     ) -> None:
         client = TestClient(app)
-        body = {"repo": REPO, "number": 5, "title": "Retry on 503", "publisher_id": "PUB-1"}
+        body = {
+            "repo": REPO,
+            "number": 5,
+            "title": "Retry on 503",
+            "publisher_id": "PUB-1",
+            "price": "500",
+        }
         first = client.post(f"{API}/issues", json=body)
         assert first.status_code == 201, first.text
 
@@ -339,10 +350,10 @@ class TestTheLabelOnGitHub:
         })  # fmt: skip
         return fresh_api_store
 
-    def priced(self, github: SimulatedGitHub) -> list[str]:
+    def listed(self, github: SimulatedGitHub) -> list[str]:
         return [
             s.body for s in github.sent
-            if s.kind == "comment" and s.target == "12" and "Priced on Misthos" in s.body
+            if s.kind == "comment" and s.target == "12" and "Listed on Misthos" in s.body
         ]  # fmt: skip
 
     def test_labelling_a_listed_issue_again_does_not_list_it_twice(
@@ -353,7 +364,7 @@ class TestTheLabelOnGitHub:
 
         assert len(open_listings(store, REPO, 12)) == 1
         assert again["issue_ids"] == open_listings(store, REPO, 12)
-        assert len(self.priced(connected)) == 1
+        assert len(self.listed(connected)) == 1
 
     def test_opened_and_labeled_arriving_together_list_the_issue_once(
         self, connected: SimulatedGitHub, monkeypatch: pytest.MonkeyPatch
@@ -365,4 +376,4 @@ class TestTheLabelOnGitHub:
 
         assert not [r for r in results if isinstance(r, Exception)], results
         assert len(open_listings(store, REPO, 12)) == 1
-        assert len(self.priced(connected)) == 1
+        assert len(self.listed(connected)) == 1

@@ -602,6 +602,7 @@ def _save(conn: Connection, rec: IssueRecord, floor: int) -> int:
         "payout_checked_at": rec.payout_checked_at,
         "criteria_approved_at": rec.criteria_approved_at,
         "relisted_from": rec.relisted_from,
+        "price_base_units": rec.price.base_units if rec.price else None,
     }
     if rec.version == 0:
         exists = conn.execute(select(t.issues.c.id).where(t.issues.c.id == rec.id)).first()
@@ -856,6 +857,9 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             created_at=_utc(row["created_at"]),
             deadline=_utc(row["deadline"]) if row["deadline"] else None,
             proposal=_proposal(proposals[row["id"]]) if row["id"] in proposals else None,
+            price=(
+                Usdc(row["price_base_units"]) if row["price_base_units"] is not None else None
+            ),
             escrow=_escrow(escrows[row["id"]]) if row["id"] in escrows else None,
             claim=_claim(claims[row["id"]]) if row["id"] in claims else None,
             submission=_submission(submissions[row["id"]]) if row["id"] in submissions else None,

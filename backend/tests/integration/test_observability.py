@@ -96,7 +96,12 @@ class TestMetrics:
         client.post(f"{API}/issues/ISS-1006/complete")
         client.post(
             f"{API}/issues",
-            json={"repo": "acme/ledger-core", "title": "Add a probe", "publisher_id": "PUB-1"},
+            json={
+                "repo": "acme/ledger-core",
+                "title": "Add a probe",
+                "publisher_id": "PUB-1",
+                "price": "500",
+            },
         )
 
         assert sample("misthos_money_events_total", kind="released") == released + 1

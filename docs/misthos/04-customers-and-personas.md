@@ -188,7 +188,7 @@ journey
 | Stage | Touchpoint | Action | Feeling | Pain point | Opportunity |
 | --- | --- | --- | --- | --- | --- |
 | Awareness | Someone's newsletter, a colleague, the repository itself | Learns a price can be attached to an issue | Curious, sceptical | "Another platform I have to sign up for" | Put the price on the issue in GitHub. Let the publisher's GitHub identity be the account. |
-| Consideration | Pricing engine output | Reads the proposed price band and reasoning | Relieved or suspicious | "Where did this number come from?" | Show the reasoning, the comparable issues, and the confidence. Open the model. |
+| Consideration | The engine's reading of the issue | Names their own price, and sees what comparable work settled for beside it | Relieved or suspicious | "Where did this number come from?" | Show the comparable issues first, with the reasoning and the confidence. Open the model. |
 | Approval | Internal budget conversation | Requests $500 | Resigned, expecting friction | No budget line exists for this | Produce a one-page justification the manager can forward, generated with the quote. |
 | Publishing | Platform UI, human approval | Approves the price and the acceptance criteria | Focused | Writing acceptance criteria is work | Draft the criteria from the issue and the test suite. Human edits rather than writes. |
 | Waiting | GitHub notifications | Watches for a claim and a pull request | Impatient | No idea whether anyone will pick it up | Deadline with automatic escalation, and a refund path if nothing arrives. |

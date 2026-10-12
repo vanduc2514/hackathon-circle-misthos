@@ -7,20 +7,30 @@ the depth lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 ## Business context
 
 **Misthos** is a marketplace where the unit of sale is a single GitHub issue. A company
-or an open-source maintainer attaches a **fixed price** to an issue, an agent prices it
-from the issue's complexity and the publisher's own budget, a contributor fixes it, an
-agent reviews the pull request against the acceptance criteria, and payment settles in
+or an open-source maintainer attaches a **fixed price** to an issue, an agent reads the
+issue and shows what comparable work has settled for, a contributor fixes it, an agent
+reviews the pull request against the acceptance criteria, and payment settles in
 **USDC on Arc** when the work is accepted.
 
 - No bidding, no auction, no negotiation. One price is set before publication.
+- **The publisher names the price.** The engine's estimate, its range and its comparables
+  are advice: `check_price` is the only thing in the price path that can refuse, on the two
+  bounds in `domain/pricing.py` — a minimum of **$5**, which is an anti-typo and anti-spam
+  floor rather than a break-even solve, and a maximum of $100,000. The publisher can move
+  the price while the issue is unfunded and unclaimed, and no further.
+- **The fee is a flat 10 percent** of the committed amount, on every plan
+  (`PLATFORM_FEE_BPS = 1000`). It is carved out at settlement by `MisthosEscrow.release`,
+  bounded there at 15 percent, and refunded in full if the issue never settles. Plans gate
+  features, never the rate.
 - **The platform owns review.** There is no third-party reviewer and no review fee. The
   review agent's verdict is the verdict. The publisher's merge is the only human
   signature on release, with a seven-day grace period if they go quiet.
-- The published minimum fix price is derived per tier from break-even and rounded up
-  to the next $5: **$55** at the Open tier's 12 percent, **$65** at Team's 10 percent,
-  **$80** at Enterprise's 8 percent. Publishing below it is refused with a reason.
-- **Two human checkpoints** carry consequences: approving the price, and merging the
-  work, which is what acceptance means. Everything else — scoping, pricing, triage and review — is agent work.
+- **Review costs about $6.31 an issue**, so a $63 price is where the platform stops losing
+  money on a settlement. Below that it subsidises the work deliberately: small settled
+  issues are the cheapest way to earn a publisher.
+- **Two human checkpoints** carry consequences: naming and approving the price, and merging
+  the work, which is what acceptance means. Everything else — scoping, reading the issue,
+  triage and review — is agent work.
 - The **platform is never a custodian**. Committed funds sit in `MisthosEscrow` on Arc,
   not with us, and release requires an acceptance attestation.
 - Arc settles in under a second for about a cent, which is what makes a small fix worth

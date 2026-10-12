@@ -20,7 +20,12 @@ from misthos.services.coordination import Busy
 from misthos.store import store
 
 API = "/api/v1"
-PUBLISH = {"repo": "acme/ledger-core", "title": "Add a health endpoint", "publisher_id": "PUB-1"}
+PUBLISH = {
+    "repo": "acme/ledger-core",
+    "title": "Add a health endpoint",
+    "publisher_id": "PUB-1",
+    "price": "500",
+}
 
 
 @pytest.fixture(autouse=True)

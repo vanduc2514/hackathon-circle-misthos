@@ -22,7 +22,7 @@ from misthos.domain.escrow import approve_call, commit_call, issue_key
 from misthos.domain.issue import ESCROW_TERM, IllegalTransition, IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
-from misthos.domain.pricing import PriceChoiceRefused, UnfundableIssue
+from misthos.domain.pricing import PriceRefused
 from misthos.repositories import StaleIssue
 from misthos.schemas import (
     Account,
@@ -42,6 +42,7 @@ from misthos.schemas import (
     IssueSummaryOut,
     LoopOut,
     MetricsOut,
+    PriceRequest,
     Publisher,
     PublisherListing,
     PublishRequest,
@@ -255,7 +256,7 @@ async def _act(
         raise _conflict(exc) from exc
     except (ComplianceRefusal, PolicyRefusal, NotSimulated) as exc:
         raise _refused(exc) from exc
-    except PriceChoiceRefused as exc:
+    except PriceRefused as exc:
         # The request named a price; it is the value in it that cannot be used, which is
         # what 422 says, rather than the party being refused.
         raise HTTPException(status_code=422, detail=exc.justification) from exc
@@ -406,34 +407,67 @@ async def fund(
     idempotency_key: str | None = IDEMPOTENCY_KEY,
     account: Account | None = SIGNED_IN,
 ) -> Any:
-    """The publisher approves a price, and the money is committed to the escrow.
+    """The publisher approves the price they set, and the money is committed.
 
-    They may name their own, which the engine checks against the band it disclosed;
-    without one the recommendation is approved.
+    No amount is taken here. The price was named when the issue was published and can
+    be moved with `PATCH /issues/{issue_id}/price` until someone claims it, so a second
+    way to change the number at the moment money moves is a second thing to audit (#142).
     """
     rec = await _require(issue_id)
     require_owner_or_simulation(account, rec.publisher_id, "fund this issue")
     if account is not None:
         require_github(account, "fund an issue")
     by = _who(account, "the publisher")
-    amount = _price(payload.amount if payload else None)
     return await idempotent(
         request,
         idempotency_key,
-        lambda: _act(store.approve_price, issue_id, by, amount=amount),
+        lambda: _act(store.approve_price, issue_id, by),
     )
 
 
-def _price(text: str | None) -> Usdc | None:
-    """The publisher's own price, or None to take the engine's recommendation."""
-    if text is None or not text.strip():
-        return None
+@router.patch(
+    "/issues/{issue_id}/price",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={409: {"description": "An issue past the point where its price can move"}},
+)
+async def set_price(
+    issue_id: str,
+    payload: PriceRequest,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
+) -> Any:
+    """The publisher names a new price, while nobody is working on the issue.
+
+    Until a claim the price is the publisher's to move: the money is theirs and the
+    issue has not been promised to anyone. A claim is that promise, so it closes the
+    door. This is what replaces the automatic re-listing that used to raise a price
+    nobody claimed on the publisher's behalf (#142).
+    """
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "re-price this issue")
+    if account is not None:
+        require_github(account, "re-price an issue")
+    by = _who(account, "the publisher")
+    amount = _amount(payload.amount)
+    return await idempotent(
+        request,
+        idempotency_key,
+        lambda: _act(store.set_price, issue_id, amount, by),
+    )
+
+
+def _amount(text: str) -> Usdc:
+    """A price the publisher typed, as USDC.
+
+    Parsing only. The bounds are the domain's to enforce, so a refusal and the range
+    that would work come from one place (`domain/pricing.check_price`).
+    """
     try:
         return Usdc.from_decimal(text.strip().replace(",", ""))
     except (ArithmeticError, ValueError) as exc:
-        raise HTTPException(
-            status_code=422, detail=f"{text!r} is not an amount in USDC"
-        ) from exc
+        raise HTTPException(status_code=422, detail=f"{text!r} is not an amount in USDC") from exc
 
 
 @router.post("/issues/{issue_id}/claim", response_model=IssueOut, dependencies=[limit_actions])
@@ -576,13 +610,19 @@ async def publish(
         raise HTTPException(status_code=401, detail="sign in to publish an issue")
     if await run_in_threadpool(store.get_publisher, payload.publisher_id) is None:
         raise HTTPException(status_code=400, detail=f"unknown publisher {payload.publisher_id}")
+    if payload.price is None:
+        # The web form always sends one. The GitHub flow lists an issue unpriced on
+        # purpose and names the price later with `/misthos price` (#142).
+        raise HTTPException(
+            status_code=422, detail="name a price: the publisher sets what the work is worth"
+        )
 
     async def run() -> IssueOut:
         try:
             rec = await run_in_threadpool(store.publish, payload)
-        except UnfundableIssue as exc:
-            # Well formed, but the work cannot carry its own review cost. Say why
-            # rather than publish a price the platform loses money on.
+        except PriceRefused as exc:
+            # Well formed, but outside the bounds a price may be published at. This is
+            # the only thing that refuses a price (#142).
             raise HTTPException(status_code=422, detail=exc.justification) from exc
         except UnreadableIssue as exc:
             # The App is not installed there, or the issue does not exist.

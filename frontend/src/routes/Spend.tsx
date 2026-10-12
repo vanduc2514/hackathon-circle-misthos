@@ -39,7 +39,8 @@ export default function Spend() {
       ) as SpendOut,
   })
 
-  // What caps every price: the declared budget, or less where the books say so (#43).
+  // What the publisher has to spend: their declared budget, or less where their books
+  // say so (#43). Informational since #142, when the budget stopped capping prices.
   const books = useQuery({
     queryKey: ['finance', chosen],
     enabled: Boolean(chosen),
@@ -110,15 +111,15 @@ export default function Spend() {
               {f.budget_remaining_usdc !== null && f.budget_remaining_usdc !== undefined
                 ? `$${money(f.budget_remaining_usdc)} left in the budget`
                 : 'no budget figure'}
-              {f.cash_usdc ? `, $${money(f.cash_usdc)} in cash` : ''}. Prices are capped at $
-              {money(f.caps_prices_at_usdc)}, the lower of that and the declared budget.
+              {f.cash_usdc ? `, $${money(f.cash_usdc)} in cash` : ''}. That leaves $
+              {money(f.spendable_usdc)} to spend.
             </>
           ) : f.connected ? (
-            <>Your books could not be read ({f.note}). The declared budget caps prices.</>
+            <>Your books could not be read ({f.note}).</>
           ) : (
             <>
-              Prices are capped at the declared budget, ${money(f.declared_budget_usdc)}. Connect
-              Firefly III or a beancount ledger to cap them at what your books say is left.
+              Your declared budget is ${money(f.declared_budget_usdc)}. Connect Firefly III or a
+              beancount ledger to see what your books say is left.
             </>
           )}
           {f.connected && f.source && f.note ? ` Note: ${f.note}.` : ''}

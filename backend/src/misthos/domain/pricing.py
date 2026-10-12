@@ -1,20 +1,21 @@
-"""Pricing engine.
+"""Pricing: the fee the platform charges, and the advice it offers.
 
-Scores an issue on six signals, turns that into an effort estimate, then applies
-market context and the publisher's affordability ceiling to produce a band rather
-than a single number. A band invites the publisher to pick a position; a single
-figure invites an argument about whether it is exactly right.
+**The publisher names the price.** Nothing here refuses it, binds it into a band or
+caps it against a budget. What the work is worth is the one input the buyer holds and
+the platform cannot supply, and telling a publisher their own number is wrong is the
+fastest way to lose them.
 
-Weights are a starting guess and should be tuned against real settlements
-(`python -m misthos.services.calibration`, #41). Comparables come from the
-platform's own settled issues (`domain/comparables.py`, #42): they move the price
-toward what similar work actually settled at, and they alone set the confidence.
+What still lives here is the *suggestion*: an effort estimate from six signals, moved
+toward what comparable settled work actually paid, and the range that implies. It is
+advice on the page, never a condition of publishing. It survives because it is the one
+part of the engine that gets better with every settlement, and because it costs the
+publisher nothing to ignore (docs/misthos/06-pricing-engine.md).
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from decimal import Decimal
 from statistics import median
 
@@ -22,7 +23,63 @@ from misthos.domain import comparables as history
 from misthos.domain.comparables import Comparable, ComparableRef
 from misthos.domain.money import Usdc
 
-# Signal weights, summing to 1.0.
+# What the platform keeps of every settlement, in the basis points the escrow takes
+# and enforces (`MisthosEscrow.release`, bounded there at MAX_FEE_BPS = 1500).
+# One rate for everyone: a rate that moves with a subscription is a second price for
+# the same service, and it made what a publisher could spend depend on which plan
+# they happened to be on.
+PLATFORM_FEE_BPS = 1_000
+
+
+def fee_bps() -> int:
+    """The platform's share of a settlement, in basis points."""
+    return PLATFORM_FEE_BPS
+
+
+def platform_fee(amount: Usdc) -> Usdc:
+    """The platform's cut of a settlement.
+
+    Integer basis points and floor division mirror `MisthosEscrow.release` exactly,
+    which is what keeps the recorded fee equal to the on-chain transfer.
+    """
+    return Usdc(amount.base_units * PLATFORM_FEE_BPS // 10_000)
+
+
+def contributor_share(amount: Usdc) -> Usdc:
+    """What the contributor receives: the committed amount less the platform's fee."""
+    return amount - platform_fee(amount)
+
+
+# The bounds on a price. The floor catches a typo and damps spam; it is not derived
+# from the platform's costs, because review is the platform's own expense to carry
+# on the small work it most wants a publisher to start with.
+MINIMUM_PRICE = Usdc.from_decimal("5")
+MAXIMUM_PRICE = Usdc.from_decimal("100000")
+
+
+class PriceRefused(Exception):
+    """A price outside the bounds, with the bounds that would work."""
+
+    def __init__(self, justification: str) -> None:
+        super().__init__(justification)
+        self.justification = justification
+
+
+def check_price(amount: Usdc) -> Usdc:
+    """The price as given, or a refusal naming the bounds. The only refusal left.
+
+    Nothing about the work, the publisher's budget or what the engine would have
+    suggested is consulted: a price within the bounds is the publisher's call.
+    """
+    if amount < MINIMUM_PRICE or amount > MAXIMUM_PRICE:
+        raise PriceRefused(
+            f"{amount} is outside the {MINIMUM_PRICE} to {MAXIMUM_PRICE} a price may be"
+        )
+    return amount
+
+
+# Signal weights for the suggestion, summing to 1.0. A starting guess: they order
+# which signals matter when the engine reads an issue, and nothing is refused on them.
 WEIGHTS: dict[str, float] = {
     "code_surface": 0.25,
     "requirement_clarity": 0.20,
@@ -32,78 +89,24 @@ WEIGHTS: dict[str, float] = {
     "blast_radius": 0.10,
 }
 
-# Reference rate per hour by rough seniority band.
+# Reference rate per hour for the suggestion. Advisory: the publisher's price is the
+# one that binds, and a buyer knows their own market rate better than a constant.
+# The suggestion is optimistic at the top of its range, which is why nothing rests on it.
 RATE_PER_HOUR = Usdc.from_decimal("90")
 
-# What one issue costs us to review: agent inference, settlement and amortised
-# screening. It is not a line on the publisher's invoice, so it comes out of the
-# take rate, and that is what sets the price floor.
+# What one issue costs the platform to review: agent inference, settlement and
+# amortised screening. Kept here because it explains the platform's own economics.
+# It no longer sets a floor under anyone's price.
 REVIEW_COST_PER_ISSUE = Usdc.from_decimal("6.31")
 
-# Take rate by publisher tier. The tier table in docs/misthos/06 is the source of
-# truth for these, and the floor is derived from them rather than picked.
-TAKE_RATE_BY_TIER: dict[str, Decimal] = {
-    "open": Decimal("0.12"),
-    "team": Decimal("0.10"),
-    "enterprise": Decimal("0.08"),
-}
 
-# Published floors are the break-even rounded up to the next whole $5, so every
-# issue clears its own review cost with a little room. Deriving it per tier is what
-# stops the Enterprise rate, which is the thinnest, from subsidising small issues.
-FLOOR_ROUNDING = 5
-
-
-def min_fix_price(tier: str = "open") -> Usdc:
-    """The lowest fix price we will publish for a tier, derived from break-even."""
-    rate = TAKE_RATE_BY_TIER[tier]
-    break_even = REVIEW_COST_PER_ISSUE.decimal / rate
-    rounded = (break_even / FLOOR_ROUNDING).to_integral_value(rounding="ROUND_CEILING")
-    return Usdc.from_decimal(rounded * FLOOR_ROUNDING)
-
-
-def take_rate_bps(tier: str = "open") -> int:
-    """The tier's take rate in basis points, which is the unit the escrow enforces."""
-    return int(TAKE_RATE_BY_TIER[tier] * 10_000)
-
-
-def platform_fee(amount: Usdc, tier: str = "open") -> Usdc:
-    """The platform's cut of a settlement.
-
-    Charged on the fix price rather than added to it, so it comes out of the
-    commitment the publisher already approved. Integer basis points and floor
-    division mirror `MisthosEscrow.release` exactly, which is what keeps the
-    recorded fee equal to the on-chain transfer.
-    """
-    return Usdc(amount.base_units * take_rate_bps(tier) // 10_000)
-
-
-# The precision a price is shown and chosen at.
+# The precision a price is shown at.
 CENT = Decimal("0.01")
 
+# How wide the suggestion's range is around its point. Wide on purpose: a range that
+# admits its own uncertainty is harder to mistake for an instruction.
 BAND_LOW = Decimal("0.7")
 BAND_HIGH = Decimal("1.4")
-
-# How far a re-listed band rises after the first listing drew no claim. A starting
-# guess like the weights: an issue nobody took at its price is evidence the price was
-# low, and a quarter is enough to be seen without doubling what the publisher spends.
-RELIST_UPLIFT = Decimal("1.25")
-
-
-class UnfundableIssue(Exception):
-    """The engine will not put a price on this issue, and says why."""
-
-    def __init__(self, justification: str) -> None:
-        super().__init__(justification)
-        self.justification = justification
-
-
-class PriceChoiceRefused(Exception):
-    """The publisher's own price is outside what the engine will stand behind."""
-
-    def __init__(self, justification: str) -> None:
-        super().__init__(justification)
-        self.justification = justification
 
 
 @dataclass(frozen=True)
@@ -191,17 +194,17 @@ def propose(
     rate_per_hour: Usdc = RATE_PER_HOUR,
     compliance_driven: bool = False,
     comparables: Sequence[Comparable] = (),
-    affordability_ceiling: Usdc | None = None,
-    ceiling_source: str | None = None,
-    tier: str = "open",
     weights: dict[str, float] | None = None,
 ) -> PriceProposal:
-    """Produce a price band with a written justification.
+    """A suggested price and the reasoning for it, for the page and the record.
+
+    Advice only. The publisher names the price and this is never consulted to bound
+    it: `check_price` is the only refusal in the price path. The proposal keeps its
+    shape and its name because the reasoning and the comparables are worth keeping;
+    what is gone is its authority.
 
     `comparables` are settled issues of similar shape (`comparables.find`); they
-    move the price toward what that work settled at and set the confidence. The
-    ceiling is the publisher's remaining budget, from `ceiling_source` when it was
-    read from their books rather than declared.
+    move the suggestion toward what that work settled at and set the confidence.
     """
     hours = estimate_hours(signals, weights)
     multiplier = complexity_multiplier(signals, weights)
@@ -211,10 +214,6 @@ def propose(
         fix_price = fix_price + risk_premium
     if urgency is not None:
         fix_price = fix_price + urgency
-
-    # A compliance obligation changes willingness to pay more than complexity does.
-    if compliance_driven:
-        fix_price = fix_price * Decimal("1.15")
 
     notes: list[str] = []
     if comparables:
@@ -237,35 +236,10 @@ def propose(
     confidence = history.confidence(comparables)
     recommended = Usdc(int((low.base_units + high.base_units) / 2))
 
-    # The ceiling never raises a price. It caps one, and it says so, without saying
-    # how much budget is left: the justification is public, the budget is not.
+    # Nothing here refuses an issue. The flag is kept because the stored proposal and
+    # the API carry it, and it is always true: a price the publisher is willing to pay
+    # is publishable whatever this engine thinks of it.
     fundable = True
-    where = f", as {ceiling_source} reports it" if ceiling_source else ""
-    if affordability_ceiling is not None and recommended > affordability_ceiling:
-        if affordability_ceiling.base_units > 0:
-            recommended = affordability_ceiling
-            high = affordability_ceiling
-            low = Usdc(int(affordability_ceiling.base_units * 0.6))
-            notes.append(f"Capped at what remains of the publisher's budget{where}.")
-        else:
-            # The budget covers nothing. Say so rather than producing a number
-            # nobody should accept.
-            fundable = False
-            notes.append(
-                f"What remains of the publisher's budget{where} does not cover the "
-                "work, so this issue cannot be funded as scoped. Consider splitting it."
-            )
-
-    floor = min_fix_price(tier)
-    if fundable and recommended < floor:
-        # Below the floor review costs more than the take it earns, so decline the
-        # issue rather than publish a price the platform loses money on.
-        fundable = False
-        notes.append(
-            f"At {recommended} this issue is below the {floor} minimum for this "
-            "publisher's tier, which is where review pays for itself. Consider "
-            "bundling it with related work."
-        )
 
     return PriceProposal(
         band_low=low,
@@ -303,83 +277,23 @@ def _justify(
     else:
         parts.append("All signals are low, so this looks like a contained change.")
     if compliance_driven:
-        parts.append("A compliance obligation is attached, which raises the band.")
+        parts.append(
+            "A compliance obligation is attached, which buyers usually pay more for."
+        )
     parts.append(f"Confidence is {confidence}.")
     if extra:
         parts.extend(extra)
     return " ".join(parts)
 
 
-def priced_range(
-    proposal: PriceProposal, *, ceiling: Usdc | None = None, tier: str = "open"
-) -> tuple[Usdc, Usdc]:
-    """The lowest and highest price a publisher may choose for this issue.
+def suggested_range(proposal: PriceProposal) -> tuple[Usdc, Usdc]:
+    """The range to show next to the suggestion. Advisory, and nothing more.
 
-    The band is what the engine is willing to stand behind, the floor is where review
-    pays for itself, and the ceiling is what the publisher's budget still allows. The
-    lower of the two floors and the higher of the two caps is what a choice may sit in,
-    so a range is refused only when nothing inside it would work.
+    It is not a window the publisher must price inside: `check_price` holds the only
+    bounds that bind. Rounded outwards to the cent, because a cent is the precision a
+    price is shown at and a figure displayed as 126.00 should not read as 125.9968.
     """
-    low = proposal.band_low if proposal.band_low > min_fix_price(tier) else min_fix_price(tier)
-    high = proposal.band_high
-    if ceiling is not None and ceiling < high:
-        high = ceiling
-    # Rounded outwards to the cent, because a cent is the precision the band is shown
-    # at. The engine's band carries more: a low of 1734.163200 is shown as 1734.16, and
-    # a publisher who types the number they can read would otherwise be refused for
-    # being three thousandths below a figure the page never displayed.
     return (
-        Usdc.from_decimal(low.decimal.quantize(CENT, rounding="ROUND_FLOOR")),
-        Usdc.from_decimal(high.decimal.quantize(CENT, rounding="ROUND_CEILING")),
-    )
-
-
-def choose(
-    proposal: PriceProposal,
-    amount: Usdc,
-    *,
-    ceiling: Usdc | None = None,
-    tier: str = "open",
-) -> Usdc:
-    """The publisher's own position inside the band.
-
-    The band is deliberately wide, and a range invites the buyer to pick a position in
-    it rather than argue about one number (docs/misthos/06-pricing-engine.md). A choice
-    outside it is refused with the range that would work, rather than quietly adjusted:
-    silently moving someone's price is how a commitment stops matching what they agreed
-    to, and the escrow records the approved amount as its ceiling.
-    """
-    low, high = priced_range(proposal, ceiling=ceiling, tier=tier)
-    if amount < low or amount > high:
-        raise PriceChoiceRefused(
-            f"{amount} is outside the {low} to {high} this issue may be priced at"
-        )
-    return amount
-
-
-def relist(proposal: PriceProposal, *, ceiling: Usdc | None = None) -> PriceProposal | None:
-    """A higher band for an issue nobody claimed, or None when the budget cannot rise.
-
-    The ceiling caps a re-listed price exactly as it caps a first one. A re-list the
-    budget would hold at or below the old price is no re-list at all, so it is declined
-    rather than published again at the number that already drew nobody.
-    """
-    low = proposal.band_low * RELIST_UPLIFT
-    high = proposal.band_high * RELIST_UPLIFT
-    recommended = proposal.recommended * RELIST_UPLIFT
-    notes = [f"Re-listed after no contributor claimed it at {proposal.recommended}."]
-
-    if ceiling is not None and recommended > ceiling:
-        if not proposal.recommended < ceiling:
-            return None
-        recommended = high = ceiling
-        low = low if low < ceiling else ceiling
-        notes.append("Capped at what remains of the publisher's budget.")
-
-    return replace(
-        proposal,
-        band_low=low,
-        band_high=high,
-        recommended=recommended,
-        justification=" ".join([proposal.justification, *notes]),
+        Usdc.from_decimal(proposal.band_low.decimal.quantize(CENT, rounding="ROUND_FLOOR")),
+        Usdc.from_decimal(proposal.band_high.decimal.quantize(CENT, rounding="ROUND_CEILING")),
     )

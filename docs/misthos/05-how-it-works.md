@@ -6,12 +6,12 @@ This is the document to read if you want the product in your head in ten minutes
 
 | Actor | What they do | What they never do |
 | --- | --- | --- |
-| Publisher | Puts a price on an issue, approves it, merges the work | Review code line by line; the platform does that |
+| Publisher | Names the price and commits to it, approves it, merges the work | Review code line by line; the platform does that |
 | Contributor | Claims an issue, writes the patch, responds to review | Merge their own work |
-| Pricing agent | Reads the issue and the publisher's financial context, proposes a price, writes the reason | Move money |
+| Pricing agent | Reads the issue, shows what comparable work settled for, writes the reason | Name the price, or move money |
 | Review agent | Reads the submission against the acceptance criteria and the test suite, issues the verdict | Merge, or release payment |
 | Settlement layer | Holds committed funds, releases on acceptance, refunds on timeout | Decide anything |
-| Publisher's finance tool | Supplies budget and cash context to the pricing agent | Anything, unless the publisher enables it |
+| Publisher's finance tool | Supplies spend reporting and an audit trail for the publisher's own eyes | Anything, unless the publisher enables it |
 
 Review means one thing here: the platform assessing the contributor's submitted pull request against the published acceptance criteria and the project's own test suite, and issuing a verdict. It is review of the submission, not of the issue before it is funded and not of the repository in general. No human reads the diff as a required step.
 
@@ -25,7 +25,7 @@ flowchart TB
     end
 
     subgraph Platform["Misthos"]
-        PRICE["Pricing agent"]
+        PRICE["Pricing agent<br/>advice, not a decision"]
         TRIAGE["Triage and matching"]
         REVIEW["Review agent"]
         LEDGER["Commitments and audit log"]
@@ -39,25 +39,24 @@ flowchart TB
     PUB -->|"issue plus price"| Platform
     CON -->|"pull request"| GH
     Platform --> GH
-    FIN -->|"budget and cash context"| PRICE
     PRICE --> TRIAGE
     TRIAGE --> REVIEW
     REVIEW --> LEDGER
     LEDGER --> ARC
+    LEDGER -.->|"records the publisher can import"| FIN
     ARC --> WALLET
 ```
 
-The finance stack box is optional and is the part we are least certain about. Everything else works with nothing but a GitHub account and a wallet.
+The finance stack box is optional and is the part we are least certain about. Everything else works with nothing but a GitHub account and a wallet. It reads our records rather than informing our prices: a publisher's budget used to cap what they were allowed to pay, which made their own money a one-way constraint on their own decision, so it no longer touches the price at all.
 
 ## The lifecycle of a funded issue
 
 ```mermaid
 stateDiagram-v2
     [*] --> Draft
-    Draft --> Priced: pricing agent proposes a band
-    Priced --> AwaitingApproval: publisher reviews the reasoning
-    AwaitingApproval --> Draft: publisher overrides, agent re-prices
-    AwaitingApproval --> Funded: publisher picks a price in the band and commits funds
+    Draft --> AwaitingApproval: publisher names the price and commits to it
+    AwaitingApproval --> AwaitingApproval: publisher moves the price, while unfunded
+    AwaitingApproval --> Funded: the criteria and the price are approved, funds committed
     Funded --> Claimed: contributor takes an exclusive time-boxed claim
     Claimed --> Funded: claim expires without a pull request
     Claimed --> InReview: contributor opens a pull request
@@ -74,17 +73,19 @@ stateDiagram-v2
     Paid --> [*]
 ```
 
-Two states carry most of the design weight. `AwaitingApproval` is the human checkpoint that keeps the agent honest about price. `Accepted` is the window in which the publisher decides whether to merge, or to decline once with a reason, and it is the only other place a person reaches into the flow. Everything between them runs without one.
+Two states carry most of the design weight. `AwaitingApproval` is the human checkpoint: it is where a person names the price and signs it, and where they can still move it, because no money has moved and nobody has been promised anything. `Accepted` is the window in which the publisher decides whether to merge, or to decline once with a reason, and it is the only other place a person reaches into the flow. Everything between them runs without one.
+
+A refunded issue is not re-listed. Nobody claiming an issue at its price is information, and the person it belongs to is the publisher: they can publish the issue again at a number they choose. An agent raising the price on their behalf would be guessing at their budget.
 
 ## How work is assigned
 
-One mechanism, used for every issue: **fixed price, first claim.**
+One mechanism, used for every issue: **the publisher's price, first claim.**
 
-The publisher approves a single number and commits the funds. The first contributor to claim the issue holds it exclusively for a bounded window, and loses it if no pull request appears. Contributors do not compete on price, because the price is already published. They compete on being ready to start.
+The publisher names a single number and commits the funds. The first contributor to claim the issue holds it exclusively for a bounded window, and loses it if no pull request appears. Contributors do not compete on price, because the price is already published. They compete on being ready to start.
 
-There is no bidding round, no auction, and no negotiation. A price that could move after publication would defeat both checkpoints above: the publisher would be approving a number it might not pay, and the contributor would not know what the work is worth until someone else decided. The trade-off is that a fixed price cannot adapt to a surprise in the codebase, which is the main reason requirement clarity is scored when the price is set.
+There is no bidding round, no auction, and no negotiation. A price that could move after publication would defeat both checkpoints above: the publisher would be approving a number it might not pay, and the contributor would not know what the work is worth until someone else decided. The publisher can move the number while the issue is unfunded and unclaimed, and no further: a claim is the promise, and it closes the door. The trade-off is that a fixed price cannot adapt to a surprise in the codebase, which is the main reason requirement clarity is part of what the engine reads.
 
-The full reasoning is in [06 The pricing engine](./06-pricing-engine.md).
+The price is the publisher's. The engine reads the issue and shows what work of a similar shape has settled for, as advice the publisher can check and ignore. The full reasoning is in [06 The fee, and what the engine is for](./06-pricing-engine.md).
 
 ## The happy path, step by step
 
@@ -98,12 +99,12 @@ sequenceDiagram
     participant Escrow as Arc commitment
 
     Priya->>GH: Opens or selects an issue
-    Priya->>Agent: Requests a price
+    Priya->>Agent: Names the price they will pay
     Agent->>GH: Reads issue, code, test suite, related history
-    Agent->>Agent: Scores complexity, effort and risk
-    Agent->>Priya: Price band plus written reasoning
-    Priya->>Agent: Approves, adjusts or rejects
-    Priya->>Escrow: Commits the fix price
+    Agent->>Agent: Scores complexity and effort
+    Agent->>Priya: What similar work settled for, with the reasoning
+    Priya->>Agent: Approves the criteria, or moves the price
+    Priya->>Escrow: Commits the price they named
     Agent->>GH: Publishes acceptance criteria on the issue
     Amara->>Agent: Claims the issue
     Agent->>Amara: Exclusive claim, deadline, relevant files and prior attempts
@@ -128,39 +129,42 @@ Note the ordering around acceptance. The agent issues the verdict and Priya merg
 flowchart LR
     subgraph Agent["Agent decides"]
         A1["How complex the issue is"]
-        A2["What the price band should be"]
+        A2["What comparable work settled for"]
         A3["Which contributors to surface"]
         A4["Whether a submission meets the criteria"]
         A5["What the review should say"]
         A6["When a deadline has passed"]
     end
     subgraph Human["Human decides"]
-        H1["Whether the price is acceptable"]
+        H1["What the price is"]
         H2["Whether the work is accepted"]
-        H3["Whether to override the agent"]
-        H4["Whether to fund the issue at all"]
+        H3["Whether to fund the issue at all"]
     end
 ```
 
-The line is drawn at consequence, not at capability. An agent that gets the price wrong costs the publisher money, so a person signs it. An agent that gets the review wrong lets a bad patch into a dependency, so a person signs that too. Everything reversible belongs to the agent.
+The line is drawn at consequence, not at capability. An agent that gets the price wrong costs the publisher money, and an agent that guesses what a piece of work is worth to a particular company is guessing at the one thing it cannot know. So the person names the number, and the agent tells them what comparable work cost. An agent that gets the review wrong lets a bad patch into a dependency, so a person signs that too. Everything reversible belongs to the agent.
 
 ## What the pricing agent actually looks at
 
-Full detail is in [06 The pricing engine](./06-pricing-engine.md). The short version is three inputs.
+Full detail is in [06 The fee, and what the engine is for](./06-pricing-engine.md). The short
+version is two inputs, and neither of them is the price.
 
 | Input | What it tells us | Where it comes from |
 | --- | --- | --- |
 | Task complexity | How much work this is | The issue, the repository, the number of files implicated, whether tests exist, how many prior attempts failed |
 | Market context | What comparable work has recently paid | Settled issues on the platform with similar shape |
-| Publisher's financial position | What this publisher should be willing to pay, and when | Budget data from the publisher's finance stack, or a declared budget band if they have not connected one |
 
-The third input is where the product gets unusual. A maintainer with no budget and an enterprise with a compliance deadline should not see the same price for the same issue. The engine proposes different bands and the reason is visible to the buyer.
+The price itself comes from the publisher. What the engine supplies is the thing the
+publisher is uniquely bad at and the agent is uniquely good at: knowing what this class of
+work has cost, in this kind of codebase, recently. That is the input that changes a
+publisher's mind, and it is why the comparables are shown before the suggestion rather than
+after it.
 
 ## The checkpoints, and why each one exists
 
 | Checkpoint | Who holds it | Why it is not automated |
 | --- | --- | --- |
-| Publishing an issue with a price | Publisher | This is the moment a real obligation is created. Someone has to own it. |
+| Publishing an issue with a price | Publisher | This is the moment a real obligation is created. Someone has to own it, and it is also the one number the platform cannot supply: what this work is worth to this company. |
 | Accepting the work | Publisher's merge | Someone has to accept liability for the code. A verdict is evidence, not a signature. |
 | A publisher who goes quiet after a passing verdict | Nobody, after seven days | A finished patch should not be held hostage by an absent publisher. The only release that carries no signature. |
 | Releasing funds above a threshold | Publisher's policy | The publisher sets the threshold. Below it, release is automatic. |
@@ -175,7 +179,7 @@ flowchart LR
     P["Publisher<br/>commits funds"] --> E["Escrow commitment<br/>on Arc"]
     E -->|"on acceptance"| C["Contributor<br/>fix price less take"]
     E -->|"on deadline"| P2["Publisher<br/>refund"]
-    E -->|"on acceptance"| F["Misthos<br/>take rate"]
+    E -->|"on acceptance"| F["Misthos<br/>the 10% fee"]
 ```
 
 Three things about this flow.
@@ -190,7 +194,7 @@ The refund path is automatic and boring. If no acceptable work arrives by the de
 
 | Failure | What happens | Why it is designed this way |
 | --- | --- | --- |
-| Nobody claims the issue | Refund on deadline, or automatic re-price with a higher band | A silent empty listing teaches the publisher to stop funding |
+| Nobody claims the issue | Refund on deadline, and the publisher decides what to do next | A silent empty listing teaches the publisher to stop funding, and raising the price for them would be guessing at their budget |
 | Claim expires with no pull request | Issue returns to the pool, claim score affected | Prevents squatting on desirable work |
 | Submission is close but not acceptable | Rework loop with specific findings, then a bounded number of rounds | Unbounded review loops cost more than the fix is worth |
 | Contributor disputes the verdict | Platform re-reviews against the published criteria, then the publisher decides | The criteria are on record, so the argument is about them rather than about taste |
@@ -212,7 +216,7 @@ That is a deliberate constraint. It is also the constraint that makes the produc
 A small number of screens, in this order.
 
 1. A list of their funded issues with state, price and deadline.
-2. A price proposal with the reasoning, a confidence level, and the comparable issues behind it. Approve, adjust, or send it back.
+2. The publisher's price, with what comparable work settled for beside it, a confidence level, and the comparable issues behind it. Move the price, or commit it.
 3. A submissions view: the verdict, the findings and the test results, with the diff available as evidence. Reading it is optional, not the job.
 4. A spend view: what was budgeted, what was committed, what was released, and what to file for the security review.
 5. Budget rules: category limits, per-transaction thresholds, and who counts as an approver.
@@ -223,4 +227,4 @@ Screen four is the one that turns a per-issue buyer into an organisation subscri
 
 Automated review quality is the weakest part of the design today, and it is now the whole of the design. There is no human reviewer standing behind the agent, so an unreliable verdict is not a wasted review, it is a wrong decision about someone's money. We are treating review quality as the primary technical risk and the go-to-market plan tests it before anything else.
 
-The second thin spot is the finance integration. Reading a publisher's budget from their accounting system is the differentiator, and it is also the integration most likely to break, because the systems people actually run are self-hosted and idiosyncratic. The plan handles this by making the integration optional and by shipping a manual budget-band mode that gets the same behaviour with more effort.
+The second thin spot is the comparables history. A price that rests on what similar work settled for is only as good as the number of similar things that have settled, and on the first day that number is zero. The product is designed around this rather than against it: with no history the engine says so, shows its effort estimate and its reasoning, and lets the publisher's number stand. Every settlement makes the next suggestion better, which is the one compounding asset the platform has.

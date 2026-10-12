@@ -107,6 +107,9 @@ issues = Table(
     Column("payout_checked_at", Timestamp),
     Column("criteria_approved_at", Timestamp),
     Column("relisted_from", Id, ForeignKey("issues.id")),
+    # What the publisher priced the work at. Null only on issues funded before #142,
+    # which took their amount from the engine's recommendation instead.
+    Column("price_base_units", BigInteger),
     Column("version", Integer, nullable=False),
 )
 

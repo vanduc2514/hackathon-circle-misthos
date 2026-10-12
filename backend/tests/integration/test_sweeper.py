@@ -45,21 +45,19 @@ class TestDeadlines:
         after = get("ISS-1001")
         assert after.state is IssueState.REFUNDED
         assert after.escrow is not None and after.escrow.refunded
-        assert [d.action for d in after.decisions[-2:]] == ["refunded", "relisted"]
+        assert after.decisions[-1].action == "refunded"
+        assert not any(r.relisted_from == "ISS-1001" for r in store.list_issues())
 
-    def test_an_unclaimed_issue_is_relisted_higher_for_the_publisher_to_approve(self) -> None:
-        """A higher price is a new obligation, so it waits for the publisher's approval."""
+    def test_an_unclaimed_issue_at_its_deadline_is_refunded_and_not_relisted(self) -> None:
+        """The money goes back and no new listing appears: the publisher can name a
+        different price themselves while the issue is still unclaimed (#142)."""
         funded = get("ISS-1001")
-        assert funded.deadline is not None and funded.proposal is not None
+        assert funded.deadline is not None
         sweep_once(store, now=funded.deadline + A_MINUTE)
 
-        relisted = [r for r in store.list_issues() if r.relisted_from == "ISS-1001"]
-        assert len(relisted) == 1
-        again = relisted[0]
-        assert again.state is IssueState.AWAITING_APPROVAL
-        assert again.escrow is None
-        assert again.proposal is not None
-        assert again.proposal.recommended > funded.proposal.recommended
+        after = get("ISS-1001")
+        assert after.state is IssueState.REFUNDED
+        assert not any(r.relisted_from == "ISS-1001" for r in store.list_issues())
 
     def test_a_claimed_issue_at_its_deadline_is_refunded_but_not_relisted(self) -> None:
         """Someone took it, so the price drew a claim and is not the problem."""

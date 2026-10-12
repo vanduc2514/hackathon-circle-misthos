@@ -115,11 +115,22 @@ class TestFromALabelToAPayout:
         rec = store.find_open(REPO, 12)
         assert rec is not None and rec.state is IssueState.AWAITING_APPROVAL
         assert rec.publisher_id == publisher
-        assert "Priced on Misthos" in comments(github, 12)[-1]
+        # The label lists it with no price on it: the engine's suggestion is on the
+        # page and the publisher names the number (#142).
+        assert rec.price is None
+        assert "Listed on Misthos, with no price yet" in comments(github, 12)[-1]
 
-        # Only the publisher's own login can commit its money.
-        commented(12, "dev-ana", "/misthos approve")
+        # Only the publisher's own login can name the price and commit its money.
+        commented(12, "dev-ana", "/misthos price 250")
         assert "only the publisher" in comments(github, 12)[-1]
+
+        # And nothing is funded until the publisher names what the work is worth.
+        commented(12, "acme-maint", "Looks right.\n/misthos approve")
+        assert store.get(rec.id).state is IssueState.AWAITING_APPROVAL  # type: ignore[union-attr]
+        assert "no price" in comments(github, 12)[-1]
+
+        commented(12, "acme-maint", "/misthos price 250")
+        assert "priced this at 250.00 USDC" in comments(github, 12)[-1]
         commented(12, "acme-maint", "Looks right.\n/misthos approve")
         assert store.get(rec.id).state is IssueState.FUNDED  # type: ignore[union-attr]
         assert "Funded on Misthos" in comments(github, 12)[-1]
@@ -154,7 +165,7 @@ class TestFromALabelToAPayout:
         paid = store.get(rec.id)
         assert paid is not None and paid.state is IssueState.PAID
         steps = [d.action for d in paid.decisions]
-        for step in ("published", "criteria_approved", "price_approved", "claimed",
+        for step in ("price_set", "criteria_approved", "price_approved", "claimed",
                      "submitted", "verdict_issued", "merged", "released"):  # fmt: skip
             assert step in steps, step
 
@@ -215,6 +226,7 @@ class TestCommands:
         rec = store.get(listed)
         assert rec is not None and rec.criteria_approved_at is not None
         assert rec.acceptance_criteria[0].startswith("A test reproduces the 503")
+        commented(12, "acme-maint", "/misthos price 250")
         commented(12, "acme-maint", "/misthos approve")
         assert store.get(listed).acceptance_criteria == rec.acceptance_criteria  # type: ignore[union-attr]
 
@@ -292,8 +304,10 @@ class TestCommandsInCodeAndQuotes:
     def test_a_command_after_a_closed_fence_or_indented_three_spaces_runs(
         self, listed: str
     ) -> None:
-        commented(12, "acme-maint", "Like this:\n\n```\n/misthos claim\n```\n   /misthos approve")
-        assert store.get(listed).state is IssueState.FUNDED  # type: ignore[union-attr]
+        commented(12, "acme-maint", "Like this:\n\n```\n/misthos claim\n```\n   /misthos price 250")
+        rec = store.get(listed)
+        assert rec is not None and rec.price is not None
+        assert rec.price.decimal == 250
 
 
 class TestSeveralCommandsInOneComment:
@@ -313,7 +327,7 @@ class TestSeveralCommandsInOneComment:
     )
 
     def test_every_command_line_runs_in_order(self, listed: str, github: SimulatedGitHub) -> None:
-        commented(12, "acme-maint", self.CRITERIA + "/misthos approve")
+        commented(12, "acme-maint", self.CRITERIA + "/misthos price 250\n/misthos approve")
         rec = store.get(listed)
         assert rec is not None and rec.state is IssueState.FUNDED
         # The approve saw the criteria just approved, and funded those, not the draft.

@@ -132,9 +132,11 @@ store behind the same `SecretStore` interface. Fund both signers with a little U
 which is Arc's gas. The owner is the deployer unless ownership was transferred; the
 attestor is the address passed as `MISTHOS_ATTESTOR_ADDRESS` at deploy.
 
-The publisher names the price, anywhere in the band the engine proposed, and it is that
-price the escrow records as its ceiling -- not the engine's recommendation unless the
-publisher leaves the field alone.
+The publisher names the price, and it is that price the escrow records as its ceiling. The
+engine's reading of the issue -- an effort estimate, a range and the comparables behind it
+-- is advice on the page and never bounds what may be published; only the platform's $5
+minimum and $100,000 maximum can refuse a number, and the publisher can move it until the
+money is committed.
 
 Funding takes two approvals. The first records the ceiling and is refused with
 `NotCommitted`; the web app then has the publisher's wallet send the two calls from
@@ -207,15 +209,17 @@ is real, or settle on Arc testnet as section 3 describes.
      account page lists it.
 
 5. **On GitHub:**
-   1. Open an issue and add the `misthos` label. The App replies with the price,
-      the band, the reasoning and the drafted criteria.
+   1. Open an issue and add the `misthos` label. The App replies with what comparable
+      work settled for, the reasoning and the drafted criteria, and asks the publisher
+      to name the price with `/misthos price 250`. Nothing is funded until they do.
       Or publish it from the web app instead: **Publish** takes `owner/name` or a
-      pasted GitHub link, and leaving the issue number **empty opens a new issue** in
-      that repository with the title and description, which is then priced. A number
-      the publisher gives is priced without creating anything.
-   2. The publisher comments `/misthos approve`, or `/misthos criteria` and a list
-      first; both can go in one comment, each on its own line, and they run in
-      order. The App posts the funded price and criteria.
+      pasted GitHub link, a price, and leaving the issue number **empty opens a new
+      issue** in that repository with the title and description. A number the publisher
+      gives is listed without creating anything.
+   2. The publisher comments `/misthos price 250` to name the amount if the web form did
+      not, then `/misthos approve`, or `/misthos criteria` and a list first; all of them
+      can go in one comment, each on its own line, and they run in order. The App posts
+      the funded price and criteria.
    3. The contributor signs in once, links their GitHub account, and comments
       `/misthos claim`.
    4. The contributor opens a pull request that says `Fixes #<n>`. The project's

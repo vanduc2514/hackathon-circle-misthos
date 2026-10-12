@@ -101,9 +101,10 @@ def test_settlements_measure_self_consistency_and_fit_nothing() -> None:
     assert report.current is not None
     assert report.proposed is None
     text = render(report)
-    assert "the engine's own output" in text
-    assert "self-consistency, not calibration" in text
-    assert "nothing is fitted" in text.lower()
+    # Since #142 a settled amount is what a buyer decided, so the report reads as
+    # evidence about buyers rather than as the engine agreeing with itself.
+    assert "what a buyer decided" in text
+    assert "excluded from fitting" in text
 
 
 def test_one_settlement_among_scored_issues_still_fits_nothing() -> None:
@@ -120,6 +121,6 @@ def test_the_settled_report_says_so_when_printed_and_recorded(
     )
     out = tmp_path / "report.json"
     assert main(["--settled", "--write", str(out)]) == 0
-    assert "self-consistency, not calibration" in capsys.readouterr().out
+    assert "excluded from fitting" in capsys.readouterr().out
     recorded = json.loads(out.read_text())
     assert recorded["self_consistency"] is True and recorded["proposed"] is None

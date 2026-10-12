@@ -46,7 +46,7 @@ def publish(client: TestClient, signals: dict[str, float], repo: str = "northwin
     r = client.post(
         f"{API}/issues",
         json={"repo": repo, "title": "Retry on 429 too", "publisher_id": "PUB-1",
-              "signals": signals},
+              "price": "500", "signals": signals},
     )  # fmt: skip
     assert r.status_code == 201, r.text
     return r.json()
@@ -92,23 +92,29 @@ class TestComparablesFromSettledIssues:
         assert rec.proposal.comparables[0].price == store.get("ISS-1004").paid  # type: ignore[union-attr]
 
 
-class TestTheBooksCapThePrice:
-    def test_less_left_in_the_books_caps_the_price_and_says_where_from(
+class TestTheBooksNeverCapThePrice:
+    def test_a_spent_budget_neither_caps_the_price_nor_refuses_the_publish(
         self, client: TestClient
     ) -> None:
+        """The books are context on the page, not a bound: a price the publisher chose
+        is accepted whatever the budget says (#142)."""
         store.finance = lambda pid: Books("321.00") if pid == "PUB-1" else None
-        proposal = publish(client, {name: 4.0 for name in SETTLED_SHAPE})["proposal"]
-        assert proposal["recommended"]["usdc"] == "321.00"
-        assert "as Test Books reports it" in proposal["justification"]
-        # The justification is public; what remains of the budget is not.
-        assert "321" not in proposal["justification"]
+        issue = publish(client, {name: 4.0 for name in SETTLED_SHAPE})
+        assert issue["state"] == "AWAITING_APPROVAL"
+        assert Usdc.from_decimal(issue["price_usdc"]) == Usdc.from_decimal("500")
 
-    def test_the_lower_of_declared_and_read_wins(self, client: TestClient) -> None:
+        funded = client.post(f"{API}/issues/{issue['id']}/criteria", json={
+            "criteria": client.get(f"{API}/issues/{issue['id']}").json()["acceptance_criteria"]
+        })
+        assert funded.status_code == 200, funded.text
+        assert client.post(f"{API}/issues/{issue['id']}/fund").status_code == 200
+
+    def test_the_books_never_move_the_recommendation(self, client: TestClient) -> None:
         store.finance = lambda pid: Books("999999.00")
-        capped_by_declared = publish(client, {name: 4.0 for name in SETTLED_SHAPE})
+        with_books = publish(client, {name: 4.0 for name in SETTLED_SHAPE})
         store.finance = lambda pid: None
-        plain = publish(client, {name: 4.0 for name in SETTLED_SHAPE})
-        assert capped_by_declared["proposal"]["recommended"] == plain["proposal"]["recommended"]
+        without_books = publish(client, {name: 4.0 for name in SETTLED_SHAPE})
+        assert with_books["proposal"]["recommended"] == without_books["proposal"]["recommended"]
 
     def test_books_that_cannot_be_read_never_block_a_price(self, client: TestClient) -> None:
         store.finance = lambda pid: Books(None, fail=True)
@@ -131,7 +137,7 @@ class TestTheBooksCapThePrice:
         assert publish(client, SETTLED_SHAPE)["proposal"]["fundable"] is True
         body = client.get(f"{API}/publishers/PUB-1/finance").json()
         assert body["connected"] is True and body["note"]
-        assert body["caps_prices_at_usdc"] == body["declared_budget_usdc"]
+        assert body["spendable_usdc"] == body["declared_budget_usdc"]
 
     def test_a_ledger_that_cannot_be_understood_never_blocks_a_price(
         self, client: TestClient, tmp_path: Path
@@ -143,18 +149,18 @@ class TestTheBooksCapThePrice:
 
 
 class TestTheFinanceView:
-    def test_shows_the_books_and_what_caps_prices(self, client: TestClient) -> None:
+    def test_shows_the_books_and_what_is_left_to_spend(self, client: TestClient) -> None:
         store.finance = lambda pid: Books("321.00")
         body = client.get(f"{API}/publishers/PUB-1/finance").json()
         assert body["connected"] is True and body["source"] == "Test Books"
         assert body["budget_remaining_usdc"] == "321.00"
         assert body["cash_usdc"] == "12345.67"
-        assert body["caps_prices_at_usdc"] == "321.00"
+        assert body["spendable_usdc"] == "321.00"
 
     def test_unconnected_books_fall_back_to_the_declared_budget(self, client: TestClient) -> None:
         body = client.get(f"{API}/publishers/PUB-1/finance").json()
         assert body["connected"] is False
-        assert body["caps_prices_at_usdc"] == body["declared_budget_usdc"]
+        assert body["spendable_usdc"] == body["declared_budget_usdc"]
         # A plain decimal, which the web app can read, not the stored "48,500.00".
         assert "," not in body["declared_budget_usdc"]
         float(body["declared_budget_usdc"])

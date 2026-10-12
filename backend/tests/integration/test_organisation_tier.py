@@ -251,7 +251,7 @@ class TestAuditExport:
         rec = store.publish(
             PublishRequest(
                 repo=repo, title="Pin the parser", publisher_id=PUBLISHER,
-                signals={"blast_radius": 2},
+                price=Decimal("500"), signals={"blast_radius": 2},
             )
         )  # fmt: skip
         store.approve_and_accept(rec.id)
