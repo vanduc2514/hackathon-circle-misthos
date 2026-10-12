@@ -128,7 +128,13 @@ from misthos.schemas import (
 )
 from misthos.services import metrics, reputation
 from misthos.services.billing import PaymentRail, SimulatedRail, build_rail
-from misthos.services.chain import ChainGateway, SimulatedChain, load_deployment
+from misthos.services.chain import (
+    ChainGateway,
+    ChainRevert,
+    ChainUnavailable,
+    SimulatedChain,
+    load_deployment,
+)
 from misthos.services.chain.factory import build_chain
 from misthos.services.compliance import (
     IdentityProvider,
@@ -302,6 +308,14 @@ _HOLDS: dict[PayoutGate, tuple[str, str]] = {
         "review it",
     ),
 }
+
+def _release_refusal(exc: Exception) -> str:
+    """Why a release did not land, in words fit for the decision log, which is public:
+    the contract's error by name, never an RPC address or a key reference."""
+    if isinstance(exc, ChainRevert):
+        return f"the escrow refused it: {str(exc).split(':', 1)[0]}"
+    return "the chain could not be reached"
+
 
 # What a new listing stops, in the words written on each open issue of the party. Only
 # what the code enforces: a publisher is screened at funding, not at payout.
@@ -823,10 +837,13 @@ class Store:
         assert rec.escrow is not None and rec.contributor_id is not None
         contributor = self.repo.get_contributor(rec.contributor_id)
         assert contributor is not None
-        self._move(rec, IssueState.PAID)
         at = when or _now()
         amount = self._committed(rec)
+        # The state moves only once the chain has taken the release. If it reverts or
+        # cannot be reached, the issue stays ACCEPTED and `_pay` holds the payout rather
+        # than losing the acceptance with it (#125).
         tx = self.chain.release(rec.id, contributor.wallet.address, amount, at)
+        self._move(rec, IssueState.PAID)
         self._book(rec, MoneyEventKind.RELEASED, amount, contributor.id, tx, at)
         rec.escrow.released = True
         # The fee comes out of the commitment rather than being added to it: the
@@ -1009,11 +1026,24 @@ class Store:
                 if rec.accepted_by == "grace"
                 else "escrow_acceptance_attestation"
             )
-            self._release(rec, rule=rule, when=now)
-            return True
+            try:
+                self._release(rec, rule=rule, when=now)
+                return True
+            except (ChainRevert, ChainUnavailable) as exc:
+                # The acceptance stands whatever the chain says. Raising here used to
+                # throw the merge away with it, so the publisher could then decline work
+                # they had merged (#125); the payout is held and tried again instead.
+                log.warning("release of %s did not land, holding the payout: %s", rec.id, exc)
+                gate, refused = PayoutGate.RELEASE_FAILED, _release_refusal(exc)
 
         if rec.payout_hold != gate.value:
-            if gate is PayoutGate.AWAIT_APPROVER:
+            if gate is PayoutGate.RELEASE_FAILED:
+                rule = "escrow_release"
+                outcome = (
+                    f"the release did not land ({refused}); the acceptance stands, and the "
+                    "release is tried again on the sweeper's next pass"
+                )
+            elif gate is PayoutGate.AWAIT_APPROVER:
                 rule = "release_threshold"
                 outcome = (
                     f"the release of {self._committed(rec)} is over {publisher.name}'s "

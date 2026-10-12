@@ -132,6 +132,10 @@ store behind the same `SecretStore` interface. Fund both signers with a little U
 which is Arc's gas. The owner is the deployer unless ownership was transferred; the
 attestor is the address passed as `MISTHOS_ATTESTOR_ADDRESS` at deploy.
 
+A release the chain refuses — a revert, or the RPC unreachable — does not undo the
+acceptance: the payout is held and tried again on the sweeper's next pass, and the issue
+stays accepted throughout (#125).
+
 The publisher names the price, and it is that price the escrow records as its ceiling. The
 engine's reading of the issue -- an effort estimate, a range and the comparables behind it
 -- is advice on the page and never bounds what may be published; only the platform's $5

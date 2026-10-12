@@ -7,8 +7,10 @@ from datetime import timedelta
 
 import pytest
 
+from misthos.domain.compliance import PAYOUT_RETRY_INTERVAL, PayoutGate
 from misthos.domain.issue import ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
 from misthos.models.records import IssueRecord
+from misthos.services.chain import ChainRevert
 from misthos.services.review import ReviewFailed
 from misthos.store import store
 from misthos.workers.sweeper import (
@@ -140,6 +142,39 @@ class TestSilentPublisher:
 
         sweep_once(store, now=rec.deadline + A_MINUTE)
         assert get("ISS-1002").state is IssueState.PAID
+
+    def test_a_release_the_chain_refused_is_held_and_paid_on_a_later_pass(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A revert must not throw the acceptance away (#125). The pass is not a failure,
+        the issue keeps the grace's acceptance, and the release is tried again."""
+        store.advance("ISS-1002")
+        accepted = get("ISS-1002")
+        assert accepted.review is not None
+        release = store.chain.release
+
+        def refused(*_: object) -> str:
+            raise ChainRevert("NotAttestor")
+
+        monkeypatch.setattr(store.chain, "release", refused)
+        later = accepted.review.decided_at + SILENT_PUBLISHER_GRACE + timedelta(hours=1)
+        report = sweep_once(store, now=later)
+
+        assert report.failed == []
+        held = get("ISS-1002")
+        assert held.state is IssueState.ACCEPTED and held.accepted_by == "grace"
+        assert held.payout_hold == PayoutGate.RELEASE_FAILED.value
+        assert held.decisions[-1].action == "payout_held"
+        assert "NotAttestor" in held.decisions[-1].outcome
+
+        # The chain recovers, and the next pass pays what was already accepted.
+        monkeypatch.setattr(store.chain, "release", release)
+        assert held.payout_checked_at is not None
+        sweep_once(store, now=held.payout_checked_at + PAYOUT_RETRY_INTERVAL + A_MINUTE)
+
+        paid = get("ISS-1002")
+        assert paid.state is IssueState.PAID and paid.accepted_by == "grace"
+        assert paid.payout_hold is None and paid.paid is not None
 
 
 class TestSweeping:
