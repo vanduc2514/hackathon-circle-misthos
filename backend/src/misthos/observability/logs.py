@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 
 from misthos.observability.context import actor, correlation_id
@@ -33,6 +34,37 @@ class ContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.correlation_id = correlation_id.get() or "-"
         record.actor = actor.get() or "-"
+        return True
+
+
+# GitHub sends the user back to the OAuth callback with a one-time code and the state
+# in the query string, and uvicorn's access line is the whole URL. Neither belongs in a
+# log: the code is half of the sign-in, and the state is what the sign-in cookie must
+# match, so a log reader holding both could finish someone else's sign-in.
+_CALLBACK = "/auth/github/callback?"
+_CALLBACK_SECRETS = re.compile(r"(?<=[?&])(code|state)=[^&\s\"]*")
+
+
+def redact_oauth(text: str) -> str:
+    """A URL with the callback's `code` and `state` replaced, everything else as it was."""
+    if _CALLBACK not in text:
+        return text
+    return _CALLBACK_SECRETS.sub(lambda m: f"{m.group(1)}=[redacted]", text)
+
+
+class RedactOAuth(logging.Filter):
+    """Take the OAuth code and state out of the access line for the callback.
+
+    uvicorn writes the access line as a format string with the pieces as `args`, so the
+    path is redacted here rather than in the formatter: that keeps it out of the record's
+    message, its formatted text and anything that reads the record.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == "uvicorn.access" and isinstance(record.args, tuple):
+            record.args = tuple(
+                redact_oauth(arg) if isinstance(arg, str) else arg for arg in record.args
+            )
         return True
 
 
@@ -66,6 +98,7 @@ def configure(*, json_lines: bool, level: str = "INFO") -> None:
     send uvicorn's loggers through it too, so one process writes one kind of line."""
     handler = logging.StreamHandler()
     handler.addFilter(ContextFilter())
+    handler.addFilter(RedactOAuth())
     handler.setFormatter(JsonFormatter() if json_lines else logging.Formatter(TEXT_FORMAT))
     root = logging.getLogger()
     root.handlers = [handler]
