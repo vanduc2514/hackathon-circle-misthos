@@ -289,7 +289,7 @@ class TestTheLimitIsAtomic:
         import time
 
         # Two issues of one publisher in one category, each able to pass alone but not
-        # together: ISS-1006 commits ~2601 and a second compliance issue ~259, against
+        # together: ISS-1006 commits ~2601 and a second compliance issue 259, against
         # a 2700 cap.
         policy(client, category_limits={"compliance": "2700"})
         second = store.publish(
@@ -298,6 +298,9 @@ class TestTheLimitIsAtomic:
                 title="Compliance: reconcile the monthly export",
                 labels=["compliance"],
                 publisher_id=PUBLISHER,
+                # The publisher names the price (#142), and it is the amount the cap
+                # counts. Without one this issue cannot be funded at all.
+                price=Decimal("259"),
                 signals={"blast_radius": 2},
             )
         ).id
@@ -307,6 +310,11 @@ class TestTheLimitIsAtomic:
             # and already pass its checkability rules.
             rec = store.get(issue_id)
             assert rec is not None
+            # The premise of the test is that each of these can fund alone. A missing
+            # price breaks it silently: the loser is refused for having no price to
+            # commit rather than by the limit, and whether the test notices depends on
+            # which thread reached the funding first (#142).
+            assert rec.price is not None, f"{issue_id} has no price, so it cannot fund"
             store.approve_criteria(issue_id, list(rec.acceptance_criteria), APPROVER)
             assert store.get(issue_id).state is IssueState.AWAITING_APPROVAL
 
@@ -341,6 +349,12 @@ class TestTheLimitIsAtomic:
         funded = [o for o in outcomes if o == "funded"]
         assert len(funded) == 1, f"both fundings passed a 2700 limit: {outcomes}"
         assert len(outcomes) == 2, f"a thread never finished: {outcomes}"
+        # The loser is refused by the limit, or by the lock it was contending on when
+        # the other thread held it: both are legitimate ways to lose. What it must
+        # never be is a fund, or a failure from somewhere else entirely. That last
+        # clause is what caught a second issue with no price to commit, which could
+        # not have funded whatever the limit said (#142).
+        assert set(outcomes) <= {"funded", "PolicyRefusal", "Busy"}, outcomes
 
         # And what the two of them committed together is inside what the organisation
         # allowed. Scoped to these two: the publisher's seeded history is not part of
