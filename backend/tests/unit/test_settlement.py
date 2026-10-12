@@ -14,7 +14,9 @@ from misthos.domain.escrow import (
     ceiling_call,
     commit_call,
     commitments_call,
+    decode_address,
     fee_call,
+    fee_recipient_call,
     issue_key,
     refund_call,
     release_call,
@@ -25,17 +27,20 @@ from misthos.domain.escrow import (
 )
 from misthos.domain.money import Usdc
 from misthos.services.chain import ArcEscrow, ChainRevert, ChainUnavailable, EscrowDeployment
+from misthos.services.chain.arc import NO_FEE_RECIPIENT
 from misthos.services.chain.deployment import DEPLOYMENTS_DIR
 from misthos.services.chain.rpc import JsonRpc, Sender
 
 DEPLOYED = EscrowDeployment("0x" + "e5" * 20, 5042002, "record", deployed_at_block=7)
 PUBLISHER = "0x" + "0" * 36 + "0b0b"
+FEES = "0x" + "fe" * 20
 DEADLINE = datetime.fromtimestamp(1_800_000_000, UTC)
 # commitments(bytes32) for a 180 USDC commitment by 0x...0B0B, held until DEADLINE.
 HELD_180 = (
     "0x" + f"{0xB0B:064x}" + f"{180_000_000:064x}" + f"{1_800_000_000:064x}" + f"{1:064x}"
 )
 NONE = "0x" + "0" * 256
+WITH_A_RECIPIENT = {fee_recipient_call(): "0x" + FEES[2:].rjust(64, "0")}
 
 
 def _rpc(answers: dict, seen: list[dict] | None = None) -> httpx.MockTransport:
@@ -67,6 +72,11 @@ class TestEncoding:
         assert release_call("ISS-1", PUBLISHER, Usdc(5)) == (
             "0xf5b16b84" + issue_key("ISS-1")[2:] + PUBLISHER[2:].rjust(64, "0") + f"{5:064x}"
         )
+        assert fee_recipient_call() == "0x46904840"
+
+    def test_an_address_word_reads_as_an_address_and_zero_as_nobody(self) -> None:
+        assert decode_address("0x" + FEES[2:].rjust(64, "0")) == FEES
+        assert decode_address("0x" + "0" * 64) is None
 
     def test_every_error_the_contract_declares_has_a_name(self) -> None:
         abi = json.loads((DEPLOYMENTS_DIR / "MisthosEscrow.abi.json").read_text())
@@ -121,24 +131,18 @@ class TestCommit:
     def test_the_take_rate_is_fixed_on_chain_before_the_publisher_commits(self) -> None:
         # The contract refuses to move the rate once the money is in, so the owner
         # sets it on the first approval, while the escrow still waits for the wallet.
+        # Named on an escrow that has a recipient: a rate with nowhere to pay it is
+        # refused before this is sent (#127).
         owner = FakeSender()
-        escrow = ArcEscrow(
-            "http://rpc",
-            DEPLOYED,
-            owner=owner,  # type: ignore[arg-type]
-            transport=_rpc({"eth_getCode": "0x6080"}),
-        )
+        escrow = _escrow_with(WITH_A_RECIPIENT, owner=owner)
         with pytest.raises(ChainRevert, match="NotCommitted"):
             escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), DEADLINE, DEADLINE, 1000)
         assert owner.sent == [(DEPLOYED.address, set_fee_call("ISS-1", 1000))]
 
     def test_a_rate_already_in_force_is_not_sent_again(self) -> None:
         owner = FakeSender()
-        escrow = ArcEscrow(
-            "http://rpc",
-            DEPLOYED,
-            owner=owner,  # type: ignore[arg-type]
-            transport=_rpc({"eth_getCode": "0x6080", fee_call("ISS-1"): f"0x{1000:064x}"}),
+        escrow = _escrow_with(
+            {**WITH_A_RECIPIENT, fee_call("ISS-1"): f"0x{1000:064x}"}, owner=owner
         )
         with pytest.raises(ChainRevert, match="NotCommitted"):
             escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), DEADLINE, DEADLINE, 1000)
@@ -179,6 +183,16 @@ class FakeSender:
 def _escrow(**signers: FakeSender) -> ArcEscrow:
     answers = {"eth_getCode": "0x6080"}
     return ArcEscrow("http://rpc", DEPLOYED, transport=_rpc(answers), **signers)  # type: ignore[arg-type]
+
+
+def _escrow_with(answers: dict, **signers: FakeSender) -> ArcEscrow:
+    """An escrow whose RPC answers what the test names, plus code at its address."""
+    return ArcEscrow(
+        "http://rpc",
+        DEPLOYED,
+        transport=_rpc({"eth_getCode": "0x6080", **answers}),
+        **signers,  # type: ignore[arg-type]
+    )
 
 
 class TestSignedCalls:
@@ -258,3 +272,70 @@ class TestSender:
         with pytest.raises(RuntimeError, match="holds nothing"):
             Sender(rpc, 5042002, no_key).send("0x" + "e5" * 20, "0x1234")
         assert seen == []
+
+
+class TestTheFeeRecipient:
+    """How an operator, and a publisher, find out the escrow cannot pay a take rate out.
+
+    The platform sets a take rate on every issue, so an escrow deployed without a
+    recipient would take commitments whose every release reverts FeeRecipientNotSet
+    (#127).
+    """
+
+    def test_an_operator_hears_of_a_missing_fee_recipient(self) -> None:
+        assert _escrow().settlement_problems() == [NO_FEE_RECIPIENT]
+        assert _escrow_with(WITH_A_RECIPIENT).settlement_problems() == []
+
+    def test_an_unreachable_chain_is_reported_rather_than_raised(self) -> None:
+        rpc = ArcEscrow(
+            "http://rpc",
+            DEPLOYED,
+            transport=_rpc({"eth_getCode": "0x", "eth_chainId": hex(5042002)}),
+        )
+        problems = rpc.settlement_problems()
+        assert len(problems) == 1 and "0x" in problems[0]
+
+    def test_the_commitment_is_refused_before_the_rate_goes_on(self) -> None:
+        owner = FakeSender()
+        escrow = _escrow_with({}, owner=owner)
+        with pytest.raises(ChainRevert, match="FeeRecipientNotSet"):
+            escrow.commit("ISS-1", PUBLISHER, Usdc(180), DEADLINE, DEADLINE, 1000)
+        # Nothing was signed: the setFee that would have made every release revert was
+        # never sent, and no money was asked for.
+        assert owner.sent == []
+
+    def test_a_named_recipient_lets_the_rate_go_on(self) -> None:
+        owner = FakeSender()
+        escrow = _escrow_with(WITH_A_RECIPIENT, owner=owner)
+        with pytest.raises(ChainRevert, match="NotCommitted"):
+            escrow.commit("ISS-1", PUBLISHER, Usdc(180), DEADLINE, DEADLINE, 1000)
+        assert owner.sent == [(DEPLOYED.address, set_fee_call("ISS-1", 1000))]
+
+    def test_a_commitment_with_no_rate_goes_on_without_a_recipient(self) -> None:
+        # Nothing to pay out means nothing to be missing: a zero-bps commitment is not
+        # refused, so an escrow used without a take rate still works.
+        owner = FakeSender()
+        escrow = _escrow_with({}, owner=owner)
+        with pytest.raises(ChainRevert, match="NotCommitted"):
+            escrow.commit("ISS-1", PUBLISHER, Usdc(180), DEADLINE, DEADLINE, 0)
+        assert owner.sent == []
+
+
+class TestTheStartupReport:
+    async def test_the_api_reports_an_escrow_with_no_fee_recipient_when_it_starts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from misthos import main
+
+        monkeypatch.setattr(main.settings, "simulated", False)
+        monkeypatch.setattr(main.store, "chain", _escrow())
+        assert await main.report_settlement_problems() == [NO_FEE_RECIPIENT]
+
+        monkeypatch.setattr(main.store, "chain", _escrow_with(WITH_A_RECIPIENT))
+        assert await main.report_settlement_problems() == []
+
+    async def test_a_simulated_run_reports_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from misthos import main
+
+        monkeypatch.setattr(main.settings, "simulated", True)
+        assert await main.report_settlement_problems() == []

@@ -145,6 +145,17 @@ def fee_call(issue_id: str) -> str:
     return selector("feeBps(bytes32)") + issue_key(issue_id)[2:]
 
 
+def fee_recipient_call() -> str:
+    """Call data for `feeRecipient()`: where every release's take rate is paid."""
+    return selector("feeRecipient()")
+
+
+def decode_address(result: str) -> str | None:
+    """An address word. The zero address reads as None: nobody."""
+    (value,) = _words(result, 1)
+    return None if value == 0 else "0x" + f"{value:040x}"
+
+
 def release_call(issue_id: str, contributor: str, amount: Usdc) -> str:
     """Call data for `release(bytes32,address,uint256)`. Attestor only."""
     return (

@@ -92,6 +92,10 @@ cast wallet import misthos-deployer --interactive
 export ARC_TESTNET_RPC_URL=https://rpc.testnet.arc.io
 # Optional: the attestor that may release funds; the deployer by default.
 export MISTHOS_ATTESTOR_ADDRESS=0x...
+# Required: where releases pay the platform's take rate. The script refuses to run
+# without it, because the platform sets a take rate on every issue and the escrow
+# refuses a release that has a rate and nowhere to send it.
+export MISTHOS_FEE_RECIPIENT_ADDRESS=0x...
 forge script script/Deploy.s.sol --rpc-url arc_testnet --account misthos-deployer --broadcast \
   --verify --verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/
 ```
@@ -150,7 +154,11 @@ After any change to the contract, run `mise run abi:contracts` and commit
 stale.
 
 The script refuses Arc mainnet (chain 5042) unless `MISTHOS_CONFIRM_MAINNET=5042`
-is set for that one command.
+is set for that one command. It also refuses to run without
+`MISTHOS_FEE_RECIPIENT_ADDRESS`: the platform sets a take rate on every issue, and the
+escrow refuses a release that has a rate and nowhere to pay it, so an escrow deployed
+without a recipient could take commitments it could never pay out (#127). The API also
+reports a missing recipient at startup, and refuses a commitment on such an escrow.
 
 Mainnet moves real USDC irreversibly. There is deliberately no mainnet task.
 

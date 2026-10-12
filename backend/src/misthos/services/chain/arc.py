@@ -29,9 +29,11 @@ from misthos.domain.escrow import (
     ceiling_call,
     commitments_call,
     commitments_call_by_key,
+    decode_address,
     decode_ceiling,
     decode_commitment,
     fee_call,
+    fee_recipient_call,
     issue_key,
     refund_call,
     release_call,
@@ -43,6 +45,12 @@ from misthos.domain.money import Usdc
 from misthos.services.chain.base import ChainRevert
 from misthos.services.chain.deployment import EscrowDeployment
 from misthos.services.chain.rpc import ChainUnavailable, JsonRpc, Sender
+
+# What an operator is told when the escrow has nowhere to send the take rate.
+NO_FEE_RECIPIENT = (
+    "the escrow has no fee recipient, so every release at a take rate would revert "
+    "FeeRecipientNotSet; the owner must call setFeeRecipient before any issue is funded"
+)
 
 # How far the deadline the publisher committed may sit from the one the platform
 # expects. The publisher's wallet sends the commitment minutes after approval, so
@@ -124,6 +132,19 @@ class ArcEscrow:
         self.verify()
         return decode_ceiling(self._call(ceiling_call(issue_id)))
 
+    def fee_recipient(self) -> str | None:
+        """Where releases pay the take rate, or None when the owner never named one."""
+        self.verify()
+        return decode_address(self._call(fee_recipient_call()))
+
+    def settlement_problems(self) -> list[str]:
+        """What would stop this escrow paying a funded issue out. Read at startup, so an
+        operator hears of it before a publisher commits money, not at the first release."""
+        try:
+            return [] if self.fee_recipient() is not None else [NO_FEE_RECIPIENT]
+        except ChainUnavailable as exc:
+            return [str(exc)]
+
     def commitments(self) -> dict[str, OnChain]:
         """Every commitment the escrow has emitted, keyed by issue id.
 
@@ -171,6 +192,12 @@ class ArcEscrow:
         """
         held = self.commitment(issue_id)
         if held is None:
+            # The rate goes on with the money, and the contract refuses to move it once
+            # it is in. On an escrow with no fee recipient every release at that rate
+            # would revert FeeRecipientNotSet, after the publisher's money was already
+            # held, so it is refused here instead (#127).
+            if fee_bps and self.fee_recipient() is None:
+                raise ChainRevert(f"FeeRecipientNotSet: {NO_FEE_RECIPIENT}")
             if self.fee_bps(issue_id) != fee_bps:
                 self._signer(self._owner, "owner").send(
                     self.address, set_fee_call(issue_id, fee_bps)

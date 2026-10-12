@@ -54,9 +54,20 @@ contract DeployTest is Test {
     // Outside a broadcast, `run()` itself must take the dry-run path.
     function test_run_outside_a_broadcast_leaves_the_real_record_alone() public {
         vm.setEnv("MISTHOS_USDC_ADDRESS", vm.toString(USDC));
+        // Required since #127: a deploy with no fee recipient would take commitments
+        // whose every release reverts.
+        vm.setEnv("MISTHOS_FEE_RECIPIENT_ADDRESS", vm.toString(FEES));
         string memory before = _recordOrNothing();
         script.run();
         assertEq(_recordOrNothing(), before);
+    }
+
+    // The platform sets a take rate on every issue, and the escrow refuses a release
+    // that has a rate and nowhere to pay it. An escrow deployed without a recipient
+    // would take money it could never pay out (#127).
+    function test_a_deploy_without_a_fee_recipient_is_refused() public {
+        vm.expectRevert(Deploy.FeeRecipientRequired.selector);
+        script.deploy(ATTESTOR, USDC, address(0), 0, "");
     }
 
     /// @dev The real record for this chain as it stands, or "" when there is none.

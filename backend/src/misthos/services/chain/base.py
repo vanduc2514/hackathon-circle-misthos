@@ -53,5 +53,9 @@ class ChainGateway(Protocol):
     def commitments(self) -> dict[str, OnChain]:
         """Every commitment the escrow knows about, keyed by issue id."""
 
+    def settlement_problems(self) -> list[str]:
+        """What would stop this escrow paying a funded issue out, in words for an
+        operator. Empty when nothing would."""
+
     def reset(self) -> None:
         """Forget everything. The simulation's reset; a real chain refuses."""

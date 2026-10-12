@@ -123,6 +123,10 @@ class SimulatedChain:
                 for r in rows
             }
 
+    def settlement_problems(self) -> list[str]:
+        """Nothing: the simulated escrow keeps its own books and pays from them."""
+        return []
+
     def reset(self) -> None:
         with self._guard:
             if self._engine is None:
