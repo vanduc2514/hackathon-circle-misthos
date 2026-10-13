@@ -202,6 +202,77 @@ class TestCommit:
             "0x" + PUBLISHER[2:].lower().rjust(64, "0"),
         ]
 
+    def test_the_commitment_is_looked_for_in_the_recent_blocks_first(self) -> None:
+        """The common case: the wallet committed moments ago, so the log is in the last
+        few hours. Walking from the deployment instead spends sixty-five requests on a
+        node that allows about sixty a minute, which is how a booking was lost (#154)."""
+        seen: list[dict] = []
+        escrow = ArcEscrow(
+            "http://rpc",
+            # A deployment far in the past: the range is what makes a full walk expensive.
+            EscrowDeployment("0x" + "e5" * 20, 5042002, "record", deployed_at_block=1),
+            transport=_rpc(
+                {
+                    "eth_getCode": "0x6080",
+                    commitments_call("ISS-1"): HELD_180,
+                    "eth_blockNumber": hex(1_000_000),
+                    "eth_getLogs": [
+                        {"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}
+                    ],
+                },
+                seen,
+            ),
+        )
+        expected = DEADLINE + timedelta(minutes=20)
+        assert escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), expected, DEADLINE) == "0xC0"
+
+        asked = [b for b in seen if b["method"] == "eth_getLogs"]
+        # Four windows of the last 20,000 blocks, not two hundred of the whole range.
+        assert len(asked) == 4
+        first_window = 1_000_000 - ArcEscrow.LOG_RECENT_BLOCKS + 1
+        assert asked[0]["params"][0]["fromBlock"] == hex(first_window)
+        assert asked[-1]["params"][0]["toBlock"] == hex(1_000_000)
+
+    def test_a_commitment_older_than_the_recent_window_is_still_found(self) -> None:
+        """Widening is the fallback, not the first move, but it is still there for a
+        commitment the recent window missed."""
+        seen: list[dict] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            seen.append(body)
+            if body["method"] == "eth_call":
+                key = body["params"][0]["data"]
+                if key == commitments_call("ISS-1"):
+                    result: object = HELD_180
+                elif key.startswith(commitments_call("")[:10]):
+                    result = NONE
+                else:
+                    result = "0x" + "0" * 64
+            elif body["method"] == "eth_blockNumber":
+                result = hex(100)
+            elif body["method"] == "eth_getLogs":
+                window = body["params"][0]
+                # Only the window that reaches back past the deployment has it.
+                inside = int(window["fromBlock"], 16) <= 7 <= int(window["toBlock"], 16)
+                result = (
+                    [{"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}]
+                    if inside
+                    else []
+                )
+            else:
+                result = "0x6080" if body["method"] == "eth_getCode" else None
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": result})
+
+        escrow = ArcEscrow("http://rpc", DEPLOYED, transport=httpx.MockTransport(handle))
+        expected = DEADLINE + timedelta(minutes=20)
+        assert escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), expected, DEADLINE) == "0xC0"
+
+        windows = [b["params"][0] for b in seen if b["method"] == "eth_getLogs"]
+        # The recent walk first, then the whole range: both start at the deployment here,
+        # because there is less history than one recent window.
+        assert windows[0]["fromBlock"] == hex(7)
+
     def test_a_scan_of_one_window_does_not_pause(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A fresh deployment has one window of history, and the common case must not
         pay for a pause it will not use."""

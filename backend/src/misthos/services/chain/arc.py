@@ -79,13 +79,20 @@ class ArcEscrow:
     LOG_RANGE_BLOCKS = 5_000
 
     # And a limit on how fast that walk may go. Against the same node, roughly ten
-    # back-to-back `eth_getLogs` are accepted and the eleventh answers 429, so a scan
-    # meets it as soon as the history is longer than ten windows -- 50,000 blocks, which
-    # a testnet passes in days. The pause costs a few hundred milliseconds across a
-    # range this size, and without it one window per history is a coin toss: a 429
-    # during `_commit_tx` throws away a booking the publisher's wallet has already made
-    # (#154).
+    # back-to-back `eth_getLogs` are accepted and the eleventh answers 429, and the same
+    # node allows about sixty in a rolling minute -- which one walk of the range needs
+    # sixty-five of, so a paced walk of the whole range still meets the limit near its
+    # end (#154). The pause keeps a walk from bursting; it cannot make a walk this long
+    # fit.
     LOG_PAUSE_SECONDS = 0.2
+
+    # So the common case does not walk the range at all. A confirmation is about a
+    # commitment the publisher's wallet just made, and the booking has to happen within
+    # an hour of it (#126), so its log is within the last few hours of blocks. Arc
+    # testnet ran at about 2 blocks a second when this was measured, so this is roughly
+    # three hours: four windows, comfortably clear of both limits, and a few hundred
+    # blocks of a fresh deployment.
+    LOG_RECENT_BLOCKS = 20_000
 
     def __init__(
         self,
@@ -253,13 +260,22 @@ class ArcEscrow:
         return sender
 
     def _committed_logs(
-        self, key: str | None = None, publisher: str | None = None
+        self,
+        key: str | None = None,
+        publisher: str | None = None,
+        recent: int | None = None,
     ) -> list[dict]:
         """Every Committed log, narrowed to one issue and one publisher when given.
 
         The narrowing is the node's work, not ours: both are indexed topics, so a whole
         history of commitments for other issues costs one window's worth of data instead
         of a window per commitment.
+
+        `recent` bounds the walk to the last that many blocks. A confirmation wants this:
+        the commitment it is looking for was just made, and walking the range from the
+        deployment would spend sixty-five requests to find it, past what the node allows
+        in a minute (#154). Without `recent`, the walk is the whole history, which is what
+        reconciliation needs.
 
         Windows are asked for one at a time, with a pause between them: the node refuses
         a burst with 429 (#154).
@@ -270,10 +286,10 @@ class ArcEscrow:
         if publisher is not None:
             # A topic is a full word, so an address is padded to the right.
             topics.append("0x" + publisher.lower().replace("0x", "").rjust(64, "0"))
-        first = self.deployment.deployed_at_block or 0
         head = int(self._rpc("eth_blockNumber", []), 16)
+        first = self.deployment.deployed_at_block or 0
+        start = max(first, head - recent + 1) if recent is not None else first
         found: list[dict] = []
-        start = first
         while start <= head:
             end = min(start + self.LOG_RANGE_BLOCKS - 1, head)
             logs = self._rpc(
@@ -289,9 +305,8 @@ class ArcEscrow:
             )
             if isinstance(logs, list):
                 found.extend(logs)
-            # Paced between windows, never after the last: a scan of one window -- the
-            # common case, and the only one a fresh deployment has -- must not pay for
-            # a pause it will not use.
+            # Paced between windows, never after the last: a bounded walk -- the common
+            # case -- must not pay for a pause it will not use.
             start = end + 1
             if start <= head:
                 time.sleep(self.LOG_PAUSE_SECONDS)
@@ -304,8 +319,15 @@ class ArcEscrow:
         send this transaction: the publisher's wallet does. `publisher` is the same
         address the commitment was just checked against, so the log found is this
         issue's commitment and not an earlier one from another wallet (#154).
+
+        Looked for in the recent blocks first, because the commitment was just made, and
+        only then across the whole history: the booking is refused once the commitment is
+        more than an hour old (#126), so an older log is not one this can book, but a
+        wider walk is better than insisting on it.
         """
-        logs = self._committed_logs(issue_key(issue_id), publisher)
+        logs = self._committed_logs(issue_key(issue_id), publisher, recent=self.LOG_RECENT_BLOCKS)
+        if not logs:
+            logs = self._committed_logs(issue_key(issue_id), publisher)
         if not logs:
             raise ChainUnavailable(f"the escrow holds {issue_id}, but no Committed log was found")
         return str(logs[-1]["transactionHash"])
