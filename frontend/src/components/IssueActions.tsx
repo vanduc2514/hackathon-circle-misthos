@@ -52,10 +52,15 @@ export async function perform(issueId: string, act: Act): Promise<IssueOut> {
       // In the simulation the first approval books the funding. On Arc it records the
       // ceiling and waits for the publisher's own wallet to commit (see lib/fund). The
       // amount is the price the publisher set when they published the issue, so there is
-      // none to pass: a second place to name it would be a second thing to audit.
+      // none to pass: a second place to name it would be a second thing to audit. The
+      // escrow readback is what decides whether the wallet is asked at all, because a
+      // refusal's own words may not survive the trip here (#147).
       return fundFromWallet(
-        async () => unwrap(await api.POST('/api/v1/issues/{issue_id}/fund', path)),
-        async () => unwrap(await api.GET('/api/v1/issues/{issue_id}/commitment', path)),
+        {
+          fund: async () => unwrap(await api.POST('/api/v1/issues/{issue_id}/fund', path)),
+          plan: async () => unwrap(await api.GET('/api/v1/issues/{issue_id}/commitment', path)),
+          escrow: async () => unwrap(await api.GET('/api/v1/issues/{issue_id}/escrow', path)),
+        },
         browserWallet(),
       )
     case 'claim':

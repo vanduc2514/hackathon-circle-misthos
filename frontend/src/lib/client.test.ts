@@ -118,6 +118,43 @@ describe('unwrap', () => {
   it('names no issue when the refusal does not', () => {
     expect(refusal({ detail: 'another action is in progress' }).issueId).toBeNull()
   })
+
+  it('says what arrived when the body was not the API JSON (#147)', () => {
+    // A proxy in front of the deployment replaced the body, so openapi-fetch could not
+    // parse it and left the text where the parsed body would have been. On HTTP/2 there
+    // is no reason phrase either, so falling back to the status line alone gave `409`:
+    // a number the publisher cannot act on and that hides what replaced the reason.
+    const refused = refusal('Bad Gateway')
+
+    expect(refused.message).toBe('409 Bad Gateway')
+    expect(refused.body).toBe('Bad Gateway')
+    expect(refused.status).toBe(409)
+  })
+
+  it('names the request to look up when the refusal carried an id', () => {
+    const withId = new Response(null, { status: 409 })
+    withId.headers.set('X-Request-ID', '80dc7d660ce07c0682ea5fda5ed04574')
+
+    let thrown: unknown
+    try {
+      unwrap({ error: 'Bad Gateway', response: withId })
+    } catch (err) {
+      thrown = err
+    }
+
+    const refused = thrown as ApiError
+    expect(refused.requestId).toBe('80dc7d660ce07c0682ea5fda5ed04574')
+    expect(refused.message).toBe('409 Bad Gateway (request 80dc7d660ce07c0682ea5fda5ed04574)')
+  })
+
+  it('never shows a bare status code when nothing said anything', () => {
+    const empty = new Response(null, { status: 409 })
+    expect(() => unwrap({ error: undefined, response: empty })).toThrow('409 Conflict')
+  })
+
+  it('keeps a long body out of the message', () => {
+    expect(refusal('x'.repeat(500)).message.length).toBeLessThan(140)
+  })
 })
 
 describe('checksChip', () => {

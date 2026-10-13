@@ -24,16 +24,35 @@ export type Account = components['schemas']['Account']
 export type MeOut = components['schemas']['MeOut']
 export type SessionOut = components['schemas']['SessionOut']
 
-/** A refusal from the API, carrying the reason it gave. */
+/**
+ * A refusal from the API, carrying the reason it gave.
+ *
+ * `body` is the response text as it arrived when it was not the API's JSON. A refusal
+ * that reaches us without JSON is still evidence: it names whatever replaced it, and
+ * saying so beats showing a bare status code. `requestId` is the API's correlation id,
+ * the handle for finding the same refusal in the log.
+ */
 export class ApiError extends Error {
   status: number
   /** The issue the refusal points at, such as the listing a GitHub issue already has. */
   issueId: string | null
+  /** The response text as it arrived, when what arrived was not the API's JSON. */
+  body: string | null
+  /** `X-Request-ID`, when the response carried one. */
+  requestId: string | null
 
-  constructor(status: number, message: string, issueId: string | null = null) {
+  constructor(
+    status: number,
+    message: string,
+    issueId: string | null = null,
+    body: string | null = null,
+    requestId: string | null = null,
+  ) {
     super(message)
     this.status = status
     this.issueId = issueId
+    this.body = body
+    this.requestId = requestId
   }
 }
 
@@ -59,14 +78,62 @@ export function detailOf(error: unknown): string | null {
   return null
 }
 
+/** The body as it arrived, when it was not the API's parsed JSON. */
+export function bodyOf(error: unknown): string | null {
+  if (typeof error !== 'string') return null
+  const text = error.trim()
+  return text ? text : null
+}
+
+/** The HTTP reason phrases, for when neither the API nor the transport gave one. */
+const REASONS: Record<number, string> = {
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  409: 'Conflict',
+  422: 'Unprocessable Entity',
+  429: 'Too Many Requests',
+  500: 'Internal Server Error',
+  502: 'Bad Gateway',
+  503: 'Service Unavailable',
+}
+
+/** Enough of a replaced body to name it, without burying the box that shows it. */
+const MAX_REASON = 120
+
+/**
+ * What to say when the API's own reason did not survive.
+ *
+ * `response.statusText` is empty over HTTP/2, so falling back to it alone leaves the
+ * status as the whole message: `409`, which says nothing and hides the fact that
+ * something replaced the body (#147). The text that did arrive names that something, and
+ * the request id finds the same refusal in the API's log. A bare number is impossible.
+ */
+export function refusalReason(
+  status: number,
+  statusText: string,
+  body: string | null,
+  requestId: string | null,
+): string {
+  const arrived = body?.split('\n')[0]?.trim() ?? ''
+  const named = arrived || statusText.trim() || REASONS[status] || 'the API refused'
+  const short = named.length > MAX_REASON ? `${named.slice(0, MAX_REASON)}…` : named
+  return requestId ? `${status} ${short} (request ${requestId})` : `${status} ${short}`
+}
+
 /** The body of a successful call, or an ApiError with the API's own reason. */
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
   if (result.error === undefined && result.data !== undefined) return result.data
   const { status, statusText } = result.response
+  const body = bodyOf(result.error)
+  const requestId = result.response.headers.get('X-Request-ID')
   throw new ApiError(
     status,
-    detailOf(result.error) ?? `${status} ${statusText}`.trim(),
+    detailOf(result.error) ?? refusalReason(status, statusText, body, requestId),
     issueIdOf(result.error),
+    body,
+    requestId,
   )
 }
 

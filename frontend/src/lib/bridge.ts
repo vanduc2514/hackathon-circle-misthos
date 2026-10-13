@@ -14,6 +14,7 @@
  */
 
 import type { EIP1193Provider } from 'viem'
+import { switchChain, type ChainInfo } from './chain'
 
 export const ARC_DESTINATION = 'Arc_Testnet'
 
@@ -71,15 +72,6 @@ export interface BridgeOutcome {
   [field: string]: unknown
 }
 
-/** What a wallet needs to add a chain it does not know (EIP-3085). */
-export interface ChainInfo {
-  chainId: number
-  name: string
-  nativeCurrency: { name: string; symbol: string; decimals: number }
-  rpcEndpoints: readonly string[]
-  explorerUrl?: string
-}
-
 /** The calls this module makes into Circle's SDK, so tests can stand in. */
 export interface BridgeDeps {
   chainInfo: (source: SourceChain) => Promise<ChainInfo>
@@ -126,39 +118,6 @@ export async function circleDeps(): Promise<BridgeDeps> {
   }
 }
 
-const UNKNOWN_CHAIN = 4902
-
-function hex(n: number): string {
-  return `0x${n.toString(16)}`
-}
-
-/**
- * Switch the wallet to the source chain, adding it first if the wallet has never
- * seen it (EIP-3326 error 4902): Amoy and Fuji are not preconfigured everywhere.
- */
-export async function switchTo(provider: EIP1193Provider, chain: ChainInfo): Promise<void> {
-  const chainId = hex(chain.chainId)
-  try {
-    await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] })
-  } catch (err) {
-    if ((err as { code?: unknown })?.code !== UNKNOWN_CHAIN) throw err
-    await provider.request({
-      method: 'wallet_addEthereumChain',
-      params: [
-        {
-          chainId,
-          chainName: chain.name,
-          nativeCurrency: chain.nativeCurrency,
-          rpcUrls: [...chain.rpcEndpoints],
-          blockExplorerUrls: chain.explorerUrl
-            ? [chain.explorerUrl.replace(/\/tx\/\{hash\}$/, '')]
-            : undefined,
-        },
-      ],
-    } as never)
-  }
-}
-
 /**
  * Move `amount` USDC from `source` to the same address on Arc, minted by Circle's
  * forwarder. A soft failure comes back as a result with its steps, never thrown
@@ -178,7 +137,7 @@ export async function bridgeToArc(
   const recipient = accounts?.[0]
   if (!recipient) throw new Error('The wallet did not share an account')
 
-  await switchTo(provider, await sdk.chainInfo(source))
+  await switchChain(provider, await sdk.chainInfo(source))
   const adapter = await sdk.adapterFor(provider)
   return sdk.bridge({
     from: { adapter, chain: source },

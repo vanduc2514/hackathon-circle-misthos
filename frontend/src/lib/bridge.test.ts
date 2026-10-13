@@ -8,10 +8,9 @@ import {
   checkBridge,
   findChain,
   resumeBridge,
-  switchTo,
   type BridgeDeps,
-  type ChainInfo,
 } from './bridge'
+import type { ChainInfo } from './chain'
 
 const ACCOUNT = '0x00000000000000000000000000000000000b0b00'
 
@@ -95,41 +94,6 @@ describe("Bridge Kit's chain definitions", () => {
     }
     expect(arc.chainId).toBe(5042002)
     expect(arc.cctp.forwarderSupported.destination).toBe(true)
-  })
-})
-
-describe('switchTo', () => {
-  it('adds a chain the wallet does not know, then carries on', async () => {
-    const calls: { method: string; params?: unknown }[] = []
-    const provider = {
-      request: async (args: { method: string; params?: unknown }) => {
-        calls.push(args)
-        if (args.method === 'wallet_switchEthereumChain') throw { code: 4902 }
-        return null
-      },
-    } as unknown as EIP1193Provider
-
-    await switchTo(provider, BASE_SEPOLIA)
-
-    expect(calls.map((c) => c.method)).toEqual(['wallet_switchEthereumChain', 'wallet_addEthereumChain'])
-    expect(calls[1].params).toEqual([
-      {
-        chainId: '0x14a34',
-        chainName: 'Base Sepolia',
-        nativeCurrency: BASE_SEPOLIA.nativeCurrency,
-        rpcUrls: ['https://sepolia.base.org'],
-        blockExplorerUrls: ['https://sepolia.basescan.org'],
-      },
-    ])
-  })
-
-  it('passes on any other refusal, such as the user rejecting the switch', async () => {
-    const provider = {
-      request: async () => {
-        throw { code: 4001 }
-      },
-    } as unknown as EIP1193Provider
-    await expect(switchTo(provider, BASE_SEPOLIA)).rejects.toEqual({ code: 4001 })
   })
 })
 

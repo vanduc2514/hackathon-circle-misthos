@@ -150,8 +150,13 @@ Funding takes two approvals. The first records the ceiling and is refused with
 `NotCommitted`; the web app then has the publisher's wallet send the two calls from
 `GET /api/v1/issues/{id}/commitment` (the USDC allowance, then the commitment) and
 approves again, which books the publisher's own transaction after checking the
-amount, the wallet and the deadline against what was approved. The demo seed is not
-written outside the simulation: it would fund made-up issues from made-up wallets.
+amount, the wallet and the deadline against what was approved. The app decides to
+hand over by reading `GET /api/v1/issues/{id}/escrow` -- a ceiling with no money
+against it means the commitment is owed -- and not by reading the refusal's own
+words, which a proxy between the browser and the API may have replaced (#147). A
+wallet that has never been to Arc is offered the chain before the two transactions.
+The demo seed is not written outside the simulation: it would fund made-up issues
+from made-up wallets.
 
 After any change to the contract, run `mise run abi:contracts` and commit
 `contracts/deployments/MisthosEscrow.abi.json`; `mise run lint` fails while it is
