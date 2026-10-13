@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from misthos.domain.issue import IssueState
+from misthos.domain.issue import FundingTerms, IssueState
 from misthos.domain.ledger import MoneyEvent
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import PriceProposal
@@ -39,6 +39,9 @@ class IssueRecord:
     """What the publisher said the work is worth, in USDC. Named by them and never by
     the engine, and the amount the escrow commits. Nothing refuses it but the two
     bounds in `domain/pricing.py`."""
+    funding: FundingTerms | None = None
+    """The terms approved at the price checkpoint: what the escrow was told, what the
+    plan hands the wallet, and what booking checks the commitment against (#126)."""
     escrow: EscrowCommitment | None = None
     claim: Claim | None = None
     submission: Submission | None = None

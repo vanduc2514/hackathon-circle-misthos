@@ -110,6 +110,14 @@ issues = Table(
     # What the publisher priced the work at. Null only on issues funded before #142,
     # which took their amount from the engine's recommendation instead.
     Column("price_base_units", BigInteger),
+    # The terms the price approval fixed (#126), so a booking checks the commitment
+    # against what the publisher was shown rather than a deadline recomputed from the
+    # clock. Null until a price is approved.
+    Column("terms_amount_base_units", BigInteger),
+    Column("terms_fee_bps", Integer),
+    Column("terms_wallet", String(64)),
+    Column("terms_deadline", Timestamp),
+    Column("terms_approved_at", Timestamp),
     Column("version", Integer, nullable=False),
 )
 

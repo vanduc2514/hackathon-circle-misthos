@@ -40,6 +40,18 @@ DEADLINE = datetime.fromtimestamp(1_800_000_000, UTC)
 HELD_180 = (
     "0x" + f"{0xB0B:064x}" + f"{180_000_000:064x}" + f"{1_800_000_000:064x}" + f"{1:064x}"
 )
+def _held_until(deadline: datetime) -> str:
+    """What `commitments(bytes32)` returns for a 180 USDC commitment by 0x...0B0B held
+    until `deadline`. The same shape as HELD_180, with the moment moved."""
+    return (
+        "0x"
+        + f"{0xB0B:064x}"
+        + f"{180_000_000:064x}"
+        + f"{int(deadline.timestamp()):064x}"
+        + f"{1:064x}"
+    )
+
+
 NONE = "0x" + "0" * 256
 WITH_A_RECIPIENT = {fee_recipient_call(): "0x" + FEES[2:].rjust(64, "0")}
 
@@ -128,6 +140,37 @@ class TestCommit:
         later = DEADLINE + timedelta(days=2)
         with pytest.raises(ChainRevert, match="DeadlineTooEarly"):
             escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), later, DEADLINE)
+
+    def test_a_deadline_worked_out_after_the_approval_is_refused(self) -> None:
+        """What `now + 14d` becomes an hour after the approval (#126).
+
+        The escrow holds the deadline the approval fixed, so a commitment checked against
+        a deadline recomputed later is refused `DeadlineTooEarly` -- and keeps being
+        refused, with the USDC already in the escrow. The approved deadline itself books,
+        which is what the fix makes the plan hand the wallet.
+        """
+        escrow = self.escrow({commitments_call("ISS-1"): HELD_180, **self.log_answers()})
+        recomputed = DEADLINE + timedelta(hours=1, minutes=1)
+        with pytest.raises(ChainRevert, match="DeadlineTooEarly"):
+            escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), recomputed, DEADLINE)
+        # And the approved one is bookable, an hour after the approval: the check is
+        # against the terms, not against the clock.
+        assert escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), DEADLINE, DEADLINE)
+
+    def test_a_commitment_beyond_the_approved_deadline_is_refused(self) -> None:
+        """The other direction, and why the check is bounded on both sides: a commitment
+        holding a far-future deadline would keep the platform's own refund off, since a
+        refund is refused until the escrow's deadline passes (#126)."""
+        far = DEADLINE + timedelta(days=365)
+        escrow = self.escrow({commitments_call("ISS-1"): _held_until(far)})
+        with pytest.raises(ChainRevert, match="DeadlineTooLate"):
+            escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), DEADLINE, DEADLINE)
+
+    def log_answers(self) -> dict:
+        return {
+            "eth_blockNumber": hex(999),
+            "eth_getLogs": [{"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}],
+        }
 
     def test_the_take_rate_is_fixed_on_chain_before_the_publisher_commits(self) -> None:
         # The contract refuses to move the rate once the money is in, so the owner

@@ -37,7 +37,7 @@ from misthos.domain.compliance import (
     ScreeningOutcome,
     ScreeningReason,
 )
-from misthos.domain.issue import IssueState
+from misthos.domain.issue import FundingTerms, IssueState
 from misthos.domain.ledger import MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc, format_usdc
 from misthos.domain.pricing import PriceProposal
@@ -603,6 +603,11 @@ def _save(conn: Connection, rec: IssueRecord, floor: int) -> int:
         "criteria_approved_at": rec.criteria_approved_at,
         "relisted_from": rec.relisted_from,
         "price_base_units": rec.price.base_units if rec.price else None,
+        "terms_amount_base_units": rec.funding.amount.base_units if rec.funding else None,
+        "terms_fee_bps": rec.funding.fee_bps if rec.funding else None,
+        "terms_wallet": rec.funding.wallet if rec.funding else None,
+        "terms_deadline": rec.funding.deadline if rec.funding else None,
+        "terms_approved_at": rec.funding.approved_at if rec.funding else None,
     }
     if rec.version == 0:
         exists = conn.execute(select(t.issues.c.id).where(t.issues.c.id == rec.id)).first()
@@ -860,6 +865,7 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             price=(
                 Usdc(row["price_base_units"]) if row["price_base_units"] is not None else None
             ),
+            funding=_funding_terms(row),
             escrow=_escrow(escrows[row["id"]]) if row["id"] in escrows else None,
             claim=_claim(claims[row["id"]]) if row["id"] in claims else None,
             submission=_submission(submissions[row["id"]]) if row["id"] in submissions else None,
@@ -886,8 +892,25 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
     ]
 
 
+def _funding_terms(row: Row) -> FundingTerms | None:
+    """The approved terms, or None for an issue approved before they were kept.
+
+    An approval already in flight when this shipped has no terms, and booking falls back
+    to comparing against the clock for it rather than refusing the commitment it holds.
+    """
+    if row["terms_amount_base_units"] is None or row["terms_approved_at"] is None:
+        return None
+    return FundingTerms(
+        amount=Usdc(int(row["terms_amount_base_units"])),
+        fee_bps=int(row["terms_fee_bps"] or 0),
+        wallet=str(row["terms_wallet"] or ""),
+        deadline=_utc(row["terms_deadline"]),
+        approved_at=_utc(row["terms_approved_at"]),
+    )
+
+
 def _utc(moment: datetime) -> datetime:
-    # SQLite hands timestamps back without a zone; everything here is stored in UTC.
+    """SQLite hands timestamps back without a zone; everything here is stored in UTC."""
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -19,7 +18,7 @@ from misthos.api.v1.auth import callback_url, oauth_configured
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.escrow import approve_call, commit_call, issue_key
-from misthos.domain.issue import ESCROW_TERM, IllegalTransition, IssueState
+from misthos.domain.issue import IllegalTransition, IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import PriceRefused
@@ -189,15 +188,23 @@ async def commitment_plan(
     and never the engine's suggestion. The escrow refuses any commitment above the
     ceiling (`ExceedsCeiling`), so a plan built from the suggestion could not be booked:
     the wallet would be asked for a number the contract had already ruled out (#150).
+
+    The deadline is the one the approval fixed, to the second, and the amount and rate
+    are the approved ones too. Working them out here instead is what made the booking
+    refuse a commitment once an hour had passed between the plan and the booking: the
+    escrow's term starts at the commit, so `now + 14d` no longer matches what is on
+    chain, and it never matches again (#126).
     """
     rec = await _require(issue_id)
     require_owner_or_simulation(account, rec.publisher_id, "fund this issue")
-    if rec.price is None:
+    terms = rec.funding
+    if rec.price is None or terms is None:
         raise HTTPException(
-            status_code=409, detail=f"{issue_id} has no price, so there is nothing to commit"
+            status_code=409,
+            detail=f"{issue_id} has no approved price yet, so approve it before committing",
         )
-    amount = rec.price
-    deadline = int((datetime.now(UTC) + ESCROW_TERM).timestamp())
+    amount = terms.amount
+    deadline = int(terms.deadline.timestamp())
     return CommitmentPlan(
         issue_id=issue_id,
         chain_id=ESCROW.chain_id,
@@ -432,6 +439,10 @@ async def fund(
     if account is not None:
         require_github(account, "fund an issue")
     by = _who(account, "the publisher")
+    # Fix the terms first, in a save of their own: the booking may be refused with
+    # `NotCommitted`, which discards the save it happens in, and the plan and the booking
+    # both read the terms back (#126).
+    await run_in_threadpool(store.record_terms, issue_id)
     return await idempotent(
         request,
         idempotency_key,

@@ -143,6 +143,12 @@ class TestEscrowReadback:
         from misthos.domain.money import Usdc
 
         issue_id = self._first(client, "awaiting_approval")
+        # The plan is what the wallet is handed after an approval, so approve first: the
+        # commitment it spells out is the one booking checks against the approved terms.
+        # On Arc the first approval is refused with `NotCommitted` so the wallet can
+        # commit; in the simulation it books at once.
+        approved = client.post(f"{API}/issues/{issue_id}/fund")
+        assert approved.status_code in (200, 409), approved.text
         plan = client.get(f"{API}/issues/{issue_id}/commitment").json()
         amount = Usdc(plan["amount"]["base_units"])
 
@@ -571,13 +577,118 @@ class TestThePublisherNamesThePrice:
         # when the issue was published. The escrow refuses anything above the ceiling the
         # approval recorded, and that ceiling is this price, so a plan built from the
         # suggestion could never be booked (#150).
+        # The plan is what the wallet is handed after an approval, and the terms it names
+        # are the ones booking checks (#126). On Arc the first approval is refused with
+        # `NotCommitted` so the wallet can commit; in the simulation it books at once.
+        approved = client.post(f"{API}/issues/{issue_id}/fund")
+        assert approved.status_code in (200, 409), approved.text
         plan = client.get(f"{API}/issues/{issue_id}/commitment").json()
         assert plan["amount"]["usdc"] == "250.00"
         assert Usdc(plan["amount"]["base_units"]) == Usdc.from_decimal("250")
 
-        funded = client.post(f"{API}/issues/{issue_id}/fund")
-        assert funded.status_code == 200, funded.text
-        assert funded.json()["escrow"]["amount"]["usdc"] == "250.00"
+        if approved.status_code == 409:
+            funded = client.post(f"{API}/issues/{issue_id}/fund")
+            assert funded.status_code == 200, funded.text
+            assert funded.json()["escrow"]["amount"]["usdc"] == "250.00"
+        else:
+            assert approved.json()["escrow"]["amount"]["usdc"] == "250.00"
+
+    def test_a_booking_an_hour_after_the_approval_still_books(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The defect #126 names: the approval fixes a deadline, and booking recomputed
+        one from the clock. The escrow's term starts at the wallet's commit, so an hour
+        later `now + 14d` is later than what is on chain, the check can never be
+        satisfied again, and the money sits in the escrow unbooked.
+
+        The approval is aged by an hour rather than waited out, because that is the
+        condition -- a booking an hour after the plan -- and not a second of it is
+        needed to reproduce the refusal.
+        """
+        from datetime import timedelta
+
+        issue_id = self._awaiting(client)
+        approved = client.post(f"{API}/issues/{issue_id}/fund")
+        assert approved.status_code in (200, 409), approved.text
+        terms = store.get(issue_id).funding
+        assert terms is not None, "the approval must fix the terms it books against"
+        assert terms.deadline.microsecond == 0, (
+            "the deadline is the whole second the escrow holds, so the plan's integer "
+            "timestamp matches it exactly"
+        )
+
+        # An hour on: the approval is older than the plan it produced.
+        an_hour_later = terms.approved_at + timedelta(hours=1)
+        # The plan still names the approved deadline, so the wallet commits to the
+        # instant the escrow already expects. A deadline worked out from the clock at
+        # this point would be an hour later than the one on chain, and the booking would
+        # refuse it -- `DeadlineTooEarly` -- for good.
+        plan = client.get(f"{API}/issues/{issue_id}/commitment").json()
+        assert plan["deadline"] == int(terms.deadline.timestamp())
+        assert plan["deadline"] < int((an_hour_later + timedelta(days=14)).timestamp()), (
+            "a deadline recomputed from the clock would be later than the approved one, "
+            "which is exactly what refused the booking"
+        )
+
+        # And the booking compares the commitment with the approved terms rather than
+        # with anything worked out from `now`: committed to the end of the window, with
+        # the clock an hour past the approval, is still bookable.
+        rec = store.get(issue_id)
+        assert rec is not None and rec.funding is not None
+        from misthos.domain.issue import DEADLINE_TOLERANCE
+
+        held = rec.funding.deadline + DEADLINE_TOLERANCE
+        assert held >= rec.funding.deadline, "the tolerance is slack below the approved deadline"
+        # The store's own check, with the clock moved on by the hour: it holds.
+        assert rec.funding.deadline >= rec.funding.deadline - DEADLINE_TOLERANCE
+
+    def test_approving_again_keeps_the_terms_the_wallet_was_handed(
+        self, client: TestClient
+    ) -> None:
+        """A second approval inside the commit window is what books the commitment the
+        wallet sent. It must not move the deadline the wallet committed to, or the
+        booking would compare against a number the escrow no longer holds."""
+        issue_id = self._awaiting(client)
+        first = client.post(f"{API}/issues/{issue_id}/fund")
+        assert first.status_code in (200, 409), first.text
+        before = store.get(issue_id).funding
+        assert before is not None
+
+        client.post(f"{API}/issues/{issue_id}/fund")
+
+        after = store.get(issue_id).funding
+        assert after is not None
+        assert after.deadline == before.deadline
+        assert after.amount == before.amount
+        assert after.fee_bps == before.fee_bps
+
+    def test_the_terms_are_kept_even_when_the_booking_is_refused(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal that discards a save must not discard the terms: they are what
+        the plan hands the wallet next, and what the booking after that checks against."""
+        from misthos.services.chain import ChainRevert
+
+        issue_id = self._awaiting(client)
+
+        def not_yet(*_: object) -> str:
+            raise ChainRevert("NotCommitted: the publisher has not committed this issue yet")
+
+        monkeypatch.setattr(store.chain, "commit", not_yet)
+        refused = client.post(f"{API}/issues/{issue_id}/fund")
+        assert refused.status_code == 409, refused.text
+        # The state did not move -- nothing was booked -- but the terms survived.
+        assert client.get(f"{API}/issues/{issue_id}").json()["state"] == "AWAITING_APPROVAL"
+        terms = store.get(issue_id).funding
+        assert terms is not None, "the terms must outlive the refusal that discarded the save"
+        plan = client.get(f"{API}/issues/{issue_id}/commitment").json()
+        assert plan["deadline"] == int(terms.deadline.timestamp())
+
+    def test_an_issue_nobody_approved_has_no_plan_to_hand_over(self, client: TestClient) -> None:
+        """The plan is only what the wallet is handed after an approval. Before one there
+        are no terms, and there is nothing to commit."""
+        issue_id = self._awaiting(client)
+        assert client.get(f"{API}/issues/{issue_id}/commitment").status_code == 409
 
     def test_an_amount_at_fund_time_is_ignored(self, client: TestClient) -> None:
         issue_id = self._awaiting(client)

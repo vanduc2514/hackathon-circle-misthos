@@ -7,8 +7,11 @@ testable without a database, a chain or a GitHub token.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+
+from misthos.domain.money import Usdc
 
 
 class IssueState(StrEnum):
@@ -79,6 +82,47 @@ CLAIM_WINDOW = timedelta(hours=72)
 # How long committed funds wait for acceptable work before they go back to the
 # publisher. The escrow contract holds the same deadline on chain.
 ESCROW_TERM = timedelta(days=14)
+
+# How long approved terms stand, while nothing is committed to the escrow. Within it,
+# approving again keeps the terms the plan already handed the wallet rather than moving
+# the deadline under a publisher who is mid-click; after it, the approval sets new ones.
+# Once money is in the escrow the terms are not replaced at all.
+COMMIT_WINDOW = timedelta(hours=24)
+
+# How far before the approved deadline a commitment's own deadline may sit and still be
+# booked. The approval fixes the deadline to the second and the plan hands the wallet
+# exactly that, so the slack only covers a wallet that rounds; any earlier would cut the
+# contributor's window short. The escrow refuses one later than the approved deadline.
+DEADLINE_TOLERANCE = timedelta(hours=1)
+
+
+@dataclass(frozen=True)
+class FundingTerms:
+    """What the publisher approved at the price checkpoint, and what booking checks the
+    commitment against.
+
+    Fixed when the price is approved and kept with the issue. Recomputing the deadline
+    from the clock at booking time instead is what refused a commitment for good once an
+    hour had passed between the plan and the booking (#126): the escrow's term starts at
+    the wallet's commit, so the deadline it holds is earlier than a later `now + 14d`,
+    and the check could never be satisfied again with the money already in.
+    """
+
+    amount: Usdc
+    """The price the publisher named, which the escrow holds as its ceiling."""
+    fee_bps: int
+    """The take rate, fixed on the escrow before the money goes on."""
+    wallet: str
+    """The wallet the publisher funds from: the one the plan hands the commitment to
+    (#123). Not the Circle wallet a publisher may also set up."""
+    deadline: datetime
+    """The escrow deadline, to the second. The latest the escrow accepts and the
+    earliest this will book."""
+    approved_at: datetime
+
+    def stand(self, now: datetime) -> bool:
+        """Whether a new approval keeps these terms rather than setting new ones."""
+        return now < self.approved_at + COMMIT_WINDOW
 
 
 class IllegalTransition(Exception):

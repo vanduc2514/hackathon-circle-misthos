@@ -711,6 +711,44 @@ class Store:
         assert held is not None, f"{rec.id} has no commitment to settle"
         return held.committed
 
+    def _funding_terms(
+        self, rec: IssueRecord, publisher: Publisher, at: datetime
+    ) -> lifecycle.FundingTerms:
+        """The terms this approval funds the issue on: the ones already approved, or new.
+
+        Once the escrow holds a commitment, the terms it was committed under are the
+        only ones it is booked against, whatever the clock says now: a deadline
+        recomputed from `now` is later than the one the wallet committed to, because the
+        escrow's term starts at the commit, so the check could never be satisfied again
+        and the money would sit in escrow unbooked (#126).
+
+        With nothing committed, terms approved in the last `COMMIT_WINDOW` stand, so
+        approving twice does not move the deadline under a publisher who is mid-click;
+        after that, approving again sets new ones.
+        """
+        assert rec.price is not None
+        current = rec.funding
+        if current is not None and (
+            current.stand(at)
+            or self.chain.commitment(rec.id) is not None
+        ):
+            return current
+        return lifecycle.FundingTerms(
+            amount=check_price(rec.price),
+            # The rate is fixed with the money. The escrow enforces the rate it was given
+            # on release, so reading the plan at settlement time instead would let a
+            # subscription that lapses mid-flight move the fee after the price was
+            # approved, and the record would stop matching the transfer (#32).
+            fee_bps=fee_bps(),
+            # The wallet the publisher funds from, which is the one that signs in and
+            # commits. A Circle wallet they set up never replaces it (#123).
+            wallet=publisher.wallet.address,
+            # Whole seconds, as the escrow holds it, so the plan, the escrow and the
+            # booking all name the same instant.
+            deadline=(at + lifecycle.ESCROW_TERM).replace(microsecond=0),
+            approved_at=at,
+        )
+
     def _fund(self, rec: IssueRecord, when: datetime | None = None) -> None:
         assert rec.proposal is not None
         if rec.criteria_approved_at is None:
@@ -729,17 +767,23 @@ class Store:
         if rec.price is None:
             raise PriceRefused(f"{rec.id} has no price, so there is nothing to commit")
         committed = check_price(rec.price)
-        deadline = at + lifecycle.ESCROW_TERM
+        # The terms the approval fixed, or new ones if this is the first approval or the
+        # last ones have lapsed. Booking checks the commitment against these rather than
+        # against the clock, which is what let a commitment be refused for good once an
+        # hour had passed between the plan and the booking (#126).
+        terms = self._funding_terms(rec, publisher, at)
+        rec.funding = terms
+        deadline = terms.deadline
         # The approved price goes to the escrow as its ceiling first: the escrow
         # refuses any commitment without one or above it, so what an agent can commit
         # is bounded by what a person approved, on chain and not in this code.
-        self.chain.set_ceiling(rec.id, committed, at)
+        self.chain.set_ceiling(rec.id, terms.amount, at)
         # The rate is fixed here, with the money. The escrow enforces the rate it was
         # given on release, so reading a plan at settlement time instead would let a
         # subscription that lapses mid-flight move the fee after the price was approved,
         # and the record would stop matching the transfer (#32, #142).
-        rate_bps = fee_bps()
-        tx = self.chain.commit(rec.id, publisher.wallet.address, committed, deadline, at, rate_bps)
+        rate_bps = terms.fee_bps
+        tx = self.chain.commit(rec.id, terms.wallet, committed, deadline, at, rate_bps)
         self._book(rec, MoneyEventKind.COMMITTED, committed, publisher.id, tx, at)
         rec.escrow = EscrowCommitment(
             issue_id=rec.id,
@@ -2737,6 +2781,32 @@ class Store:
                 now or _now(),
                 f"{by} approved the price of {rec.price} and committed the funds",
             )
+            self.repo.save_issues(rec)
+            return rec
+
+    def record_terms(self, issue_id: str, now: datetime | None = None) -> IssueRecord:
+        """Fix the terms this approval funds the issue on, without touching the escrow.
+
+        The approval and the booking are one action, but they can fail apart: on Arc the
+        first approval is refused with `NotCommitted` so the publisher's wallet can send
+        the commitment, and that refusal discards the save it happened in. The plan then
+        hands the wallet the deadline, amount and rate that were fixed here, and the
+        booking checks the commitment against the same values, so they have to survive
+        the refusal (#126). Called before `_fund`, and idempotent: terms already standing
+        are kept.
+        """
+        self.ensure_ready()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if rec.price is None:
+                # Nothing to fix terms on: `_fund` refuses this with the reason a price
+                # is needed, which is a 422 rather than a fault here.
+                return rec
+            publisher = self.repo.get_publisher(rec.publisher_id)
+            assert publisher is not None
+            rec.funding = self._funding_terms(rec, publisher, now or _now())
             self.repo.save_issues(rec)
             return rec
 

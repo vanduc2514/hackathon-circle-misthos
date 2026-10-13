@@ -252,8 +252,18 @@ class ArcEscrow:
             raise ChainRevert(
                 f"AmountMismatch: committed {held.amount}, but {amount} was approved"
             )
+        # `deadline` is the one the approval fixed, not one recomputed from the clock:
+        # the escrow's term starts when the wallet commits, so a deadline worked out at
+        # booking time is later than the one on chain, and comparing the two could never
+        # pass again once an hour had gone by -- with the money already in (#126). The
+        # tolerance below is therefore slack for a wallet that rounds, and nothing more.
         if held.deadline is None or held.deadline < deadline - DEADLINE_TOLERANCE:
             raise ChainRevert(f"DeadlineTooEarly: committed until {held.deadline}, not {deadline}")
+        if held.deadline > deadline:
+            # The fix widening on the other side: a far-future deadline would hold the
+            # platform's own refund off, so the escrow must not accept one beyond what
+            # the publisher approved.
+            raise ChainRevert(f"DeadlineTooLate: committed until {held.deadline}, not {deadline}")
         return self._commit_tx(issue_id, publisher)
 
     def release(self, issue_id: str, contributor: str, amount: Usdc, at: datetime) -> str:
