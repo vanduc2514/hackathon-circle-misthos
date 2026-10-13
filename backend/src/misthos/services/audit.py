@@ -22,6 +22,9 @@ from datetime import UTC, datetime
 
 from misthos.config import settings
 from misthos.domain.ledger import MoneyEventKind
+from misthos.domain.money import Usdc
+from misthos.domain.pricing import check_price
+from misthos.models.records import IssueRecord
 from misthos.schemas import AuditExport, AuditIssue, AuditMoneyEvent, money
 from misthos.services import spreadsheet
 from misthos.store import Store
@@ -45,6 +48,19 @@ CSV_COLUMNS = [
 # A last row rather than a first one, so the header stays the header. Written into the
 # `record` column, which is where a reader looks for what kind of row it is.
 SIMULATED_NOTE = ["# SIMULATED: no chain was contacted; not an audit record"]
+
+
+def _price_of(rec: IssueRecord) -> Usdc | None:
+    """The price to export: the publisher's, or the engine's reading for an issue
+    published before a publisher could name one (#142).
+
+    The order matters. Exporting the suggestion for a re-priced issue would put a number
+    in an audit record that the publisher never approved and the escrow never held, and
+    the money events beside it would disagree (#150).
+    """
+    if rec.price is not None:
+        return check_price(rec.price)
+    return rec.proposal.recommended if rec.proposal else None
 
 
 def export(store: Store, publisher_id: str) -> AuditExport | None:
@@ -71,7 +87,7 @@ def export(store: Store, publisher_id: str) -> AuditExport | None:
                 compliance_driven=r.compliance_driven,
                 acceptance_criteria=r.acceptance_criteria,
                 created_at=r.created_at,
-                price=money(r.proposal.recommended) if r.proposal else None,
+                price=money(_price_of(r)),
                 decisions=r.decisions,
                 money_events=[
                     AuditMoneyEvent(

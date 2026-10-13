@@ -529,7 +529,10 @@ class Store:
             actor="publisher",
             action="price_approved",
             rule="human_checkpoint",
-            outcome=f"approved {proposal.recommended} and committed the funds",
+            # The price that was committed, which is rec.price and the same number the
+            # escrow holds. A spec may name one; then the suggestion is a different
+            # number and only the one the publisher approved belongs in the log (#150).
+            outcome=f"approved {rec.price} and committed the funds",
         )
 
         if target is IssueState.FUNDED:
@@ -748,7 +751,10 @@ class Store:
             fee_bps=rate_bps,
         )
         rec.deadline = rec.escrow.deadline
-        criteria = _criteria_comment(rec)
+        # The amount committed, not the engine's suggestion: the comment is the public
+        # record of what is in escrow, and the two differ on any issue re-priced after
+        # it was published (#150).
+        criteria = _criteria_comment(rec, committed)
         self._post(
             f"criteria on {rec.repo}#{rec.number}",
             lambda gh: gh.comment(rec.repo, rec.number, criteria),
@@ -1068,7 +1074,7 @@ class Store:
         """Refuse a commitment that would take a category past the publisher's own
         monthly limit, and say which and by how much."""
         publisher = self.repo.get_publisher(rec.publisher_id)
-        assert publisher is not None and rec.proposal is not None
+        assert publisher is not None
         policy = _policy(publisher)
         if not policy.category_limits:
             return
@@ -1080,9 +1086,14 @@ class Store:
             ),
             now,
         )
-        breaches = category_breaches(
-            policy, rec.labels, rec.proposal.recommended, committed
-        )
+        # The money about to be committed is the publisher's price. The engine's suggestion
+        # is a different number on any issue re-priced after publishing, so a limit held
+        # against the suggestion would let a commitment past the line the publisher set, or
+        # refuse one that fits (#150). An issue with no price is refused by `_fund`, which
+        # follows this with the reason; there is no amount here to hold against a limit.
+        if rec.price is None:
+            return
+        breaches = category_breaches(policy, rec.labels, check_price(rec.price), committed)
         if not breaches:
             return
         reason = "; ".join(breaches)
@@ -3378,11 +3389,11 @@ def _summary(body: str) -> str:
     return first if len(first) <= 280 else first[:277].rstrip() + "..."
 
 
-def _criteria_comment(rec: IssueRecord) -> str:
-    assert rec.proposal is not None and rec.deadline is not None
+def _criteria_comment(rec: IssueRecord, committed: Usdc) -> str:
+    assert rec.deadline is not None
     criteria = "\n".join(f"- [ ] {c}" for c in rec.acceptance_criteria)
     return (
-        f"**Funded on Misthos: {rec.proposal.recommended} USDC**, held in escrow until "
+        f"**Funded on Misthos: {committed} USDC**, held in escrow until "
         f"{rec.deadline:%d %B %Y}.\n\n"
         "The first contributor to claim it has 72 hours to open a pull request that "
         "closes this issue. The pull request is accepted when it meets these "

@@ -132,15 +132,27 @@ class TestEscrowReadback:
             plan["escrow"],
             commit_call(issue_id, amount, plan["deadline"]),
         )
-        assert amount.base_units == client.get(f"{API}/issues/{issue_id}").json()["proposal"][
-            "recommended"
-        ]["base_units"]
+        published = client.get(f"{API}/issues/{issue_id}").json()
+        # The amount spent is the publisher's own price, base units and all -- the same
+        # value the USDC allowance is built from, and never the engine's suggestion. The
+        # escrow refuses a commitment above the ceiling the approval recorded, so a plan
+        # built from anything else could never be booked (#150).
+        approved = store.get(issue_id).price
+        assert amount == approved, (
+            "the plan must ask for the approved price, not the engine's suggestion"
+        )
+        # `price_usdc` and the call labels are the display view of the same number.
+        assert published["price_usdc"] == f"{approved.decimal:.2f}"
+        assert approve["label"] == f"Let the escrow take {approved}"
 
     def test_a_funded_issue_is_capped_at_its_approved_price(self, client: TestClient) -> None:
         issue_id = self._first(client, "funded")
         body = client.get(f"{API}/issues/{issue_id}/escrow").json()
         issue = client.get(f"{API}/issues/{issue_id}").json()
-        assert body["escrow_ceiling"] == issue["proposal"]["recommended"]
+        # The ceiling is the price a person approved, which is the publisher's number and
+        # not the engine's. On a seeded issue the two coincide; a re-priced one is where
+        # they part, and the escrow still holds the approved price (#150).
+        assert body["escrow_ceiling"]["usdc"] == issue["price_usdc"]
         assert body["amount"]["base_units"] <= body["escrow_ceiling"]["base_units"]
 
     def test_an_issue_nobody_approved_has_no_ceiling(self, client: TestClient) -> None:
@@ -529,6 +541,14 @@ class TestThePublisherNamesThePrice:
         moved = client.patch(f"{API}/issues/{issue_id}/price", json={"amount": "250"})
         assert moved.status_code == 200, moved.text
         assert moved.json()["price_usdc"] == "250.00"
+
+        # The wallet is asked for the new price too, not the suggestion the engine made
+        # when the issue was published. The escrow refuses anything above the ceiling the
+        # approval recorded, and that ceiling is this price, so a plan built from the
+        # suggestion could never be booked (#150).
+        plan = client.get(f"{API}/issues/{issue_id}/commitment").json()
+        assert plan["amount"]["usdc"] == "250.00"
+        assert Usdc(plan["amount"]["base_units"]) == Usdc.from_decimal("250")
 
         funded = client.post(f"{API}/issues/{issue_id}/fund")
         assert funded.status_code == 200, funded.text

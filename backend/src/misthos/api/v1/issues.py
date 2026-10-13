@@ -181,15 +181,22 @@ async def commitment_plan(
 ) -> CommitmentPlan:
     """The two transactions the publisher's own wallet sends to fund the issue.
 
-    The platform never signs a commitment: it moves the publisher's USDC. Approving
-    the price records it as the escrow's ceiling; the publisher's wallet then lets the
-    escrow take that amount and commits it, and approving again books it.
+    The platform never signs a commitment: it moves the publisher's USDC. Approving the
+    price records it as the escrow's ceiling; the publisher's wallet then lets the escrow
+    take that amount and commits it, and approving again books it.
+
+    The amount is the publisher's price -- the same value `_fund` records as the ceiling,
+    and never the engine's suggestion. The escrow refuses any commitment above the
+    ceiling (`ExceedsCeiling`), so a plan built from the suggestion could not be booked:
+    the wallet would be asked for a number the contract had already ruled out (#150).
     """
     rec = await _require(issue_id)
     require_owner_or_simulation(account, rec.publisher_id, "fund this issue")
-    if rec.proposal is None:
-        raise HTTPException(status_code=409, detail=f"{issue_id} has no approved price yet")
-    amount = rec.proposal.recommended
+    if rec.price is None:
+        raise HTTPException(
+            status_code=409, detail=f"{issue_id} has no price, so there is nothing to commit"
+        )
+    amount = rec.price
     deadline = int((datetime.now(UTC) + ESCROW_TERM).timestamp())
     return CommitmentPlan(
         issue_id=issue_id,

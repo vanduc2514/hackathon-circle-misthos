@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from misthos.config import settings
 from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
 from misthos.domain.ledger import MoneyEventKind
+from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.main import app
 from misthos.schemas import PublishRequest
@@ -128,6 +129,49 @@ class TestCategoryLimits:
         policy(client, category_limits={"compliance": "10000"})
         assert store.advance(ISSUE).state is IssueState.FUNDED
 
+    def test_the_limit_is_held_against_the_price_the_publisher_set(
+        self, client: TestClient
+    ) -> None:
+        """The money committed is the publisher's price, so the price is what a limit
+        must bound. Held against the engine's suggestion instead, an issue the publisher
+        re-priced down is refused for a commitment they were never going to make (#150)."""
+        rec = store.get(ISSUE)
+        assert rec is not None and rec.proposal is not None
+        # Room for the price, and not for the engine's reading of the issue.
+        room = Usdc(rec.proposal.recommended.base_units - Usdc.from_decimal("1").base_units)
+        # Asserted, because a refused policy would leave no limit at all and this test
+        # would pass for the wrong reason.
+        applied = policy(client, category_limits={"compliance": f"{room.decimal:.2f}"})
+        assert applied.status_code == 200, applied.text
+        moved = client.patch(f"{API}/issues/{ISSUE}/price", json={"amount": "100"})
+        assert moved.status_code == 200, moved.text
+
+        funded = store.advance(ISSUE)
+
+        assert funded.state is IssueState.FUNDED
+        assert funded.escrow is not None
+        assert funded.escrow.amount["usdc"] == "100.00"
+
+    def test_a_price_over_the_room_left_is_refused(self, client: TestClient) -> None:
+        """And the other way: the amount the message names is the price, so a commitment
+        the publisher did ask for is refused and named as what it is (#150)."""
+        policy(client, category_limits={"compliance": "100"})
+        second = store.publish(
+            PublishRequest(
+                repo="acme/ledger",
+                title="Compliance: reconcile the monthly export",
+                labels=["compliance"],
+                publisher_id=PUBLISHER,
+                signals={"blast_radius": 2},
+                price=Decimal("150"),
+            )
+        )
+
+        r = client.post(f"{API}/issues/{second.id}/advance")
+
+        assert r.status_code == 403
+        assert "this would add 150.00" in r.json()["detail"]
+
     def test_the_limit_is_the_organisations_own(self) -> None:
         with pytest.raises(PolicyRefusal):
             store.set_policy(
@@ -197,8 +241,13 @@ class TestSpendView:
         policy(client, category_limits={"compliance": str(month + 1)})
         second = store.publish(
             PublishRequest(
+                # A price it would commit, two dollars past the room left, so the limit is
+                # what refuses it. The publisher's number is what counts against the limit
+                # now, so an issue published without one cannot reach this check at all:
+                # funding it is refused for the missing price (#142, #150).
                 repo="acme/ledger", title="Compliance: reconcile the monthly export",
                 labels=["compliance"], publisher_id=PUBLISHER, signals={"blast_radius": 2},
+                price=month + 2,
             )
         )  # fmt: skip
         r = client.post(f"{API}/issues/{second.id}/advance")
@@ -229,6 +278,19 @@ class TestAuditExport:
         assert rec.payout_tx_hash not in client.get(
             f"{API}/publishers/{PUBLISHER}/audit", params={"format": "csv"}
         ).text
+
+    def test_the_exported_price_is_the_one_the_publisher_approved(
+        self, client: TestClient
+    ) -> None:
+        """An audit record with a price nobody agreed to, beside money events that say
+        what actually moved, is worse than no record (#150). The row below is the
+        publisher's number: the engine's suggestion would be a different one."""
+        moved = client.patch(f"{API}/issues/{ISSUE}/price", json={"amount": "100"})
+        assert moved.status_code == 200, moved.text
+        body = client.get(f"{API}/publishers/{PUBLISHER}/audit").json()
+
+        exported = next(i for i in body["issues"] if i["id"] == ISSUE)
+        assert exported["price"]["usdc"] == "100.00"
 
     def test_the_csv_is_one_sortable_table(self, client: TestClient) -> None:
         store.approve_and_accept(ISSUE)
