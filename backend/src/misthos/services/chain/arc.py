@@ -165,19 +165,35 @@ class ArcEscrow:
     def commitments(self) -> dict[str, OnChain]:
         """Every commitment the escrow has emitted, keyed by issue id.
 
-        The contract stores keccak256(issue id), so keys are matched back to the
-        issues the platform knows. A key nobody knows is reported under the key
-        itself: money on chain for an issue with no record is exactly what
-        reconciliation exists to surface.
+        The contract stores one commitment per `keccak256(issue id)`, so an issue the
+        platform knows is read with a single `eth_call` -- `commitment(issue_id)`, which
+        is not the method the node rate-limits. Walking the log instead cost about
+        sixty-five requests a pass against a node that allows roughly sixty a minute, so
+        reconciliation failed on every pass and the divergence it exists to report went
+        unreported (#154).
+
+        The log walk is kept for the one question it is needed for: keys nobody knows.
+        Money on chain for an issue the platform has no record of is exactly what
+        reconciliation exists to surface, and no per-issue read can find it. That walk is
+        bounded to the recent blocks, because a key nobody knows is also not something to
+        read the whole history for.
         """
         self.verify()
         known = {issue_key(i): i for i in self._issue_ids()}
         found: dict[str, OnChain] = {}
-        for log in self._committed_logs():
-            key = str(log["topics"][1]).lower()
+        # The issues we know, one call each.
+        for key, issue_id in known.items():
             on_chain = self._read(commitments_call_by_key(key))
             if on_chain is not None:
-                found[known.get(key, key)] = on_chain
+                found[issue_id] = on_chain
+        # Then anybody else's, which only the log can name.
+        for log in self._committed_logs(recent=self.LOG_RECENT_BLOCKS):
+            key = str(log["topics"][1]).lower()
+            if key in known:
+                continue
+            on_chain = self._read(commitments_call_by_key(key))
+            if on_chain is not None:
+                found[key] = on_chain
         return found
 
     # ------------------------------------------------------------- writing

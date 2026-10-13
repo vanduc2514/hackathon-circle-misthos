@@ -184,6 +184,51 @@ class TestArcEscrow:
         found = escrow.commitments()
         assert set(found) == {"ISS-1001", stranger}
 
+    def test_a_known_issue_is_read_with_one_call_and_not_from_the_log(self) -> None:
+        """Sixty-five log windows a minute is the whole of what the node allows, so
+        reconciliation must not pay it for issues it can simply ask about. The read is
+        `commitment(issue_id)` -- `eth_call`, which is not the rate-limited method."""
+        seen: list[dict] = []
+        answers = {
+            "eth_getCode": "0x6080",
+            "eth_blockNumber": hex(100),
+            "eth_getLogs": [],
+            commitments_call("ISS-1001"): HELD_180,
+        }
+        escrow = ArcEscrow(
+            "http://rpc",
+            DEPLOYED,
+            issue_ids=lambda: ["ISS-1001"],
+            transport=_rpc(answers, seen),
+        )
+        assert set(escrow.commitments()) == {"ISS-1001"}
+
+        calls = [b["params"][0]["data"] for b in seen if b["method"] == "eth_call"]
+        assert commitments_call("ISS-1001") in calls
+
+    def test_the_log_is_only_walked_for_keys_nobody_knows(self) -> None:
+        """And even then only recently: a stranger's commitment is still found, but the
+        walk is bounded rather than the whole history."""
+        stranger = "0x" + "cd" * 32
+        seen: list[dict] = []
+        answers = {
+            "eth_getCode": "0x6080",
+            "eth_blockNumber": hex(1_000_000),
+            "eth_getLogs": [{"topics": [COMMITTED_TOPIC, stranger]}],
+            "0x839df945" + stranger[2:]: HELD_180,
+        }
+        escrow = ArcEscrow(
+            "http://rpc",
+            EscrowDeployment("0xE5C", 5042002, "record", deployed_at_block=1),
+            issue_ids=lambda: ["ISS-1001"],
+            transport=_rpc(answers, seen),
+        )
+        assert set(escrow.commitments()) == {stranger}
+
+        windows = [b["params"][0] for b in seen if b["method"] == "eth_getLogs"]
+        first_window = 1_000_000 - ArcEscrow.LOG_RECENT_BLOCKS + 1
+        assert windows[0]["fromBlock"] == hex(first_window)
+
     def test_a_log_scan_is_walked_in_windows_the_node_accepts(self) -> None:
         """Arc refuses an `eth_getLogs` wider than 100,000 blocks.
 
