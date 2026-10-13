@@ -23,6 +23,14 @@ from eth_utils import to_checksum_address
 from misthos.domain.escrow import revert_name
 from misthos.services.chain.base import ChainRevert
 
+# A node asked for too much, too fast, answers 429 and means it. The burst that earns
+# it is one scan's windows, so waiting is what makes the next attempt land; the pause
+# grows because several calls can be in flight around one scan (#154).
+THROTTLED_STATUS = 429
+RETRY_AFTER_STATUSES = frozenset({429, 500, 502, 503, 504})
+RPC_ATTEMPTS = 3
+RPC_BACKOFF_SECONDS = 0.5
+
 
 class ChainUnavailable(RuntimeError):
     """The RPC could not be read, or the deployment could not be trusted."""
@@ -48,16 +56,42 @@ class JsonRpc:
 
     def __call__(self, method: str, params: list) -> object:
         body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-        try:
-            with httpx.Client(transport=self._transport, timeout=self._timeout) as http:
-                response = http.post(self.url, json=body)
-                response.raise_for_status()
-                answer = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise ChainUnavailable(f"the Arc RPC could not be read: {exc}") from exc
-        if answer.get("error"):
-            raise RpcError(method, answer["error"])
-        return answer.get("result")
+        # A read that was refused for being too fast is retried; a read that was refused
+        # because it was wrong is not. The distinction is the status: a throttle or a
+        # node having a moment is worth waiting out, anything else is the caller's.
+        for attempt in range(RPC_ATTEMPTS):
+            try:
+                with httpx.Client(transport=self._transport, timeout=self._timeout) as http:
+                    response = http.post(self.url, json=body)
+                    response.raise_for_status()
+                    answer = response.json()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status not in RETRY_AFTER_STATUSES or attempt == RPC_ATTEMPTS - 1:
+                    raise ChainUnavailable(f"the Arc RPC could not be read: {exc}") from exc
+                time.sleep(self._retry_after(exc.response, attempt))
+                continue
+            except (httpx.HTTPError, ValueError) as exc:
+                raise ChainUnavailable(f"the Arc RPC could not be read: {exc}") from exc
+            if answer.get("error"):
+                raise RpcError(method, answer["error"])
+            return answer.get("result")
+        raise ChainUnavailable(f"the Arc RPC could not be read: {method} was retried and refused")
+
+    @staticmethod
+    def _retry_after(response: httpx.Response, attempt: int) -> float:
+        """How long to wait before trying again: the node's own advice, or our backoff.
+
+        Honoured when a node sends `Retry-After`, because it knows its own limit; capped
+        so a hostile or mistaken value cannot hold a request open.
+        """
+        sent = response.headers.get("retry-after")
+        if sent:
+            try:
+                return min(float(sent), 10.0)
+            except ValueError:
+                pass
+        return RPC_BACKOFF_SECONDS * (2**attempt)
 
 
 def _revert_data(error: dict) -> str | None:

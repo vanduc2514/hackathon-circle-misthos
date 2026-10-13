@@ -283,6 +283,13 @@ async def _act(
     except (ReviewFailed, GitHubError) as exc:
         # Something we depend on failed; nothing was saved, so the step can be retried.
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ChainUnavailable as exc:
+        # The chain could not be read, or a call was refused for being too fast. Nothing
+        # was saved, so the step can be retried; 503 with a pause, not a 500 without one,
+        # because "come back" is actionable and "server error" is not (#154).
+        raise HTTPException(
+            status_code=503, detail=str(exc), headers={"Retry-After": "2"}
+        ) from exc
     return await run_in_threadpool(store.to_out, rec)
 
 

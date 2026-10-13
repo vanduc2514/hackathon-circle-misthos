@@ -10,6 +10,7 @@ import pytest
 from eth_account import Account
 
 from misthos.domain.escrow import (
+    COMMITTED_TOPIC,
     ERRORS,
     ceiling_call,
     commit_call,
@@ -169,6 +170,130 @@ class TestCommit:
         shouting = "0x" + PUBLISHER[2:].upper()
         tx = escrow.commit("ISS-1", shouting, Usdc(180_000_000), expected, DEADLINE)
         assert tx == "0xC0"
+
+    def test_the_log_is_asked_for_by_issue_and_publisher_not_filtered_in_python(self) -> None:
+        """Both are indexed topics, so the node does the narrowing. It matters when a
+        wallet commits twice: the earlier commitment is a different publisher, and the
+        transaction returned has to be this one's (#154)."""
+        seen: list[dict] = []
+        escrow = ArcEscrow(
+            "http://rpc",
+            DEPLOYED,
+            transport=_rpc(
+                {
+                    "eth_getCode": "0x6080",
+                    commitments_call("ISS-1"): HELD_180,
+                    "eth_blockNumber": hex(9),
+                    "eth_getLogs": [
+                        {"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}
+                    ],
+                },
+                seen,
+            ),
+        )
+        expected = DEADLINE + timedelta(minutes=20)
+        escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), expected, DEADLINE)
+
+        asked = next(b for b in seen if b["method"] == "eth_getLogs")["params"][0]
+        assert asked["topics"] == [
+            COMMITTED_TOPIC,
+            issue_key("ISS-1"),
+            # A topic is a full word, so an address is padded to the right.
+            "0x" + PUBLISHER[2:].lower().rjust(64, "0"),
+        ]
+
+    def test_a_scan_of_one_window_does_not_pause(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A fresh deployment has one window of history, and the common case must not
+        pay for a pause it will not use."""
+        clock = _FakeClock.installed(monkeypatch)
+        escrow = self.escrow(
+            {
+                commitments_call("ISS-1"): HELD_180,
+                "eth_blockNumber": hex(9),
+                "eth_getLogs": [{"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}],
+            }
+        )
+        expected = DEADLINE + timedelta(minutes=20)
+        escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), expected, DEADLINE)
+        assert clock.slept == []
+
+    def test_the_scan_pauses_between_windows_so_a_long_history_is_not_a_burst(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The node refuses about ten back-to-back `eth_getLogs` with 429, and a history
+        longer than ten windows is an ordinary testnet. Paced, the scan lasts a few
+        hundred milliseconds longer and does not throw away a booking (#154)."""
+        clock = _FakeClock.installed(monkeypatch)
+        escrow = self.escrow(
+            {
+                commitments_call("ISS-1"): HELD_180,
+                # Two windows: the deployment block to 5,006, then 5,007 to 10,000.
+                "eth_blockNumber": hex(10_000),
+                "eth_getLogs": [{"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}],
+            }
+        )
+        expected = DEADLINE + timedelta(minutes=20)
+        escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), expected, DEADLINE)
+
+        # A pause between the windows and none after the last.
+        assert clock.slept == [ArcEscrow.LOG_PAUSE_SECONDS]
+
+
+class _FakeClock:
+    """Stands in for the module's `time`, so a test can see the pacing without waiting."""
+
+    def __init__(self) -> None:
+        self.slept: list[float] = []
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+
+    @classmethod
+    def installed(cls, monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
+        import misthos.services.chain.arc as arc_module
+
+        clock = cls()
+        monkeypatch.setattr(arc_module, "time", clock)
+        return clock
+
+
+class TestThrottling:
+    """A refusal for being too fast is waited out; a refusal for being wrong is not."""
+
+    def test_a_throttled_read_is_retried_and_then_succeeds(self) -> None:
+        attempts: list[int] = []
+
+        def handle(_request: httpx.Request) -> httpx.Response:
+            attempts.append(1)
+            if len(attempts) == 1:
+                # `retry-after: 0` also proves the header is honoured instead of the
+                # backoff, which is what keeps this test from waiting.
+                return httpx.Response(429, headers={"retry-after": "0"})
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": "0x1"})
+
+        rpc = JsonRpc("http://rpc", transport=httpx.MockTransport(handle))
+        assert rpc("eth_blockNumber", []) == "0x1"
+        assert len(attempts) == 2
+
+    def test_a_throttle_that_does_not_clear_is_raised_with_its_reason(self) -> None:
+        def handle(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, headers={"retry-after": "0"})
+
+        rpc = JsonRpc("http://rpc", transport=httpx.MockTransport(handle))
+        with pytest.raises(ChainUnavailable, match="429"):
+            rpc("eth_blockNumber", [])
+
+    def test_a_call_the_node_refuses_on_its_merits_is_not_retried(self) -> None:
+        attempts: list[int] = []
+
+        def handle(_request: httpx.Request) -> httpx.Response:
+            attempts.append(1)
+            return httpx.Response(400, json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32602}})
+
+        rpc = JsonRpc("http://rpc", transport=httpx.MockTransport(handle))
+        with pytest.raises(ChainUnavailable, match="400"):
+            rpc("eth_getLogs", [{}])
+        assert len(attempts) == 1
 
 
 class FakeSender:

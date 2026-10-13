@@ -111,6 +111,31 @@ class TestEscrowReadback:
         assert funded.status_code == 200, funded.text
         assert funded.json()["state"] == "FUNDED"
 
+    def test_a_chain_that_cannot_be_read_asks_the_client_to_come_back(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A throttle is not the client's mistake and not a server error: nothing was
+        saved, and trying again is exactly what works. 503 with a pause says that;
+        a 500 says the platform is broken (#154)."""
+        from misthos.services.chain import ChainUnavailable
+
+        issue_id = self._first(client, "awaiting_approval")
+        client.post(f"{API}/issues/{issue_id}/criteria", json={
+            "criteria": client.get(f"{API}/issues/{issue_id}").json()["acceptance_criteria"]
+        })
+
+        def throttled(*_: object) -> str:
+            raise ChainUnavailable("the Arc RPC could not be read: 429 Too Many Requests")
+
+        monkeypatch.setattr(store.chain, "commit", throttled)
+        refused = client.post(f"{API}/issues/{issue_id}/fund")
+
+        assert refused.status_code == 503
+        assert refused.headers["retry-after"] == "2"
+        assert "429" in refused.json()["detail"]
+        # Nothing was saved, so the retry is safe and the issue is where it was.
+        assert client.get(f"{API}/issues/{issue_id}").json()["state"] == "AWAITING_APPROVAL"
+
     def test_the_publisher_is_told_exactly_what_their_wallet_sends(
         self, client: TestClient
     ) -> None:

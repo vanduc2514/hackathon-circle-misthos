@@ -18,6 +18,7 @@ publisher has committed it refuses with `NotCommitted`, and the store saves noth
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -76,6 +77,15 @@ class ArcEscrow:
     # So the real cap here is 10,000, and this walks half of it: margin for a node
     # whose limit differs, and the windows still tile the range exactly.
     LOG_RANGE_BLOCKS = 5_000
+
+    # And a limit on how fast that walk may go. Against the same node, roughly ten
+    # back-to-back `eth_getLogs` are accepted and the eleventh answers 429, so a scan
+    # meets it as soon as the history is longer than ten windows -- 50,000 blocks, which
+    # a testnet passes in days. The pause costs a few hundred milliseconds across a
+    # range this size, and without it one window per history is a coin toss: a 429
+    # during `_commit_tx` throws away a booking the publisher's wallet has already made
+    # (#154).
+    LOG_PAUSE_SECONDS = 0.2
 
     def __init__(
         self,
@@ -221,7 +231,7 @@ class ArcEscrow:
             )
         if held.deadline is None or held.deadline < deadline - DEADLINE_TOLERANCE:
             raise ChainRevert(f"DeadlineTooEarly: committed until {held.deadline}, not {deadline}")
-        return self._commit_tx(issue_id)
+        return self._commit_tx(issue_id, publisher)
 
     def release(self, issue_id: str, contributor: str, amount: Usdc, at: datetime) -> str:
         return self._signer(self._attestor, "attestor").send(
@@ -242,10 +252,24 @@ class ArcEscrow:
             raise ChainUnavailable(f"no {role} key is configured, so this cannot be signed")
         return sender
 
-    def _committed_logs(self, key: str | None = None) -> list[dict]:
+    def _committed_logs(
+        self, key: str | None = None, publisher: str | None = None
+    ) -> list[dict]:
+        """Every Committed log, narrowed to one issue and one publisher when given.
+
+        The narrowing is the node's work, not ours: both are indexed topics, so a whole
+        history of commitments for other issues costs one window's worth of data instead
+        of a window per commitment.
+
+        Windows are asked for one at a time, with a pause between them: the node refuses
+        a burst with 429 (#154).
+        """
         topics: list[str] = [COMMITTED_TOPIC]
         if key is not None:
             topics.append(key)
+        if publisher is not None:
+            # A topic is a full word, so an address is padded to the right.
+            topics.append("0x" + publisher.lower().replace("0x", "").rjust(64, "0"))
         first = self.deployment.deployed_at_block or 0
         head = int(self._rpc("eth_blockNumber", []), 16)
         found: list[dict] = []
@@ -265,11 +289,23 @@ class ArcEscrow:
             )
             if isinstance(logs, list):
                 found.extend(logs)
+            # Paced between windows, never after the last: a scan of one window -- the
+            # common case, and the only one a fresh deployment has -- must not pay for
+            # a pause it will not use.
             start = end + 1
+            if start <= head:
+                time.sleep(self.LOG_PAUSE_SECONDS)
         return found
 
-    def _commit_tx(self, issue_id: str) -> str:
-        logs = self._committed_logs(issue_key(issue_id))
+    def _commit_tx(self, issue_id: str, publisher: str) -> str:
+        """The publisher's own commitment transaction, as the chain reports it.
+
+        Asked of the escrow's log rather than remembered, because the platform does not
+        send this transaction: the publisher's wallet does. `publisher` is the same
+        address the commitment was just checked against, so the log found is this
+        issue's commitment and not an earlier one from another wallet (#154).
+        """
+        logs = self._committed_logs(issue_key(issue_id), publisher)
         if not logs:
             raise ChainUnavailable(f"the escrow holds {issue_id}, but no Committed log was found")
         return str(logs[-1]["transactionHash"])
