@@ -52,6 +52,13 @@ test('a publisher names the price, and that is what the escrow commits', async (
   await page.getByRole('button', { name: 'Set the price' }).click()
   await expect(page.getByRole('button', { name: /^Approve and commit \$250\.00$/ })).toBeVisible()
 
+  // The form that moves USDC from another chain asks for that price, not the engine's
+  // suggestion: 1842.75 would be 184x the issue, and prefilling it invites bridging it.
+  const bridge = page
+    .locator('section')
+    .filter({ has: page.getByRole('heading', { name: 'Fund from another chain' }) })
+  await expect(bridge.getByLabel('USDC')).toHaveValue('250.00')
+
   await page.getByRole('button', { name: /^Approve and commit \$250\.00$/ }).click()
   await expect(page.getByText('Funded and open')).toBeVisible()
 

@@ -18,10 +18,22 @@ function browserWallet(): EIP1193Provider | null {
 /**
  * Fund an issue from USDC held on another chain. The publisher's own wallet signs
  * the source-chain steps; the click on the enabled button is the confirmation.
+ *
+ * `needed` is what still has to reach Arc for the issue to be fundable: the price the
+ * publisher set, which is the amount the escrow commits. It is a hint, not a bound; the
+ * publisher can bridge more.
  */
-export function BridgeToArc({ suggested }: { suggested?: string }) {
+export function BridgeToArc({ needed }: { needed?: string }) {
   const [source, setSource] = useState<SourceChain>('Base_Sepolia')
-  const [amount, setAmount] = useState(suggested ?? '')
+  const [amount, setAmount] = useState(needed ?? '')
+  // Follow `needed` when it changes. Seeding the field once would keep whatever was
+  // known when this panel first mounted, so a publisher who re-priced the issue, or a
+  // page whose issue was still loading, would be shown a stale figure.
+  const [prefilled, setPrefilled] = useState(needed)
+  if (needed !== prefilled) {
+    setPrefilled(needed)
+    setAmount(needed ?? '')
+  }
   const [running, setRunning] = useState(false)
   const [outcome, setOutcome] = useState<BridgeOutcome | null>(null)
   const [error, setError] = useState<string | null>(null)

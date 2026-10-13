@@ -354,7 +354,7 @@ export default function IssueDetail() {
           </Panel>
 
           {issue.state === 'AWAITING_APPROVAL' && roleOn(issue, me.data).publisher && (
-            <BridgeToArc suggested={p ? String(p.recommended.usdc) : undefined} />
+            <BridgeToArc needed={issue.price_usdc ?? undefined} />
           )}
 
           <Panel title="Parties">
