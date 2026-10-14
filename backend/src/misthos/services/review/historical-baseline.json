@@ -1,0 +1,17 @@
+{
+  "reviewer": "rules_v1",
+  "rate": 0.3056,
+  "agreed": [
+    "pallets-click-3781",
+    "pallets-click-3808",
+    "pallets-click-3858",
+    "psf-black-2169",
+    "psf-black-2182",
+    "psf-black-3378",
+    "pydantic-pydantic-13362",
+    "pydantic-pydantic-13363",
+    "pydantic-pydantic-13366",
+    "pytest-dev-pytest-15053",
+    "pytest-dev-pytest-15058"
+  ]
+}
