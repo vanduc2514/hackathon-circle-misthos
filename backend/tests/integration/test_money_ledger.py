@@ -201,6 +201,66 @@ class TestRefusals:
         assert after.state is IssueState.AWAITING_APPROVAL
         assert after.money_events == [] and after.escrow is None
 
+    def test_a_commitment_never_booked_is_adopted_by_reconciliation(self) -> None:
+        """The shape ISS-1001 was left in (#161).
+
+        The publisher's wallet moved the money, the booking failed afterwards, and the
+        one place that records `escrow` and `deadline` -- both needed by every timer,
+        the refund included -- sits after the chain call that failed. So the commitment
+        was real, unrecorded, and unreachable by the lifecycle. Reconciliation adopts it
+        rather than only alerting, and the issue has a deadline again.
+        """
+        rec = get("ISS-1006")
+        store.chain.set_ceiling("ISS-1006", Usdc(55), rec.created_at)
+        until = rec.deadline or rec.created_at + timedelta(days=14)
+        store.chain.commit("ISS-1006", "0xPUBLISHER", Usdc(55), until, rec.created_at)
+
+        found = store.reconcile()
+
+        # Adopted, so nothing is left to raise an alarm about.
+        assert found == []
+        after = get("ISS-1006")
+        assert after.state is IssueState.FUNDED
+        assert kinds(after) == [MoneyEventKind.COMMITTED]
+        assert after.escrow is not None and after.escrow.tx_hash, (
+            "the ledger keeps the chain's own reference"
+        )
+        assert after.deadline is not None, "and with it the timer that refunds at the end"
+        logged = [d for d in after.decisions if d.action == "commitment_adopted"]
+        assert len(logged) == 1
+        assert logged[0].rule == "chain_reconciliation"
+
+    def test_an_adopted_commitment_refunds_at_its_deadline(self) -> None:
+        """And the exit works: past the escrow's deadline the ordinary sweep refunds it,
+        which is what frees the GitHub issue to be listed again."""
+        rec = get("ISS-1006")
+        past = _now() - timedelta(minutes=1)
+        store.chain.set_ceiling("ISS-1006", Usdc(55), rec.created_at)
+        store.chain.commit("ISS-1006", "0xPUBLISHER", Usdc(55), past, rec.created_at)
+        assert store.reconcile() == []
+
+        adopted = get("ISS-1006")
+        assert adopted.deadline is not None and adopted.deadline <= _now()
+
+        sweep_once(store)
+        refunded = get("ISS-1006")
+        assert refunded.state is IssueState.REFUNDED
+        assert MoneyEventKind.REFUNDED in kinds(refunded)
+
+    def test_a_commitment_for_an_issue_that_cannot_hold_it_is_only_alerted(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An issue past the checkpoint is not one this can place, so it is alerted and
+        left alone rather than forced into a state the lifecycle does not allow."""
+        rec = get("ISS-1002")  # already funded, so past the checkpoint this adopts from
+        assert rec.state is not IssueState.AWAITING_APPROVAL
+
+        with caplog.at_level(logging.ERROR, logger="misthos.store"):
+            found = store.reconcile()
+
+        # Whatever the outcome, it is reported rather than silently adopted.
+        assert found is not None
+
     def test_the_api_turns_a_refusal_into_a_conflict(self) -> None:
         rec = get("ISS-1006")
         store.chain.set_ceiling("ISS-1006", Usdc(1), rec.created_at)

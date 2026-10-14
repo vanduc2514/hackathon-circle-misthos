@@ -50,6 +50,14 @@ class ChainGateway(Protocol):
     def commitment(self, issue_id: str) -> OnChain | None:
         """What the escrow holds for one issue, or None if it was never committed."""
 
+    def commitment_tx(self, issue_id: str, publisher: str) -> str:
+        """The transaction that carried this issue's commitment.
+
+        The platform does not send that transaction -- the publisher's wallet does -- so
+        this reads the escrow's own log rather than remembering it. Reconciliation needs
+        it to book a commitment whose booking failed before it was recorded (#161).
+        """
+
     def commitments(self) -> dict[str, OnChain]:
         """Every commitment the escrow knows about, keyed by issue id."""
 

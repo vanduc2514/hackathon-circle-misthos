@@ -104,6 +104,15 @@ class SimulatedChain:
             return None
         return OnChain(status=found[2], amount=found[1], fee_bps=found[3], publisher=found[0])
 
+    def commitment_tx(self, issue_id: str, publisher: str) -> str:
+        """The transaction the simulated escrow recorded for this issue, which is the
+        same value the contract's log carries. Parity with Arc, where it is read back
+        from the log (#161)."""
+        found = self._get(issue_id)
+        if found is None:
+            raise ChainRevert(f"NotHeld: no commitment for {issue_id}")
+        return found[4]
+
     def commitments(self) -> dict[str, OnChain]:
         if self._engine is None:
             with self._guard:
@@ -172,7 +181,7 @@ class SimulatedChain:
                     insert(table).values(issue_id=issue_id, ceiling_base_units=ceiling.base_units)
                 )
 
-    def _get(self, issue_id: str) -> tuple[str, Usdc, EscrowStatus, int] | None:
+    def _get(self, issue_id: str) -> tuple[str, Usdc, EscrowStatus, int, str] | None:
         if self._engine is None:
             with self._guard:
                 return self._books.get(issue_id)
@@ -191,6 +200,7 @@ class SimulatedChain:
             Usdc(row["amount_base_units"]),
             EscrowStatus(row["status"]),
             row["fee_bps"],
+            row["last_tx_hash"],
         )
 
     def _put(
@@ -206,7 +216,7 @@ class SimulatedChain:
     ) -> None:
         if self._engine is None:
             with self._guard:
-                self._books[issue_id] = (party, amount, status, fee_bps)
+                self._books[issue_id] = (party, amount, status, fee_bps, tx)
             return
         values = {"status": status.value, "last_tx_hash": tx}
         with self._engine.begin() as conn:

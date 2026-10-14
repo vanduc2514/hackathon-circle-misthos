@@ -50,8 +50,8 @@ from misthos.domain.compliance import (
     ScreeningOutcome,
     ScreeningReason,
 )
-from misthos.domain.issue import IssueState
-from misthos.domain.ledger import Divergence, MoneyEvent, MoneyEventKind
+from misthos.domain.issue import FundingTerms, IssueState
+from misthos.domain.ledger import Divergence, MoneyEvent, MoneyEventKind, OnChain
 from misthos.domain.money import Usdc
 from misthos.domain.policy import (
     PolicyRefusal,
@@ -85,6 +85,7 @@ from misthos.domain.signals import read as read_signals
 from misthos.domain.timers import TimedAction
 from misthos.models.records import IssueRecord
 from misthos.observability.metrics import (
+    ADOPTED,
     DIVERGENCE_ALERTS,
     DIVERGENCES,
     MONEY_EVENTS,
@@ -1368,6 +1369,14 @@ class Store:
         rec = self.repo.get_issue(issue_id)
         assert rec is not None
         theirs = self.chain.commitments().get(issue_id)
+        # A commitment the escrow holds and the ledger does not, for an issue we know, is
+        # the booking that failed after the publisher's wallet had already moved the
+        # money: the one place that records `escrow` and `deadline` sits after the chain
+        # call that can fail, so they stayed None and with them every timer -- the refund
+        # included -- became unreachable (#161). Adopting it here is what gives the issue
+        # a lifecycle again: inside the window it books, past it the deadline refunds.
+        if theirs is not None and not rec.money_events:
+            return self._adopt_commitment(rec, theirs, now)
         found = ledger.reconcile(
             {issue_id: rec.money_events}, {issue_id: theirs} if theirs else {}
         )
@@ -1388,6 +1397,84 @@ class Store:
             )
             self.repo.save_issues(rec)
         return found
+
+    def _adopt_commitment(self, rec: IssueRecord, theirs: OnChain, now: datetime) -> list[Divergence]:
+        """Book a commitment the chain holds and the platform never recorded.
+
+        The transaction reference is read back from the escrow, because the platform did
+        not send it: the publisher's wallet did. That is what lets the ledger say what the
+        chain already says.
+
+        The state is moved through the lifecycle rather than set: `AWAITING_APPROVAL` is
+        the record of an approval the escrow was still waiting on, and `FUNDED` follows
+        it, exactly as the approval would have. A record in any other state is not one
+        this can place -- it is alerted and left alone rather than forced.
+        """
+        if rec.state is not IssueState.AWAITING_APPROVAL:
+            divergence = Divergence(
+                rec.id,
+                "no commitment",
+                f"{theirs.status} {theirs.amount} held, but the issue is {rec.state}",
+            )
+            _alert(divergence)
+            self._log(
+                rec,
+                actor="system",
+                action="ledger_divergence",
+                rule="chain_reconciliation",
+                outcome=(
+                    f"the escrow holds {theirs.amount} for {rec.id}, which is {rec.state} "
+                    "and cannot be booked from there"
+                ),
+                when=now,
+            )
+            self.repo.save_issues(rec)
+            return [divergence]
+
+        publisher = self.repo.get_publisher(rec.publisher_id)
+        assert publisher is not None
+        try:
+            tx = self.chain.commitment_tx(rec.id, theirs.publisher or publisher.wallet.address)
+        except (ChainUnavailable, ChainRevert) as exc:
+            # Nothing is written without the reference: a money event without one is not
+            # the record this ledger keeps. The next pass tries again.
+            log.warning("could not read the commitment reference for %s: %s", rec.id, exc)
+            return []
+
+        self._move(rec, IssueState.FUNDED)
+        self._book(rec, MoneyEventKind.COMMITTED, theirs.amount, publisher.id, tx, now)
+        rec.escrow = EscrowCommitment(
+            issue_id=rec.id,
+            contract=ESCROW_CONTRACT,
+            chain=settings.chain,
+            tx_hash=tx,
+            amount=money(theirs.amount),
+            deadline=theirs.deadline or now,
+            fee_bps=theirs.fee_bps,
+        )
+        rec.deadline = rec.escrow.deadline
+        rec.funding = rec.funding or FundingTerms(
+            amount=theirs.amount,
+            fee_bps=theirs.fee_bps,
+            wallet=theirs.publisher or publisher.wallet.address,
+            deadline=rec.escrow.deadline,
+            approved_at=now,
+        )
+        self._log(
+            rec,
+            actor="system",
+            action="commitment_adopted",
+            rule="chain_reconciliation",
+            outcome=(
+                f"the escrow held {theirs.amount} that was never booked; recorded against "
+                f"{tx}, and the issue is FUNDED until {rec.deadline:%d %B %Y}"
+            ),
+            when=now,
+        )
+        self.repo.save_issues(rec)
+        ADOPTED.inc()
+        return []
+
 
     # ----------------------------------------------------------------- timers
 

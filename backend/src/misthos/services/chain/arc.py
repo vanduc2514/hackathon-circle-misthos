@@ -266,6 +266,15 @@ class ArcEscrow:
             raise ChainRevert(f"DeadlineTooLate: committed until {held.deadline}, not {deadline}")
         return self._commit_tx(issue_id, publisher)
 
+    def commitment_tx(self, issue_id: str, publisher: str) -> str:
+        """The transaction that carried this issue's commitment, from the log.
+
+        A commitment the platform booked already has its reference recorded. This is for
+        one it did not: reconciliation reads it back so the ledger can be told what the
+        chain already knows (#161).
+        """
+        return self._commit_tx(issue_id, publisher)
+
     def release(self, issue_id: str, contributor: str, amount: Usdc, at: datetime) -> str:
         return self._signer(self._attestor, "attestor").send(
             self.address, release_call(issue_id, contributor, amount)

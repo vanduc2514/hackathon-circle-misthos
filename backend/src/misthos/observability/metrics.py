@@ -61,6 +61,11 @@ DIVERGENCES = Gauge(
     "Issues whose ledger and on-chain escrow disagreed at the last reconciliation",
     registry=SWEEPER,
 )
+ADOPTED = Counter(
+    "misthos_commitments_adopted_total",
+    "Commitments the chain held and the ledger did not, recorded by reconciliation",
+    registry=SWEEPER,
+)
 DIVERGENCE_ALERTS = Counter(
     "misthos_ledger_divergence_alerts_total", "Divergences raised as alerts", registry=SWEEPER
 )
