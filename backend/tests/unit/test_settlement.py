@@ -331,26 +331,54 @@ class TestCommit:
         escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), expected, DEADLINE)
         assert clock.slept == []
 
-    def test_the_scan_pauses_between_windows_so_a_long_history_is_not_a_burst(
+    def test_a_page_the_node_throttles_is_waited_out_and_retried(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The node refuses about ten back-to-back `eth_getLogs` with 429, and a history
-        longer than ten windows is an ordinary testnet. Paced, the scan lasts a few
-        hundred milliseconds longer and does not throw away a booking (#154)."""
+        """A walk of the whole history needs more pages than the node allows in a minute,
+        so at this chain's length it cannot finish on pace alone. What makes it complete
+        is retrying the page that was refused, waiting long enough for the budget to roll
+        (#161). Without this, reconciliation can never read a commitment that is not
+        recent -- which is exactly the orphan it exists to adopt.
+        """
         clock = _FakeClock.installed(monkeypatch)
-        escrow = self.escrow(
-            {
-                commitments_call("ISS-1"): HELD_180,
-                # Two windows: the deployment block to 5,006, then 5,007 to 10,000.
-                "eth_blockNumber": hex(10_000),
-                "eth_getLogs": [{"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}],
-            }
-        )
-        expected = DEADLINE + timedelta(minutes=20)
-        escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), expected, DEADLINE)
+        # More refusals than `JsonRpc` retries on its own: a page-rate refusal is not a
+        # transient blip, so it outlasts the short backoff and is left to the paging
+        # loop, which waits long enough for the minute to roll.
+        refusals = {"left": 4}
 
-        # A pause between the windows and none after the last.
-        assert clock.slept == [ArcEscrow.LOG_PAUSE_SECONDS]
+        def handle(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            method = body["method"]
+            if method == "eth_getLogs":
+                if refusals["left"] > 0:
+                    refusals["left"] -= 1
+                    return httpx.Response(429, headers={"retry-after": "0"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": [
+                            {"topics": ["0x", issue_key("ISS-1")], "transactionHash": "0xC0"}
+                        ],
+                    },
+                )
+            key = body["params"][0].get("data") if method == "eth_call" else None
+            if method == "eth_call":
+                result: object = HELD_180 if key == commitments_call("ISS-1") else NONE
+            elif method == "eth_blockNumber":
+                result = hex(9)
+            elif method == "eth_getCode":
+                result = "0x6080"
+            else:
+                result = None
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": result})
+
+        escrow = ArcEscrow("http://rpc", DEPLOYED, transport=httpx.MockTransport(handle))
+        expected = DEADLINE + timedelta(minutes=20)
+        assert escrow.commit("ISS-1", PUBLISHER, Usdc(180_000_000), expected, DEADLINE) == "0xC0"
+        # One wait, and it was the throttle pause rather than a burst pause.
+        assert clock.slept == [ArcEscrow.LOG_THROTTLE_SECONDS]
 
 
 class _FakeClock:

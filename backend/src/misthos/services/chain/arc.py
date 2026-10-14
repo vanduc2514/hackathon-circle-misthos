@@ -81,10 +81,13 @@ class ArcEscrow:
     # And a limit on how fast that walk may go. Against the same node, roughly ten
     # back-to-back `eth_getLogs` are accepted and the eleventh answers 429, and the same
     # node allows about sixty in a rolling minute -- which one walk of the range needs
-    # sixty-five of, so a paced walk of the whole range still meets the limit near its
-    # end (#154). The pause keeps a walk from bursting; it cannot make a walk this long
-    # fit.
+    # sixty-five of, so a walk of the whole history cannot fit inside the budget however
+    # it is paced (#154, #161). What a caller gets instead is a page that is retried when
+    # the node refuses it for being too fast, waiting long enough for the minute to roll.
     LOG_PAUSE_SECONDS = 0.2
+    LOG_THROTTLE_SECONDS = 5.0
+    LOG_THROTTLE_MAX_SECONDS = 65.0
+    LOG_WINDOW_ATTEMPTS = 8
 
     # So the common case does not walk the range at all. A confirmation is about a
     # commitment the publisher's wallet just made, and the booking has to happen within
@@ -303,17 +306,19 @@ class ArcEscrow:
         """Every Committed log, narrowed to one issue and one publisher when given.
 
         The narrowing is the node's work, not ours: both are indexed topics, so a whole
-        history of commitments for other issues costs one window's worth of data instead
-        of a window per commitment.
+        history of commitments for other issues costs one page's worth of data instead of
+        a page per commitment.
 
         `recent` bounds the walk to the last that many blocks. A confirmation wants this:
         the commitment it is looking for was just made, and walking the range from the
         deployment would spend sixty-five requests to find it, past what the node allows
         in a minute (#154). Without `recent`, the walk is the whole history, which is what
-        reconciliation needs.
+        reconciliation needs for a commitment that is not recent.
 
-        Windows are asked for one at a time, with a pause between them: the node refuses
-        a burst with 429 (#154).
+        The pages are asked for one at a time, and a page the node refuses for being too
+        fast is waited out and retried: a walk of the whole history cannot fit inside a
+        minute's budget at this chain's length, so the only thing that makes it complete
+        is being willing to take longer than a minute (#161).
         """
         topics: list[str] = [COMMITTED_TOPIC]
         if key is not None:
@@ -327,25 +332,41 @@ class ArcEscrow:
         found: list[dict] = []
         while start <= head:
             end = min(start + self.LOG_RANGE_BLOCKS - 1, head)
-            logs = self._rpc(
-                "eth_getLogs",
-                [
-                    {
-                        "address": self.address,
-                        "fromBlock": hex(start),
-                        "toBlock": hex(end),
-                        "topics": topics,
-                    }
-                ],
-            )
+            logs = self._window(start, end, topics)
             if isinstance(logs, list):
                 found.extend(logs)
-            # Paced between windows, never after the last: a bounded walk -- the common
-            # case -- must not pay for a pause it will not use.
             start = end + 1
-            if start <= head:
-                time.sleep(self.LOG_PAUSE_SECONDS)
         return found
+
+    def _window(self, start: int, end: int, topics: list[str]) -> object:
+        """One page of the log, retried when the node refuses it for being too fast.
+
+        `JsonRpc` retries too, but with a short backoff meant for a transient blip. A
+        page-rate refusal is not transient: it clears when the minute rolls over, so this
+        waits longer and, on the way, grows. Without it a walk that needs more pages than
+        the budget allows fails partway every time, and reconciliation can never read a
+        commitment that is not recent (#161).
+        """
+        delay = self.LOG_THROTTLE_SECONDS
+        for attempt in range(self.LOG_WINDOW_ATTEMPTS):
+            try:
+                return self._rpc(
+                    "eth_getLogs",
+                    [
+                        {
+                            "address": self.address,
+                            "fromBlock": hex(start),
+                            "toBlock": hex(end),
+                            "topics": topics,
+                        }
+                    ],
+                )
+            except ChainUnavailable as exc:
+                if "429" not in str(exc) or attempt == self.LOG_WINDOW_ATTEMPTS - 1:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, self.LOG_THROTTLE_MAX_SECONDS)
+        raise ChainUnavailable(f"the log window {start}-{end} was never accepted")
 
     def _commit_tx(self, issue_id: str, publisher: str) -> str:
         """The publisher's own commitment transaction, as the chain reports it.
@@ -355,10 +376,10 @@ class ArcEscrow:
         address the commitment was just checked against, so the log found is this
         issue's commitment and not an earlier one from another wallet (#154).
 
-        Looked for in the recent blocks first, because the commitment was just made, and
-        only then across the whole history: the booking is refused once the commitment is
-        more than an hour old (#126), so an older log is not one this can book, but a
-        wider walk is better than insisting on it.
+        The recent blocks are tried first, because a booking confirms a commitment made
+        moments ago. An older one is found by paging through the history a window at a
+        time -- reconciliation cannot assume its orphan is recent -- with the query
+        narrowed by issue and publisher, so each page carries one commitment at most.
         """
         logs = self._committed_logs(issue_key(issue_id), publisher, recent=self.LOG_RECENT_BLOCKS)
         if not logs:
