@@ -595,7 +595,7 @@ flowchart TB
 
 ### Who may do what
 
-The line between T1 and T2 is a wallet signature. A wallet signs in with a Sign-In with Ethereum message (EIP-4361) that names this site's domain, an Arc chain and a single-use nonce, and the session is an HMAC-signed token in an HttpOnly, SameSite=Lax cookie, or a bearer header for an API client (`auth/`, #70). A wallet takes one role, publisher or contributor, and links one GitHub account through OAuth, keeping only the login (#80). The link is what ties a GitHub identity to a party: a publisher's issues and a contributor's pull requests must match it.
+The line between T1 and T2 is a wallet signature. A wallet signs in with a Sign-In with Ethereum message (EIP-4361) that names this site's domain, an Arc chain and a single-use nonce, and the session is an HMAC-signed token in an HttpOnly, SameSite=Lax cookie, or a bearer header for an API client (`auth/`, #70). The wallet can be in the browser, found over EIP-6963 or at `window.ethereum`, or, with none there, the MetaMask app: on a phone the one button opens the app and returns, and on a computer it shows a code to scan. The SDK for that is loaded only when needed, and the message, the session and the API are the same either way (`lib/wallet.ts::anyWallet`, #141). A wallet takes one role, publisher or contributor, and links one GitHub account through OAuth, keeping only the login (#80). The link is what ties a GitHub identity to a party: a publisher's issues and a contributor's pull requests must match it.
 
 | Action | Who | Refused with |
 | --- | --- | --- |

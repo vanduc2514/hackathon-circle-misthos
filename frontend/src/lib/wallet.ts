@@ -1,12 +1,13 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js'
-import { browserProvider } from './eip1193'
+import { browserProvider, type Eip1193 } from './eip1193'
+import { injectedProvider } from './eip6963'
 import { toChecksumAddress } from './siwe'
 
 /** Something that can prove it holds an address by signing a message. */
 export type Signer = {
-  kind: 'browser' | 'demo'
+  kind: 'browser' | 'metamask-app' | 'demo'
   address: string
   sign: (message: string) => Promise<string>
 }
@@ -38,15 +39,13 @@ export function signPersonal(secretKey: Uint8Array, message: string): string {
 
 export { browserProvider }
 
-/** The wallet extension in this browser, such as MetaMask. */
-export async function browserWallet(): Promise<Signer> {
-  const provider = browserProvider()
-  if (!provider) throw new Error('No wallet extension was found in this browser.')
+/** A signer over any EIP-1193 provider: ask for an account, then `personal_sign`. */
+export async function signerFrom(provider: Eip1193, kind: Signer['kind']): Promise<Signer> {
   const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[]
   if (!accounts?.length) throw new Error('The wallet did not share an account.')
   const address = accounts[0]
   return {
-    kind: 'browser',
+    kind,
     address: toChecksumAddress(address),
     sign: async (message) =>
       (await provider.request({
@@ -54,6 +53,43 @@ export async function browserWallet(): Promise<Signer> {
         params: ['0x' + bytesToHex(utf8ToBytes(message)), address],
       })) as string,
   }
+}
+
+/** The wallet extension in this browser, such as MetaMask. */
+export async function browserWallet(): Promise<Signer> {
+  const provider = browserProvider()
+  if (!provider) throw new Error('No wallet extension was found in this browser.')
+  return signerFrom(provider, 'browser')
+}
+
+/**
+ * The MetaMask app, for a browser with no wallet in it (#141): on a phone it opens the
+ * app and comes back, on a computer it shows a code to scan with the app. The SDK is
+ * loaded only here, so a browser with an extension never downloads it.
+ */
+export async function metamaskApp(): Promise<Signer> {
+  const { MetaMaskSDK } = await import('@metamask/sdk')
+  const sdk = new MetaMaskSDK({
+    dappMetadata: { name: 'Misthos', url: globalThis.location?.origin },
+    checkInstallationImmediately: false,
+  })
+  await sdk.connect()
+  const provider = sdk.getProvider()
+  if (!provider) throw new Error('The MetaMask app did not connect.')
+  return signerFrom(provider as unknown as Eip1193, 'metamask-app')
+}
+
+/**
+ * The one "Sign in with your wallet" button (#141): a wallet in this page if one
+ * announces itself or sits at `window.ethereum`, else the MetaMask app. The message
+ * signed, the session and the API are the same whichever it is.
+ */
+export async function anyWallet(
+  find: () => Promise<Eip1193 | null> = () => injectedProvider(),
+  app: () => Promise<Signer> = metamaskApp,
+): Promise<Signer> {
+  const provider = await find()
+  return provider ? signerFrom(provider, 'browser') : app()
 }
 
 // --------------------------------------------------------------- demo wallets

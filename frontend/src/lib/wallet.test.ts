@@ -4,7 +4,15 @@ import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { toChecksumAddress } from './siwe'
 import type { Eip1193 } from './eip1193'
-import { addressOf, browserWallet, demoWallet, personalDigest, signPersonal } from './wallet'
+import {
+  addressOf,
+  anyWallet,
+  browserWallet,
+  demoWallet,
+  personalDigest,
+  signPersonal,
+  type Signer,
+} from './wallet'
 
 /**
  * What `siwe.test.ts` does not reach: the EIP-191 prefix itself, the wallet that
@@ -180,5 +188,31 @@ describe('demoWallet', () => {
     expect(wallet.address).toMatch(/^0x[0-9a-fA-F]{40}$/)
     // And it signs for the address it claims, which is the whole point of it.
     expect(addressFromSignature(await wallet.sign('hello'), 'hello')).toBe(wallet.address)
+  })
+})
+
+describe('anyWallet', () => {
+  const app: Signer = { kind: 'metamask-app', address: ONE_ADDRESS, sign: async () => '0x' }
+  const injected: Eip1193 = {
+    request: async ({ method }) => (method === 'eth_requestAccounts' ? [ONE_ADDRESS] : null),
+  }
+
+  it('signs with the wallet in this browser when there is one, as today', async () => {
+    let opened = false
+    const signer = await anyWallet(
+      async () => injected,
+      async () => {
+        opened = true
+        return app
+      },
+    )
+    expect(signer.kind).toBe('browser')
+    expect(signer.address).toBe(ONE_ADDRESS)
+    expect(opened).toBe(false)
+  })
+
+  it('opens the MetaMask app when the browser has no wallet, as on a phone', async () => {
+    const signer = await anyWallet(async () => null, async () => app)
+    expect(signer.kind).toBe('metamask-app')
   })
 })

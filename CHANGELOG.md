@@ -7,6 +7,12 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **Sign in from a phone with the same wallet button** (#141). "Sign in with your
+  wallet" finds a wallet in the browser over EIP-6963 or at `window.ethereum`, as
+  before, and with none there it opens the MetaMask app: on a phone it hands off to the
+  app and comes back, on a computer it shows a code to scan. The Account page no longer
+  says a wallet extension is required. The MetaMask SDK is loaded only on that path, and
+  the signed message, the session and the API are unchanged.
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:
   white pages, black ink and buttons, Georgia headings and figures, and Arial text. The
   dark, mono, orange theme is gone.

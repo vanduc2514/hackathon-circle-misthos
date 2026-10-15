@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, shortHash, unwrap, type Account, type HealthOut } from '../lib/client'
 import { signIn, signOut, useHealth, useMe } from '../lib/session'
-import { browserProvider, browserWallet, demoWallet, type Signer } from '../lib/wallet'
+import { anyWallet, browserProvider, demoWallet, type Signer } from '../lib/wallet'
 import { setUpWallet } from '../lib/circle-wallet'
 import { linking } from '../lib/github-link'
 import { Panel } from '../components/ui'
@@ -57,8 +57,9 @@ export default function AccountPage() {
             <div className="btn-row">
               <button
                 className="btn primary"
-                disabled={!browserProvider() || enter.isPending}
-                onClick={() => enter.mutate(browserWallet)}
+                disabled={enter.isPending}
+                // A wallet in this browser if there is one, else the MetaMask app (#141).
+                onClick={() => enter.mutate(anyWallet)}
               >
                 Sign in with your wallet
               </button>
@@ -83,7 +84,8 @@ export default function AccountPage() {
             </div>
             {!browserProvider() && (
               <p className="stat-hint" style={{ marginTop: 10 }}>
-                No wallet extension was found in this browser.
+                No wallet in this browser: the button opens the MetaMask app on a phone, or shows
+                a code to scan with it on a computer.
                 {simulated && ' The demo wallets are keys kept in this browser, for the simulation only.'}
               </p>
             )}
