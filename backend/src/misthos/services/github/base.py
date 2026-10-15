@@ -22,6 +22,20 @@ class GitHubNotConfigured(RuntimeError):
 
 
 @dataclass(frozen=True)
+class Installation:
+    """One installation of the App, as GitHub reports it.
+
+    `login` is the account the App is installed on, which is what attributes the
+    installation's repositories to a publisher. `repositories` is every repository it
+    covers, so an installation with the whole account selected lists them all.
+    """
+
+    id: int
+    login: str
+    repositories: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PullRequest:
     repo: str
     number: int
@@ -50,6 +64,19 @@ class StatusState(StrEnum):
 
 class GitHubGateway(Protocol):
     name: str
+
+    # --------------------------------------------------------- installations
+
+    def list_installations(self) -> list[Installation]:
+        """Every installation of the App, with the repositories each one covers.
+
+        Empty when the gateway cannot know: the simulation holds only what a test or a
+        demo put in it.
+        """
+
+    def installation_for(self, repo: str) -> Installation | None:
+        """The installation that covers one repository, or None when the App is not on
+        it. One call, for the paths that ask about a single repository."""
 
     # ------------------------------------------------------------- read path
 

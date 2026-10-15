@@ -191,6 +191,11 @@ def _labelled_for_us(action: str, payload: dict[str, Any]) -> bool:
 
 def _list_issue(store: Store, repo: str, number: int, payload: dict[str, Any]) -> Handled:
     connection = store.connection(repo)
+    if connection is None:
+        # No row was ever written for this repository. GitHub still knows the App is
+        # installed on it, and a delivery that failed is never redelivered, so ask
+        # rather than refuse for ever (#180).
+        connection = store.connection_from_installation(repo)
     if connection is None or connection.publisher_id is None:
         if connection is not None:
             _reply(
@@ -199,6 +204,27 @@ def _list_issue(store: Store, repo: str, number: int, payload: dict[str, Any]) -
                 f"in as a publisher yet. Sign in at {settings.public_url}/account and link "
                 "this GitHub account, then label the issue again.",
             )  # fmt: skip
+        else:
+            _reply(
+                store, repo, number,
+                f"**Misthos cannot price this issue**: no publisher is connected to "
+                f"`{repo}`. Install the App on the repository, then sign in at "
+                f"{settings.public_url}/account as a publisher and link the GitHub account "
+                "that installed it, and label the issue again.",
+            )  # fmt: skip
+        # Said in the log as well as on the issue: a refusal that leaves no trace reads
+        # as the platform ignoring the label, which is what a failed delivery looks like
+        # from the outside (#180).
+        log.warning(
+            "%s#%s was labelled %s and has no publisher: %s",
+            repo,
+            number,
+            settings.github_label,
+            "the App is not installed there"
+            if connection is None
+            else f"@{connection.installed_by} has not signed in as a publisher",
+            extra={"repo": repo, "number": number},
+        )
         return Handled(False, f"ignored: {repo} has no publisher")
     issue = payload["issue"]
     request = PublishRequest(

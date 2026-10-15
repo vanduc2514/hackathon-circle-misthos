@@ -34,3 +34,12 @@ Notable changes to Misthos, newest first. The format follows
 
 - The header's money chip says USDC rather than TEST USDC (#138).
 - An issue's "Next step" panel no longer shows a source comment as text (#168, #169).
+- **A `misthos` label is priced even when nothing recorded the repository's connection**
+  (#180). A connection row is written by the `installation_repositories` webhook and by
+  nothing else, and GitHub does not redeliver a delivery that failed, so a repository the
+  App was installed on could have no row and no way to get one: every label on it was
+  refused for ever, and refused silently. A label now asks GitHub which installation
+  covers the repository and records what it says, and the sweeper's `reconcile_connections`
+  does the same for every installation on each pass.
+  - A label that cannot be priced answers on the issue and says so in the log, instead of
+    posting nothing and leaving no trace.

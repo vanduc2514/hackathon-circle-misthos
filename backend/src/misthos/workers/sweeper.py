@@ -20,9 +20,12 @@ checks have reported on it or have had `CHECKS_WAIT` to. Before that it puts bac
 rework any issue left in review on a commit already judged, which no review would
 ever take (#119). It re-screens live counterparties whose last check is a day old,
 because screening once at onboarding is the mistake 08 is written against; deletes
-screening records past their published retention period; and reconciles the money
-ledger against the chain, raising an alert for any divergence. It also ends plans
-whose paid period is over: past due for a grace period, then back on Open (#53).
+screening records past their published retention period; reconciles the money
+ledger against the chain, raising an alert for any divergence; and records the
+connections GitHub's installations imply for any repository whose `installation`
+delivery never landed (#180), so a label is never refused over a delivery GitHub
+does not send twice. It also ends plans whose paid period is over: past due for a
+grace period, then back on Open (#53).
 """
 
 from __future__ import annotations
@@ -102,6 +105,9 @@ class SweepReport:
     """Screening records deleted at the end of their retention period."""
     divergences: int = 0
     """Issues whose ledger and on-chain escrow disagree. Each one is an alert."""
+    connections_added: tuple[str, ...] = ()
+    """Repositories the App is installed on that had no connection recorded, now
+    recorded (#180)."""
     plans_changed: list[str] = field(default_factory=list)
     """Publishers whose plan went past due, was cancelled or lapsed this pass."""
 
@@ -171,6 +177,12 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
         purged = store.purge_expired(now)
         divergences = store.reconcile(now)
         try:
+            connections_added = tuple(store.reconcile_connections(now))
+        except Exception:
+            # A GitHub outage must not stop the refunds and the reviews that follow.
+            log.exception("sweeper: connections could not be reconciled, retrying next pass")
+            connections_added = ()
+        try:
             plans_changed = store.sweep_subscriptions(now)
         except Exception:
             log.exception("sweeper: plans failed, retrying next pass")
@@ -186,6 +198,7 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
             screened=len(screened),
             purged=purged,
             divergences=len(divergences),
+            connections_added=connections_added,
             plans_changed=plans_changed,
         )
 
@@ -220,5 +233,11 @@ async def run_forever(store: Store, interval_seconds: float) -> None:
                         issue_id,
                         verdict,
                         extra={"issue_id": issue_id, "verdict": verdict},
+                    )
+                for repo in report.connections_added:
+                    log.info(
+                        "sweeper: recorded the connection GitHub reports for %s",
+                        repo,
+                        extra={"repo": repo},
                     )
         await asyncio.sleep(interval_seconds)

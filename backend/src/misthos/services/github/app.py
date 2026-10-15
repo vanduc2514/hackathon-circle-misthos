@@ -28,6 +28,7 @@ from misthos.domain.signals import IssueFacts, classify_tree
 from misthos.services.github.base import (
     STATUS_CONTEXT,
     GitHubError,
+    Installation,
     PullRequest,
     ReviewEvent,
     StatusState,
@@ -45,6 +46,9 @@ JWT_BACKDATE_SECONDS = 60
 _PASSING = frozenset({"success", "neutral", "skipped"})
 # GitHub lists at most 3,000 files of a pull request, 100 to a page.
 MAX_FILE_PAGES = 30
+# GitHub lists an installation's repositories 100 to a page. An account with more than
+# this many is past what one reconcile pass should read.
+MAX_REPOSITORY_PAGES = 30
 
 
 @dataclass
@@ -82,6 +86,61 @@ class GitHubApp:
         self._guard = threading.Lock()
         self._installations: dict[str, int] = {}
         self._tokens: dict[int, _Token] = {}
+
+    # --------------------------------------------------------- installations
+
+    def list_installations(self) -> list[Installation]:
+        """Every installation, with the repositories each one covers.
+
+        GitHub already tells us the installation on a repository, but the reverse costs
+        a call per installation, so this is only read by the sweeper's connection
+        reconcile rather than the label path.
+        """
+        found = []
+        for raw in self._call("GET", "/app/installations", auth=self._as_app()) or []:
+            login = str((raw.get("account") or {}).get("login") or "")
+            found.append(
+                Installation(
+                    id=int(raw["id"]),
+                    login=login,
+                    repositories=tuple(self._installation_repositories(int(raw["id"]))),
+                )
+            )
+        return found
+
+    def installation_for(self, repo: str) -> Installation | None:
+        """The installation that covers one repository, or None when the App is not on
+        it. One call, and the one GitHub answers without walking an account's list."""
+        response = self._http.get(
+            f"/repos/{repo}/installation", headers={"Authorization": self._as_app()}
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise GitHubError(f"GET /repos/{repo}/installation: {response.status_code}")
+        found = response.json()
+        return Installation(
+            id=int(found["id"]),
+            login=str((found.get("account") or {}).get("login") or ""),
+        )
+
+    def _installation_repositories(self, installation: int) -> list[str]:
+        """Every repository an installation covers, across its pages."""
+        names: list[str] = []
+        page = 1
+        while page <= MAX_REPOSITORY_PAGES:
+            listing = self._call(
+                "GET",
+                f"/user/installations/{installation}/repositories",
+                auth=self._as_app(),
+                params={"per_page": "100", "page": str(page)},
+            )
+            batch = (listing or {}).get("repositories") or []
+            names.extend(str(r["full_name"]) for r in batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return names
 
     # ------------------------------------------------------------ auth
 

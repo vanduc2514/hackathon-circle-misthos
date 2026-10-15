@@ -3030,6 +3030,50 @@ class Store:
                 self.repo.save_connection(found)
         return found
 
+    def connection_from_installation(self, repo: str) -> RepoConnection | None:
+        """The connection GitHub's own installation implies for this repository (#180).
+
+        A connection row is written by the `installation_repositories` webhook and by
+        nothing else, and GitHub does not redeliver a delivery that failed -- so a
+        repository the App is on can have no row and no way to get one. GitHub still
+        knows which installation covers it, so ask, and record what it says through the
+        same writer the webhook uses. Returns None when the App is not installed there.
+        """
+        self.ensure_ready()
+        found = self.github.installation_for(repo)
+        if found is None:
+            return None
+        connected = self.connect_repositories(found.id, found.login, [repo])
+        return connected[0] if connected else None
+
+    def reconcile_connections(self, now: datetime | None = None) -> list[str]:
+        """Record every repository the App is installed on and has no connection for.
+
+        The webhook is the account of record for a change GitHub reports, but a delivery
+        that fails is never redelivered, so the table can be missing a repository
+        silently and for good. This makes the table agree with what GitHub says the
+        installations cover, so a missed delivery heals within a sweep (#180).
+
+        Only additions: a repository that left an installation is disconnected by the
+        webhook that says so, and a partial read here must not delete a live row.
+        """
+        self.ensure_ready()
+        now = now or _now()
+        known = {c.repo.lower() for c in self.repo.list_connections()}
+        added: list[str] = []
+        for installation in self.github.list_installations():
+            missing = [
+                repo for repo in installation.repositories if repo.lower() not in known
+            ]
+            if not missing:
+                continue
+            for connection in self.connect_repositories(
+                installation.id, installation.login, missing, now
+            ):
+                added.append(connection.repo)
+                known.add(connection.repo)
+        return added
+
     def connections_of(self, publisher_id: str) -> list[RepoConnection]:
         self.ensure_ready()
         return sorted(

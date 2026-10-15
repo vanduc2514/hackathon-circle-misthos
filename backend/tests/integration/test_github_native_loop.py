@@ -10,6 +10,7 @@ the simulated gateway; every delivery goes through the signed webhook receiver.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Any
 
@@ -24,7 +25,7 @@ from misthos.domain.review import ChangedFile
 from misthos.domain.signals import IssueFacts
 from misthos.main import app
 from misthos.services.coordination import Busy
-from misthos.services.github import PullRequest, SimulatedGitHub
+from misthos.services.github import Installation, PullRequest, SimulatedGitHub
 from misthos.store import store
 from misthos.workers.sweeper import sweep_once
 
@@ -180,9 +181,59 @@ class TestConnections:
         labelled(5)
         assert store.find_open(REPO, 5) is not None
 
-    def test_an_unconnected_repository_is_left_alone(self, github: SimulatedGitHub) -> None:
-        assert labelled(7)["handled"] is False
-        assert comments(github, 7) == []
+    def test_an_unconnected_repository_is_told_what_the_label_needs(
+        self, github: SimulatedGitHub, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A refused label answers on the issue and says so in the log.
+
+        Nothing is listed, and that has to be visible where the person is looking. A
+        refusal that posts nothing and logs nothing reads as the platform ignoring the
+        label, which is what a failed delivery looks like from the outside (#180).
+        """
+        with caplog.at_level(logging.WARNING, logger="misthos.github.events"):
+            assert labelled(7)["handled"] is False
+
+        assert "no publisher is connected to" in comments(github, 7)[-1]
+        assert any("no publisher" in r.getMessage() for r in caplog.records)
+
+    def test_a_repository_the_app_is_on_is_connected_from_its_installation(
+        self, github: SimulatedGitHub
+    ) -> None:
+        """GitHub is asked which installation covers the repository, and it is recorded.
+
+        `repo_connections` is written by the `installation_repositories` webhook and by
+        nothing else, and GitHub does not redeliver a delivery that failed, so a
+        repository the App is on can have no row and no way to get one. That used to
+        refuse the label for ever; GitHub still knows, so the label asks it (#180).
+        """
+        publisher = onboard(91, "publisher", "acme-maint")
+        github.installations = [Installation(id=42, login="acme-maint", repositories=(REPO,))]
+        assert store.connection(REPO) is None
+
+        assert labelled(9)["handled"] is True
+        rec = store.find_open(REPO, 9)
+        assert rec is not None and rec.publisher_id == publisher
+        connection = store.connection(REPO)
+        assert connection is not None and connection.publisher_id == publisher
+
+    def test_the_sweeper_records_a_connection_no_delivery_wrote(
+        self, github: SimulatedGitHub
+    ) -> None:
+        """The missing row heals on its own, without anyone labelling an issue.
+
+        A label is not the only thing a connection is for: the web app lists a
+        publisher's repositories from it. Reconcile is the pass that makes the database
+        agree with GitHub's installations instead of with whichever deliveries happened
+        to arrive (#180).
+        """
+        publisher = onboard(92, "publisher", "acme-maint")
+        github.installations = [Installation(id=42, login="acme-maint", repositories=(REPO,))]
+
+        report = sweep_once(store)
+
+        assert report.connections_added == (REPO,)
+        connection = store.connection(REPO)
+        assert connection is not None and connection.publisher_id == publisher
 
     def test_other_labels_do_not_list_an_issue(self) -> None:
         onboard(84, "publisher", "acme-maint")

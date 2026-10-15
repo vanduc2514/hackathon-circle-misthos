@@ -13,7 +13,13 @@ from dataclasses import dataclass
 
 from misthos.domain.review import ChangedFile
 from misthos.domain.signals import IssueFacts
-from misthos.services.github.base import GitHubError, PullRequest, ReviewEvent, StatusState
+from misthos.services.github.base import (
+    GitHubError,
+    Installation,
+    PullRequest,
+    ReviewEvent,
+    StatusState,
+)
 
 
 @dataclass(frozen=True)
@@ -50,8 +56,21 @@ class SimulatedGitHub:
         with self._guard:
             self.issues, self.pulls, self.checks, self.history = {}, {}, {}, {}
             self.files = {}
+            self.installations: list[Installation] = []
             self.sent = []
             self.fail_writes = False
+
+    # --------------------------------------------------------- installations
+
+    def list_installations(self) -> list[Installation]:
+        return list(self.installations)
+
+    def installation_for(self, repo: str) -> Installation | None:
+        wanted = repo.lower()
+        for found in self.installations:
+            if wanted in {r.lower() for r in found.repositories}:
+                return found
+        return None
 
     # ------------------------------------------------------------- read path
 

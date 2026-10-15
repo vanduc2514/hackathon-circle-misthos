@@ -193,7 +193,8 @@ The lifecycle is the single writer of issue state. Letting the pricing engine or
 | GitHub event | Lifecycle action |
 | --- | --- |
 | `installation`, `installation_repositories` | The repositories connected to the publisher whose linked GitHub login installed the App, or disconnected |
-| `issues` opened or labelled `misthos`, in a connected repository | Listed with no price: the suggested band, the drafted criteria and the commands are posted, and the reply asks the publisher to name a price |
+| `issues` opened or labelled `misthos`, in a repository the App is on | Listed with no price: the suggested band, the drafted criteria and the commands are posted, and the reply asks the publisher to name a price |
+| `issues` opened or labelled `misthos`, anywhere else | Nothing is listed, and the issue is told why: the App is not installed there, or the account that installed it has not signed in as a publisher yet (#180) |
 | `issue_comment`: `/misthos price 250` from the publisher | The price the publisher names, while the issue is unfunded and unclaimed (#142) |
 | `issue_comment`: `/misthos approve` from the publisher's login | Criteria and the price already named approved, and the funds committed. Refused until a price exists |
 | `issue_comment`: `/misthos criteria` and a list, from the publisher | Those criteria approved instead of the drafted ones, refused with reasons if a reviewer could not judge them |
@@ -206,6 +207,8 @@ The lifecycle is the single writer of issue state. Letting the pricing engine or
 
 So an issue goes from a label to a payout on GitHub events alone, once each person has signed in and linked their GitHub login (#6). The webhook is signed, so a command's author is who GitHub says it is. Commands from bots, and comments on pull requests, are ignored. The review is run by the sweeper, not by anyone asking for it.
 
+**A connection is what a label is priced against, and a missing one is not fatal.** `repo_connections` is written by the `installation_repositories` webhook and by nothing else, and GitHub does not redeliver a delivery that failed, so a repository the App is on could have no row and no way to get one — for ever, and silently. A label now asks GitHub which installation covers the repository and records what it says, and the sweeper's `reconcile_connections` does the same for every installation it covers on each pass, so a missed delivery heals without anyone labelling anything. Additions only: a repository that left an installation is disconnected by the webhook that says so, and a partial read must never delete a live row.
+
 Every command line in a comment runs, in order, up to five, and the comment gets one reply. The first command that is refused or does nothing stops the rest, and the reply says so: a refused `/misthos criteria` must never fall through to the `/misthos approve` after it, which would fund the drafted criteria the publisher was replacing. Each command reads the issue afresh, so an approve after a criteria funds the criteria just approved. Only the commenter's own prose counts: a line in a fenced or indented code block, a block quote (what GitHub's "Quote reply" produces) or an HTML comment is not a command, because an example `/misthos approve` that ran would commit escrow funds.
 
 What the platform posts back is queued during an action and sent once the action is saved: the price and acceptance criteria on the issue when it is funded, a pending status when the work is submitted, the verdict as a pull request review with a status, and the settlement or refund on the issue. A failed post is logged and never undoes the step. The settlement comment names the amount and the contributor's handle, which are public already; the transfer and the wallet are not posted.
@@ -214,7 +217,7 @@ What the platform posts back is queued during an action and sent once the action
 
 | Component | Responsibility | Notes |
 | --- | --- | --- |
-| `backend/src/misthos/workers/` | Anything time-based | Claim expiry, refund on deadline, the silent-publisher release, and reconciliation of the money ledger against the chain on every pass. A refund is terminal: an unclaimed issue is not re-listed |
+| `backend/src/misthos/workers/` | Anything time-based | Claim expiry, refund on deadline, the silent-publisher release, reconciliation of the money ledger against the chain, and the connection reconcile, on every pass. A refund is terminal: an unclaimed issue is not re-listed |
 
 Today the worker is a sweeper: on an interval it asks the pure `domain/timers.py` which open issues have a timer due and has the store apply them, under an advisory lock so two processes never refund the same commitment twice. A job table in Postgres using `SELECT … FOR UPDATE SKIP LOCKED` is enough to several hundred issues a day and adds no infrastructure. Temporal is the correct answer once the saga complexity bites, and it is an unnecessary cluster before then.
 

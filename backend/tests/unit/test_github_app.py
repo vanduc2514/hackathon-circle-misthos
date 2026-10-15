@@ -129,6 +129,57 @@ class TestAuthentication:
             app.comment(REPO, 87, "hello")
 
 
+class TestInstallations:
+    def test_the_installation_on_a_repository_is_read_as_the_app(
+        self, app: GitHubApp, github: FakeGitHub
+    ) -> None:
+        github.on("GET", f"/repos/{REPO}/installation", {"id": 42, "account": {"login": "globex"}})
+
+        found = app.installation_for(REPO)
+
+        assert found is not None and (found.id, found.login) == (42, "globex")
+        assert github.last("GET", f"/repos/{REPO}/installation").headers[
+            "Authorization"
+        ].startswith("Bearer ")
+
+    def test_a_repository_the_app_is_not_on_has_no_installation(self, app: GitHubApp) -> None:
+        """404 is the answer to "is the App on this repository?", not a failure.
+
+        FakeGitHub answers an unrouted path with 404, which is what GitHub answers for a
+        repository no installation covers.
+        """
+        assert app.installation_for("globex/private-thing") is None
+
+    def test_every_installation_is_listed_with_the_repositories_it_covers(
+        self, app: GitHubApp, github: FakeGitHub
+    ) -> None:
+        github.on(
+            "GET",
+            "/app/installations",
+            [
+                {"id": 42, "account": {"login": "globex"}, "repository_selection": "all"},
+                {"id": 43, "account": {"login": "acme"}, "repository_selection": "selected"},
+            ],
+        )
+        github.on(
+            "GET",
+            "/user/installations/42/repositories",
+            {"total_count": 1, "repositories": [{"full_name": "globex/parse-locale"}]},
+        )
+        github.on(
+            "GET",
+            "/user/installations/43/repositories",
+            {"total_count": 1, "repositories": [{"full_name": "acme/widgets"}]},
+        )
+
+        found = app.list_installations()
+
+        assert [(i.id, i.login, i.repositories) for i in found] == [
+            (42, "globex", ("globex/parse-locale",)),
+            (43, "acme", ("acme/widgets",)),
+        ]
+
+
 class TestReadPath:
     def test_an_issue_is_read_with_its_repository_and_history(
         self, app: GitHubApp, github: FakeGitHub
