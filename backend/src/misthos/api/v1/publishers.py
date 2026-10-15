@@ -18,6 +18,7 @@ from misthos.api.session import SIGNED_IN, require_owner_or_simulation
 from misthos.config import settings
 from misthos.domain import plans
 from misthos.domain.policy import PolicyRefusal
+from misthos.domain.support import COMMITMENT
 from misthos.schemas import (
     Account,
     AuditExport,
@@ -26,6 +27,9 @@ from misthos.schemas import (
     Publisher,
     RepositoriesOut,
     SpendOut,
+    SupportOut,
+    SupportRequest,
+    SupportRequestIn,
 )
 from misthos.services.audit import export, to_csv
 from misthos.store import store
@@ -66,6 +70,57 @@ async def set_policy(
         raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}") from exc
     except PolicyRefusal as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/{publisher_id}/support", response_model=SupportOut)
+async def support(publisher_id: str, account: Account | None = SIGNED_IN) -> SupportOut:
+    """The support commitment the plan makes, and every request with when its first
+    response was due and whether it came in time. Served after a plan lapses too: the
+    record of what was promised stays the organisation's."""
+    require_owner_or_simulation(account, publisher_id, "see these support requests")
+    try:
+        entitled = await run_in_threadpool(store.entitled, publisher_id, plans.Feature.SUPPORT)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}") from exc
+    return SupportOut(
+        commitment=COMMITMENT,
+        entitled=entitled,
+        requests=await run_in_threadpool(store.support_requests, publisher_id),
+    )
+
+
+@router.post(
+    "/{publisher_id}/support",
+    response_model=SupportRequest,
+    status_code=201,
+    responses={
+        402: {"description": "The plan does not include the support commitment"},
+        404: {"description": "No such publisher, or the issue named is not this publisher's"},
+    },
+)
+async def open_support(
+    publisher_id: str,
+    payload: SupportRequestIn,
+    account: Account | None = SIGNED_IN,
+) -> SupportRequest:
+    """Ask us for help. The answer names when the first response is due: urgent when
+    money cannot move, answered around the clock; otherwise by the next working day."""
+    require_owner_or_simulation(account, publisher_id, "ask for support")
+    await require_plan(publisher_id, plans.Feature.SUPPORT)
+    by = (account.github_login or account.address) if account else "the publisher"
+    try:
+        return await run_in_threadpool(
+            lambda: store.open_support(
+                publisher_id,
+                severity=payload.severity,
+                subject=payload.subject,
+                body=payload.body,
+                issue_id=payload.issue_id,
+                by=by,
+            )
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no such {exc.args[0]}") from exc
 
 
 @router.get("/{publisher_id}/spend", response_model=SpendOut)

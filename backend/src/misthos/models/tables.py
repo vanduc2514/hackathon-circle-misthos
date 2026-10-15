@@ -350,3 +350,24 @@ repo_connections = Table(
     Column("publisher_id", Id, ForeignKey("publishers.id")),
     Column("connected_at", Timestamp, nullable=False),
 )
+
+
+# Requests under the Enterprise support commitment (#53): when each was opened, when
+# its first response is due, and when it came.
+support_requests = Table(
+    "support_requests",
+    metadata,
+    Column("id", Id, primary_key=True),
+    Column("publisher_id", Id, ForeignKey("publishers.id"), nullable=False),
+    Column("severity", String(16), nullable=False),
+    Column("subject", String(200), nullable=False),
+    Column("body", Text, nullable=False),
+    Column("issue_id", Id),
+    Column("opened_by", String(254), nullable=False),
+    Column("opened_at", Timestamp, nullable=False),
+    Column("respond_by", Timestamp, nullable=False),
+    Column("first_response", Text),
+    Column("responder", String(200)),
+    Column("first_response_at", Timestamp),
+    Column("alerted_at", Timestamp),
+)

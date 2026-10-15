@@ -7,6 +7,13 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **The Enterprise support commitment is one that is measured** (#53). Enterprise
+  promised "a support commitment" with nothing behind it. It now promises a first
+  response within four hours, around the clock, when money cannot move, and by the same
+  time the next working day otherwise. An organisation asks from the Account page or
+  `POST /api/v1/publishers/{id}/support`, each request says when its first response is
+  due, operators answer with `python -m misthos.services.support answer SUP-1 --by … --message …`,
+  and the sweeper raises a missed deadline once per request.
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:
   white pages, black ink and buttons, Georgia headings and figures, and Arial text. The
   dark, mono, orange theme is gone.

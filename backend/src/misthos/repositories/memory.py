@@ -31,6 +31,7 @@ from misthos.schemas import (
     RepoConnection,
     Subscription,
     SubscriptionPayment,
+    SupportRequest,
 )
 
 
@@ -61,6 +62,7 @@ class MemoryRepository:
             self._accounts: dict[str, Account] = {}
             self._subscriptions: dict[str, Subscription] = {}
             self._connections: dict[str, RepoConnection] = {}
+            self._support: dict[str, SupportRequest] = {}
             self._subscription_payments: list[SubscriptionPayment] = []
             if seed is None:
                 return
@@ -85,6 +87,7 @@ class MemoryRepository:
                 or self._accounts
                 or self._subscriptions
                 or self._connections
+                or self._support
                 or self._subscription_payments
             ), "a seed holds publishers, contributors, issues and counters only"
             return Seed(
@@ -194,6 +197,26 @@ class MemoryRepository:
             return [c.model_copy(deep=True) for c in self._connections.values()]
 
     # ------------------------------------------------------------ plans
+
+    # --------------------------------------------------------------- support
+
+    def get_support(self, request_id: str) -> SupportRequest | None:
+        with self._guard:
+            found = self._support.get(request_id)
+            return found.model_copy(deep=True) if found else None
+
+    def save_support(self, request: SupportRequest) -> None:
+        with self._guard:
+            self._support[request.id] = request.model_copy(update={"overdue": False}, deep=True)
+
+    def list_support(self, publisher_id: str | None = None) -> list[SupportRequest]:
+        with self._guard:
+            found = [
+                r.model_copy(deep=True)
+                for r in self._support.values()
+                if publisher_id is None or r.publisher_id == publisher_id
+            ]
+            return sorted(found, key=lambda r: (r.opened_at, r.id))
 
     def get_subscription(self, publisher_id: str) -> Subscription | None:
         with self._guard:

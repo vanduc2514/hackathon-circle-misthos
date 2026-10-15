@@ -561,6 +561,7 @@ Every CSV the platform serves, the audit export and a contributor's statement al
 - **When a period ends.** The sweeper marks a period that ended unpaid as past due, gives it seven days' grace, and then moves the organisation back to Open. A cancelled plan ends at its period end.
 - **Enterprise** is agreed in a contract and recorded by an operator (`python -m misthos.services.contracts`).
 - **The simulation** has its own rail, so the demo can buy Team with a button.
+- **The support commitment** (`domain/support.py`, Enterprise only). A first response within four hours, around the clock, when money cannot move; by the same time the next working day (Monday to Friday, UTC) otherwise. The figures live in one place, and the plan's wording is built from them, so the two cannot disagree. The organisation asks at `POST /publishers/{id}/support`, which records who asked and when the first response is due. We answer from the operator's command line (`python -m misthos.services.support answer SUP-1 --by … --message …`), and only the first response is recorded, because it is what is measured. The sweeper raises a missed deadline once per request (`misthos_support_overdue`, `misthos_support_overdue_alerts_total`), and the organisation sees each request marked in time or late, after a plan lapses too.
 - **Not built yet:** SSO, which needs organisation membership beyond one wallet per party.
 
 ## Trust boundaries

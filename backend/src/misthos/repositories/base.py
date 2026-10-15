@@ -19,6 +19,7 @@ from misthos.schemas import (
     RepoConnection,
     Subscription,
     SubscriptionPayment,
+    SupportRequest,
 )
 
 
@@ -114,6 +115,14 @@ class Repository(Protocol):
     def delete_connections(self, repos: list[str]) -> None: ...
 
     def list_connections(self) -> list[RepoConnection]: ...
+
+    def get_support(self, request_id: str) -> SupportRequest | None: ...
+
+    def save_support(self, request: SupportRequest) -> None:
+        """Create or update, by id."""
+
+    def list_support(self, publisher_id: str | None = None) -> list[SupportRequest]:
+        """Oldest first; every organisation's when none is named."""
 
     def get_subscription(self, publisher_id: str) -> Subscription | None: ...
 
