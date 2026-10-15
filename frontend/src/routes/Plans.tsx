@@ -18,7 +18,7 @@ export default function Plans() {
   const me = useMe()
   const simulated = health.data?.simulated ?? false
   const account = me.data?.account ?? null
-  const pid = account?.role === 'publisher' ? account.party_id : null
+  const pid = account?.publisher_id ?? null
 
   const catalogue = useQuery({
     queryKey: ['plans'],

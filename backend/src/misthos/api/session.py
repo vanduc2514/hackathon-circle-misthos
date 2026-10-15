@@ -45,9 +45,16 @@ def refuse_anonymous(account: Account | None, what: str) -> None:
 def require_role(account: Account | None, role: str, what: str) -> Account:
     if account is None:
         raise HTTPException(status_code=401, detail=f"sign in to {what}")
-    if account.role != role:
+    if account.party(role) is None:
         raise HTTPException(status_code=403, detail=f"only a {role} can {what}")
     return account
+
+
+def party_for(account: Account, role: str, what: str) -> str:
+    """The party an account acts as on one side, which it must have (#164)."""
+    party = require_role(account, role, what).party(role)
+    assert party is not None
+    return party
 
 
 def require_github(account: Account, what: str) -> None:
@@ -60,7 +67,7 @@ def require_github(account: Account, what: str) -> None:
 def require_owner_or_simulation(account: Account | None, party_id: str, what: str) -> None:
     """The party's own records: theirs when signed in, the demo's in the simulation."""
     if account is not None:
-        if account.party_id != party_id:
+        if party_id not in account.parties:
             raise HTTPException(status_code=403, detail=f"only {party_id} can {what}")
         return
     if not settings.simulated:

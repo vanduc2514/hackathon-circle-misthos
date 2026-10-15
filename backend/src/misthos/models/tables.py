@@ -287,6 +287,9 @@ accounts = Table(
     Column("address", String(42), primary_key=True),
     Column("role", String(16), nullable=False),
     Column("party_id", Id, nullable=False, unique=True),
+    # Every side the wallet acts on (#164). `party_id` stays the side chosen first.
+    Column("publisher_id", Id, unique=True),
+    Column("contributor_id", Id, unique=True),
     Column("github_login", String(64), unique=True),
     Column("created_at", Timestamp, nullable=False),
 )

@@ -218,9 +218,20 @@ export interface paths {
          * Commitment Plan
          * @description The two transactions the publisher's own wallet sends to fund the issue.
          *
-         *     The platform never signs a commitment: it moves the publisher's USDC. Approving
-         *     the price records it as the escrow's ceiling; the publisher's wallet then lets the
-         *     escrow take that amount and commits it, and approving again books it.
+         *     The platform never signs a commitment: it moves the publisher's USDC. Approving the
+         *     price records it as the escrow's ceiling; the publisher's wallet then lets the escrow
+         *     take that amount and commits it, and approving again books it.
+         *
+         *     The amount is the publisher's price -- the same value `_fund` records as the ceiling,
+         *     and never the engine's suggestion. The escrow refuses any commitment above the
+         *     ceiling (`ExceedsCeiling`), so a plan built from the suggestion could not be booked:
+         *     the wallet would be asked for a number the contract had already ruled out (#150).
+         *
+         *     The deadline is the one the approval fixed, to the second, and the amount and rate
+         *     are the approved ones too. Working them out here instead is what made the booking
+         *     refuse a commitment once an hour had passed between the plan and the booking: the
+         *     escrow's term starts at the commit, so `now + 14d` no longer matches what is on
+         *     chain, and it never matches again (#126).
          */
         get: operations["commitment_plan_api_v1_issues__issue_id__commitment_get"];
         put?: never;
@@ -964,7 +975,12 @@ export interface components {
     schemas: {
         /**
          * Account
-         * @description A signed-in wallet and the one role it chose (#70).
+         * @description A signed-in wallet, and the side or sides it acts on (#70, #164).
+         *
+         *     A wallet chose one side at first, and can take the other as well: publish issues
+         *     and work on other people's. `role` and `party_id` stay the side it chose first, so
+         *     a client that knows one side keeps working; `publisher_id` and `contributor_id`
+         *     name every side it has.
          */
         Account: {
             /** Address */
@@ -976,6 +992,10 @@ export interface components {
             role: "publisher" | "contributor";
             /** Party Id */
             party_id: string;
+            /** Publisher Id */
+            publisher_id?: string | null;
+            /** Contributor Id */
+            contributor_id?: string | null;
             /** Github Login */
             github_login?: string | null;
             /**

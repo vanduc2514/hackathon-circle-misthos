@@ -400,16 +400,44 @@ Role = Literal["publisher", "contributor"]
 
 
 class Account(BaseModel):
-    """A signed-in wallet and the one role it chose (#70)."""
+    """A signed-in wallet, and the side or sides it acts on (#70, #164).
+
+    A wallet chose one side at first, and can take the other as well: publish issues
+    and work on other people's. `role` and `party_id` stay the side it chose first, so
+    a client that knows one side keeps working; `publisher_id` and `contributor_id`
+    name every side it has.
+    """
 
     address: str
     """Lowercase. The wallet is the identity that matches the chain."""
     role: Role
+    """The side chosen first."""
     party_id: str
-    """The Publisher or Contributor this wallet acts as."""
+    """The Publisher or Contributor of the side chosen first."""
+    publisher_id: str | None = None
+    """The Publisher this wallet acts as, if it publishes."""
+    contributor_id: str | None = None
+    """The Contributor this wallet acts as, if it works on issues."""
     github_login: str | None = None
     """Linked through GitHub OAuth (#80). Required before pricing or contributing."""
     created_at: datetime
+
+    @model_validator(mode="after")
+    def _first_side_is_a_side(self) -> Account:
+        # An account stored before #164 names only its first side.
+        if self.role == "publisher" and self.publisher_id is None:
+            self.publisher_id = self.party_id
+        if self.role == "contributor" and self.contributor_id is None:
+            self.contributor_id = self.party_id
+        return self
+
+    def party(self, role: str) -> str | None:
+        """The party this account acts as on one side, or None if it has not that side."""
+        return self.publisher_id if role == "publisher" else self.contributor_id
+
+    @property
+    def parties(self) -> set[str]:
+        return {p for p in (self.publisher_id, self.contributor_id) if p}
 
 
 class NonceOut(BaseModel):

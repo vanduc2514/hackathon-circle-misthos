@@ -105,6 +105,9 @@ class Repository(Protocol):
         """Create or update. A GitHub login already linked to another wallet is refused
         with AccountConflict."""
 
+    def get_account_by_party(self, party_id: str) -> Account | None:
+        """The account acting as this publisher or contributor, on either side."""
+
     def get_account_by_github_login(self, login: str) -> Account | None: ...
 
     def get_connection(self, repo: str) -> RepoConnection | None: ...

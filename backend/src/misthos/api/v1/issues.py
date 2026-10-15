@@ -10,9 +10,9 @@ from fastapi.responses import JSONResponse
 from misthos.api.guards import idempotent, limit_actions, limit_publish
 from misthos.api.session import (
     SIGNED_IN,
+    party_for,
     require_github,
     require_owner_or_simulation,
-    require_role,
 )
 from misthos.api.v1.auth import callback_url, oauth_configured
 from misthos.config import settings
@@ -63,6 +63,7 @@ from misthos.store import (
     IssueRecord,
     NotSimulated,
     NotTheSubmission,
+    OwnIssue,
     UnreadableIssue,
     UntestableCriteria,
     store,
@@ -268,7 +269,7 @@ async def _act(
         NotTheSubmission,
     ) as exc:
         raise _conflict(exc) from exc
-    except (ComplianceRefusal, PolicyRefusal, NotSimulated) as exc:
+    except (ComplianceRefusal, PolicyRefusal, NotSimulated, OwnIssue) as exc:
         raise _refused(exc) from exc
     except PriceRefused as exc:
         # The request named a price; it is the value in it that cannot be used, which is
@@ -506,9 +507,8 @@ async def claim(
     """A contributor takes the exclusive, time-boxed claim. First claim wins."""
     await _require(issue_id)
     if account is not None:
-        require_role(account, "contributor", "claim an issue")
+        contributor_id = party_for(account, "contributor", "claim an issue")
         require_github(account, "claim an issue")
-        contributor_id = account.party_id
     elif settings.simulated and payload is not None and payload.contributor_id:
         contributor_id = payload.contributor_id
     else:
@@ -552,7 +552,7 @@ async def review(issue_id: str, account: Account | None = SIGNED_IN) -> IssueOut
     """Have the review agent judge the submitted commit now rather than on the
     sweeper's next pass. The publisher or the claimant may ask."""
     rec = await _require(issue_id)
-    if account is not None and account.party_id not in {rec.publisher_id, rec.contributor_id}:
+    if account is not None and not account.parties & {rec.publisher_id, rec.contributor_id}:
         raise HTTPException(status_code=403, detail="only the publisher or the claimant can ask")
     if account is None and not settings.simulated:
         raise HTTPException(status_code=401, detail="sign in to ask for a review")
@@ -627,10 +627,10 @@ async def publish(
     account: Account | None = SIGNED_IN,
 ) -> Any:
     if account is not None:
-        require_role(account, "publisher", "publish an issue")
+        publisher_id = party_for(account, "publisher", "publish an issue")
         require_github(account, "publish an issue")
         # A signed-in publisher publishes as itself, whatever the form says.
-        payload = payload.model_copy(update={"publisher_id": account.party_id})
+        payload = payload.model_copy(update={"publisher_id": publisher_id})
     elif not settings.simulated:
         raise HTTPException(status_code=401, detail="sign in to publish an issue")
     if await run_in_threadpool(store.get_publisher, payload.publisher_id) is None:
@@ -665,7 +665,7 @@ async def list_publishers(account: Account | None = SIGNED_IN) -> list[Publisher
     """Every publisher. Outside the simulation a publisher's budget and spending
     policy are served only to that publisher, signed in."""
     rows = await run_in_threadpool(store.list_publishers)
-    mine = account.party_id if account is not None else None
+    mine = account.publisher_id if account is not None else None
     return [_listing(p, own=settings.simulated or p.id == mine) for p in rows]
 
 

@@ -278,15 +278,31 @@ class SqlRepository:
             address=row["address"],
             role=row["role"],
             party_id=row["party_id"],
+            publisher_id=row["publisher_id"],
+            contributor_id=row["contributor_id"],
             github_login=row["github_login"],
             created_at=_utc(row["created_at"]),
         )
+
+    def get_account_by_party(self, party_id: str) -> Account | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            address = conn.execute(
+                select(t.accounts.c.address).where(
+                    (t.accounts.c.publisher_id == party_id)
+                    | (t.accounts.c.contributor_id == party_id)
+                    | (t.accounts.c.party_id == party_id)
+                )
+            ).scalar()
+        return self.get_account(address) if address else None
 
     def save_account(self, account: Account) -> None:
         self.migrate()
         values = {
             "role": account.role,
             "party_id": account.party_id,
+            "publisher_id": account.publisher_id,
+            "contributor_id": account.contributor_id,
             "github_login": account.github_login,
             "created_at": account.created_at,
         }

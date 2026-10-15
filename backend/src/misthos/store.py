@@ -224,6 +224,12 @@ class DisputeRefused(Exception):
     """A dispute the verdict cannot take: one dispute per verdict."""
 
 
+class OwnIssue(Exception):
+    """A wallet that publishes and contributes is never paid for its own issue: the
+    money would go from its funding wallet back to itself, through the escrow, with the
+    review as the only witness (#164)."""
+
+
 class AccountExists(Exception):
     """A wallet chooses its role once."""
 
@@ -806,6 +812,12 @@ class Store:
         )
 
     def _claim(self, rec: IssueRecord, contributor_id: str, when: datetime | None = None) -> None:
+        owner = self.repo.get_account_by_party(contributor_id)
+        if owner is not None and owner.publisher_id == rec.publisher_id:
+            raise OwnIssue(
+                f"{rec.id} is your own issue: work on another publisher's, and leave this "
+                "one to someone else"
+            )
         self._move(rec, IssueState.CLAIMED)
         at = when or _now()
         rec.claim = Claim(
@@ -2757,11 +2769,14 @@ class Store:
         budget_usdc: str = "5000",
         now: datetime | None = None,
     ) -> Account:
-        """A wallet's first sign-in: it becomes a publisher or a contributor, once."""
+        """A wallet takes a side: publisher or contributor (#70), and later the other
+        one as well (#164). The side it takes first stays its `role`; taking a side it
+        already has is refused."""
         self.ensure_ready()
         address = address.lower()
-        if self.repo.get_account(address) is not None:
-            raise AccountExists(f"{address} already has a role")
+        existing = self.repo.get_account(address)
+        if existing is not None and existing.party(role) is not None:
+            raise AccountExists(f"{address} is already a {role}")
         name = name.strip()
         if role == "publisher":
             try:
@@ -2791,9 +2806,24 @@ class Store:
                     earned_usdc="0.00",
                 )
             )
-        account = Account(
-            address=address, role=role, party_id=party_id, created_at=now or _now()  # type: ignore[arg-type]
-        )
+        side = {"publisher_id" if role == "publisher" else "contributor_id": party_id}
+        if existing is not None:
+            account = existing.model_copy(update=side)
+            if role == "contributor" and existing.github_login:
+                # A contributor is known by their GitHub login, as linking makes them.
+                contributor = self.repo.get_contributor(party_id)
+                assert contributor is not None
+                self.repo.save_contributor(
+                    contributor.model_copy(update={"handle": existing.github_login})
+                )
+        else:
+            account = Account(
+                address=address,
+                role=role,  # type: ignore[arg-type]
+                party_id=party_id,
+                created_at=now or _now(),
+                **side,
+            )
         self.repo.save_account(account)
         return account
 
@@ -2805,8 +2835,8 @@ class Store:
             raise KeyError(address)
         linked = account.model_copy(update={"github_login": login})
         self.repo.save_account(linked)
-        if account.role == "contributor":
-            contributor = self.repo.get_contributor(account.party_id)
+        if account.contributor_id is not None:
+            contributor = self.repo.get_contributor(account.contributor_id)
             assert contributor is not None
             self.repo.save_contributor(contributor.model_copy(update={"handle": login}))
         return linked
@@ -3017,7 +3047,7 @@ class Store:
 
     def _publisher_with_login(self, login: str) -> str | None:
         account = self.repo.get_account_by_github_login(login)
-        return account.party_id if account is not None and account.role == "publisher" else None
+        return account.publisher_id if account is not None else None
 
     def connection(self, repo: str) -> RepoConnection | None:
         """Where the App is installed, with its publisher resolved if it can be now."""

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, shortHash, unwrap, type Account, type HealthOut } from '../lib/client'
+import { otherSide, partyOn, sidesOf, type Side } from '../lib/sides'
 import { signIn, signOut, useHealth, useMe } from '../lib/session'
 import { browserProvider, browserWallet, demoWallet, type Signer } from '../lib/wallet'
 import { setUpWallet } from '../lib/circle-wallet'
@@ -99,27 +100,27 @@ export default function AccountPage() {
                 </dd>
                 {account && (
                   <>
-                    <dt>Side</dt>
-                    <dd>{account.role}</dd>
+                    <dt>Sides</dt>
+                    <dd>{sidesOf(account).join(' and ')}</dd>
                     <dt>Acting as</dt>
-                    <dd>{account.party_id}</dd>
+                    <dd>{[account.publisher_id, account.contributor_id].filter(Boolean).join(', ')}</dd>
                     <dt>GitHub</dt>
                     <dd>{account.github_login ?? <span className="muted">not linked</span>}</dd>
                   </>
                 )}
               </dl>
               <div className="btn-row" style={{ marginTop: 14 }}>
-                {account?.role === 'publisher' && account.github_login && (
+                {account?.publisher_id && account.github_login && (
                   <>
                     <Link className="btn primary" to="/publish">
                       Publish an issue
                     </Link>
-                    <Link className="btn" to={`/spend?publisher=${account.party_id}`}>
+                    <Link className="btn" to={`/spend?publisher=${account.publisher_id}`}>
                       Your spend
                     </Link>
                   </>
                 )}
-                {account?.role === 'contributor' && account.github_login && (
+                {account?.contributor_id && account.github_login && (
                   <Link className="btn primary" to="/issues?state=FUNDED">
                     Find funded issues
                   </Link>
@@ -133,11 +134,20 @@ export default function AccountPage() {
             {/* Rendered for any publisher, but the install link inside waits for a
                 linked login: a connection is attributed to the publisher whose *linked*
                 login installed it, so linking comes first and this panel says so. */}
-            {account?.role === 'publisher' && (
-              <Repositories publisherId={account.party_id} linked={Boolean(account.github_login)} />
+            {account?.publisher_id && (
+              <Repositories
+                publisherId={account.publisher_id}
+                linked={Boolean(account.github_login)}
+              />
             )}
-            {account && <PayoutWallet account={account} />}
+            {account &&
+              sidesOf(account).map((side) => (
+                <PayoutWallet key={side} account={account} side={side} />
+              ))}
             {!account && <ChooseSide onDone={changed} />}
+            {account && otherSide(account) && (
+              <ChooseSide only={otherSide(account) ?? undefined} onDone={changed} />
+            )}
             {account && !account.github_login && health.data && (
               <LinkGitHub account={account} health={health.data} onDone={changed} />
             )}
@@ -220,10 +230,10 @@ function Repositories({ publisherId, linked }: { publisherId: string; linked: bo
  * The party's own Circle wallet. A contributor is paid into it; a publisher funds
  * from it. Setting it up opens Circle's frame for a PIN the platform never sees.
  */
-function PayoutWallet({ account }: { account: Account }) {
+function PayoutWallet({ account, side }: { account: Account; side: Side }) {
   const qc = useQueryClient()
-  const party = account.role as 'publisher' | 'contributor'
-  const path = { params: { path: { party, party_id: account.party_id } } }
+  const party = side
+  const path = { params: { path: { party, party_id: partyOn(account, side) ?? '' } } }
   const setUp = useMutation({
     mutationFn: () =>
       setUpWallet(
@@ -263,8 +273,13 @@ function PayoutWallet({ account }: { account: Account }) {
   )
 }
 
-function ChooseSide({ onDone }: { onDone: () => void }) {
-  const [role, setRole] = useState<'publisher' | 'contributor'>('publisher')
+/**
+ * A wallet takes a side, and may take the other one later (#164): publish issues and
+ * work on other people's. `only` offers just the side it has not taken.
+ */
+function ChooseSide({ only, onDone }: { only?: Side; onDone: () => void }) {
+  const [picked, setRole] = useState<Side>('publisher')
+  const role = only ?? picked
   const [name, setName] = useState('')
   const [budget, setBudget] = useState('5000')
 
@@ -279,9 +294,17 @@ function ChooseSide({ onDone }: { onDone: () => void }) {
   })
 
   return (
-    <Panel title="Choose your side">
+    <Panel
+      title={
+        only ? (only === 'publisher' ? 'Publish issues too' : 'Work on issues too') : 'Choose your side'
+      }
+    >
       <p className="dim" style={{ marginBottom: 14 }}>
-        A wallet publishes work or does it, not both, and the choice is made once.
+        {only
+          ? only === 'publisher'
+            ? 'Fund fixes from the same wallet. You are never paid for an issue you publish.'
+            : 'Fix other publishers’ issues from the same wallet. Your own issues are left to others.'
+          : 'Publish work or do it. You can take the other side later, from the same wallet.'}
       </p>
       <form
         className="form"
@@ -290,7 +313,7 @@ function ChooseSide({ onDone }: { onDone: () => void }) {
           choose.mutate()
         }}
       >
-        <div className="radio-row">
+        <div className="radio-row" hidden={Boolean(only)}>
           <label>
             <input
               type="radio"
@@ -368,7 +391,7 @@ function LinkGitHub({
   return (
     <Panel title="Link your GitHub account">
       <p className="dim" style={{ marginBottom: 14 }}>
-        {account.role === 'publisher'
+        {account.publisher_id
           ? 'Publishing needs a GitHub account: it is how an issue is tied to you.'
           : 'Claiming needs a GitHub account: only pull requests you open count as your work.'}{' '}
         We keep your login and nothing else.

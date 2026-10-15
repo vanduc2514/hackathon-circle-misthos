@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, ArrowUpRight } from 'lucide-react'
 import { api, type IssueOut } from './lib/client'
 import { useHealth, useMe } from './lib/session'
+import { sidesOf } from './lib/sides'
 import Dashboard from './routes/Dashboard'
 import Issues from './routes/Issues'
 import IssueDetail from './routes/IssueDetail'
@@ -57,7 +58,7 @@ function Layout() {
           <NavLink to="/plans" className={({ isActive }) => (isActive ? 'active' : '')}>
             Plans
           </NavLink>
-          {account?.role === 'publisher' && (
+          {account?.publisher_id && (
             <NavLink to="/publish" className={({ isActive }) => (isActive ? 'active' : '')}>
               Publish
             </NavLink>
@@ -82,7 +83,7 @@ function Layout() {
           {me ? (
             <Link to="/account" className="chip">
               {account
-                ? `${account.role} · ${account.github_login ?? account.party_id}`
+                ? `${sidesOf(account).join(' + ')} · ${account.github_login ?? account.party_id}`
                 : 'Choose a side'}
             </Link>
           ) : (

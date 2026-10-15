@@ -54,7 +54,7 @@ export default function Issues() {
             because the price is already public.
           </p>
         </div>
-        {me?.account?.role === 'publisher' && (
+        {me?.account?.publisher_id && (
           <Link className="btn primary" to="/publish">
             Publish an issue
           </Link>

@@ -166,6 +166,13 @@ class MemoryRepository:
 
     # ------------------------------------------------------- GitHub connections
 
+    def get_account_by_party(self, party_id: str) -> Account | None:
+        with self._guard:
+            for account in self._accounts.values():
+                if party_id in account.parties:
+                    return account.model_copy(deep=True)
+            return None
+
     def get_account_by_github_login(self, login: str) -> Account | None:
         with self._guard:
             for account in self._accounts.values():

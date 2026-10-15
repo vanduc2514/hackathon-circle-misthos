@@ -61,6 +61,7 @@ from misthos.store import (
     AlreadyListed,
     CriteriaNotApproved,
     NotTheSubmission,
+    OwnIssue,
     Store,
     UnreadableIssue,
     UntestableCriteria,
@@ -495,20 +496,20 @@ def _command(
         )
     try:
         if name == "claim":
-            if account.role != "contributor":
+            if account.contributor_id is None:
                 return _Ran(False, f"@{login}, only a contributor can claim an issue.")
             if rec.state is not IssueState.FUNDED:
                 return _Ran(
                     False,
                     f"@{login}, this issue is {rec.state.value.lower()}, so it cannot be claimed.",
                 )
-            store.claim(rec.id, account.party_id)
+            store.claim(rec.id, account.contributor_id)
             return _Ran(
                 True,
                 f"Claimed by @{login}, who holds it for 72 hours. Open a pull request that says "
                 f"`Fixes #{rec.number}`; it is reviewed against the criteria above.",
             )
-        if account.party_id != rec.publisher_id:
+        if account.publisher_id != rec.publisher_id:
             return _Ran(False, f"@{login}, only the publisher of this issue can {name} it.")
         if name == "price":
             if not command.argument:
@@ -557,7 +558,7 @@ def _command(
             False,
             f"This issue is {rec.state.value.lower()}, so `/misthos {name}` does nothing now.",
         )
-    except (CriteriaNotApproved, ComplianceRefusal, PolicyRefusal) as exc:
+    except (CriteriaNotApproved, ComplianceRefusal, PolicyRefusal, OwnIssue) as exc:
         return _Ran(False, f"Refused: {exc}")
     except PriceRefused as exc:
         return _Ran(False, f"That price was refused: {exc.justification}")

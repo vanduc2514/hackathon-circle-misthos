@@ -7,6 +7,13 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **One wallet can publish and contribute** (#164). A wallet that works on issues can
+  publish its own from the same wallet, and a publisher can work on other publishers'
+  issues, instead of keeping two profiles. Take the other side on the Account page, or
+  with `POST /api/v1/auth/role` naming it; the side chosen first stays the account's
+  `role`, and `publisher_id` and `contributor_id` name every side it has. Nobody is
+  paid for an issue they published: claiming one's own issue is refused from the web
+  app, the API and a `/misthos claim` comment alike.
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:
   white pages, black ink and buttons, Georgia headings and figures, and Arial text. The
   dark, mono, orange theme is gone.

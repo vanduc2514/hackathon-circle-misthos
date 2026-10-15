@@ -39,7 +39,7 @@ export default function Publish() {
   const priced = !Number.isNaN(named) && named >= MINIMUM_PRICE
 
   const account = me.data?.account ?? null
-  const ready = account?.role === 'publisher' && Boolean(account.github_login)
+  const ready = Boolean(account?.publisher_id) && Boolean(account?.github_login)
   // Set the moment the form is sent. The button is disabled by isPending, but that
   // reaches it a render later, and a double click inside that window published the
   // same GitHub issue twice (#120).
@@ -61,7 +61,7 @@ export default function Publish() {
             // The publisher's own number, and the amount the escrow commits (#142).
             price: price.trim(),
             // The API publishes as the signed-in publisher whatever this says.
-            publisher_id: account?.party_id ?? '',
+            publisher_id: account?.publisher_id ?? '',
             compliance_driven: compliance,
           },
         }),
@@ -98,8 +98,8 @@ export default function Publish() {
         <div className="banner">
           {!me.data
             ? 'Sign in as a publisher to publish an issue.'
-            : account?.role === 'contributor'
-              ? 'This wallet is a contributor. Publishing needs a publisher wallet.'
+            : account && !account.publisher_id
+              ? 'This wallet works on issues. Take the publisher side too, on the Account page.'
               : 'Choose the publisher side and link your GitHub account first.'}{' '}
           <Link to="/account" style={{ textDecoration: 'underline' }}>
             Go to your account

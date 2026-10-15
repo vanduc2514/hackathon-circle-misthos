@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, money, unwrap, type IssueOut, type MeOut, type Publisher } from '../lib/client'
+import { mayClaim } from '../lib/sides'
 import {
   MAX_CRITERION,
   criteriaLines,
@@ -109,9 +110,11 @@ export function roleOn(issue: IssueOut, me: MeOut | null | undefined) {
     signedIn: Boolean(me),
     account,
     linked,
-    publisher: linked && account?.party_id === issue.publisher_id,
-    claimant: linked && Boolean(issue.contributor_id) && account?.party_id === issue.contributor_id,
-    contributor: linked && account?.role === 'contributor',
+    publisher: linked && account?.publisher_id === issue.publisher_id,
+    claimant:
+      linked && Boolean(issue.contributor_id) && account?.contributor_id === issue.contributor_id,
+    // Works on issues, and this is not one it published: nobody claims their own (#164).
+    contributor: linked && mayClaim(account, issue),
   }
 }
 

@@ -59,7 +59,7 @@ def onboard(client: TestClient, wallet: Wallet, role: str, name: str, login: str
 
 
 class TestSignIn:
-    def test_a_wallet_signs_in_and_chooses_a_role_once(self) -> None:
+    def test_a_wallet_signs_in_and_takes_each_side_once(self) -> None:
         client = TestClient(app)
         wallet = Wallet(11)
         session = sign_in(client, wallet)
@@ -69,8 +69,11 @@ class TestSignIn:
 
         r = client.post(f"{API}/auth/role", json={"role": "contributor", "name": "ada"})
         assert r.status_code == 201 and r.json()["party_id"].startswith("CON-")
-        again = client.post(f"{API}/auth/role", json={"role": "publisher", "name": "Ada Inc"})
+        again = client.post(f"{API}/auth/role", json={"role": "contributor", "name": "ada"})
         assert again.status_code == 409
+        # The other side is added, not refused (#164); the first stays the account's role.
+        both = client.post(f"{API}/auth/role", json={"role": "publisher", "name": "Ada Inc"})
+        assert both.status_code == 201 and both.json()["publisher_id"].startswith("PUB-")
         assert client.get(f"{API}/auth/me").json()["account"]["role"] == "contributor"
 
     def test_a_nonce_signs_in_once(self) -> None:
