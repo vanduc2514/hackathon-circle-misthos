@@ -35,6 +35,21 @@ export async function signIn(signer: Signer): Promise<void> {
   unwrap(await api.POST('/api/v1/auth/verify', { body: { message, signature } }))
 }
 
+/**
+ * Sign in through an organisation's single sign-on (#53): the work e-mail's domain
+ * finds its identity provider, the API sets a short-lived cookie holding the state, and
+ * the provider sends the browser back to /account?signed_in=sso.
+ */
+export async function signInWithSso(email: string): Promise<void> {
+  const { authorize_url } = unwrap(await api.POST('/api/v1/auth/sso/signin', { body: { email } }))
+  window.location.assign(authorize_url)
+}
+
+/** The simulation's single sign-on: a typed work e-mail stands in for the provider. */
+export async function demoSsoSignIn(email: string): Promise<void> {
+  unwrap(await api.POST('/api/v1/auth/sso/simulate-signin', { body: { email } }))
+}
+
 export async function signOut(): Promise<void> {
   await api.POST('/api/v1/auth/logout')
 }

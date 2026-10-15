@@ -11,7 +11,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 
 from misthos.api.guards import limit_signin
-from misthos.api.session import SIGNED_IN, signed_in_address
+from misthos.api.session import SIGNED_IN, signed_in_address, signed_in_sso, sso_unmet
 from misthos.auth import sessions, siwe
 from misthos.config import settings
 from misthos.repositories import AccountConflict
@@ -131,16 +131,31 @@ async def logout(response: Response) -> Response:
 
 @router.get("/me", response_model=MeOut)
 async def me(request: Request) -> MeOut:
+    """Who is signed in: the wallet and its account, or a person who came through an
+    organisation's single sign-on and the organisation's account they act as (#53)."""
+    sso = await signed_in_sso(request)
+    if sso is not None:
+        account = await run_in_threadpool(store.account_for_sso, sso.publisher_id, sso.email)
+        if account is None:
+            # The connection no longer speaks for them: the session has ended.
+            raise HTTPException(status_code=401, detail="not signed in")
+        return MeOut(address=account.address, account=account, sso_email=sso.email)
     address = await signed_in_address(request)
     if address is None:
         raise HTTPException(status_code=401, detail="not signed in")
     account = await run_in_threadpool(store.repo.get_account, address)
-    return MeOut(address=address, account=account)
+    unmet = await run_in_threadpool(sso_unmet, account, None)
+    return MeOut(address=address, account=account, sso_required=unmet)
 
 
 @router.post("/role", response_model=Account, status_code=201)
 async def choose_role(payload: RoleRequest, request: Request) -> Account:
     """The first sign-in's one choice: publisher or contributor."""
+    if await signed_in_sso(request) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="single sign-on acts as the organisation's account, which already has a side",
+        )
     address = await signed_in_address(request)
     if address is None:
         raise HTTPException(status_code=401, detail="sign in first")

@@ -22,6 +22,7 @@ export type FinanceOut = components['schemas']['FinanceOut']
 export type HealthOut = components['schemas']['HealthOut']
 export type Account = components['schemas']['Account']
 export type MeOut = components['schemas']['MeOut']
+export type SsoOut = components['schemas']['SsoOut']
 export type SessionOut = components['schemas']['SessionOut']
 
 /**

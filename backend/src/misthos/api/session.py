@@ -1,5 +1,9 @@
 """Who is asking: the signed-in wallet, if any, and what it may do.
 
+A session that came through an Enterprise organisation's single sign-on (#53) acts as
+that organisation's account, for as long as its connection speaks for the person's
+address; an organisation that requires single sign-on is acted for in no other way.
+
 Writes need a signed-in account with the right role and ownership. The simulation
 also lets anonymous visitors drive the demo, because the demo has no wallets; a
 deployment does not. Reads stay public, except an organisation's or a contributor's
@@ -29,11 +33,59 @@ async def signed_in_address(request: Request) -> str | None:
     return sessions.address_in(token) if token else None
 
 
+async def signed_in_sso(request: Request) -> sessions.SsoSession | None:
+    token = token_of(request)
+    return sessions.sso_in(token) if token else None
+
+
+def _account_of(request: Request, address: str | None, sso: sessions.SsoSession | None):  # type: ignore[no-untyped-def]
+    if sso is not None:
+        return store.account_for_sso(sso.publisher_id, sso.email)
+    return store.repo.get_account(address) if address else None
+
+
+def sso_unmet(account: Account | None, sso: sessions.SsoSession | None) -> bool:
+    """Whether the account requires its single sign-on and this session did not come
+    through it. Runs in the threadpool."""
+    return account is not None and sso is None and store.sso_required(account.party_id)
+
+
 async def current_account(request: Request) -> Account | None:
     address = await signed_in_address(request)
-    if address is None:
+    sso = await signed_in_sso(request)
+    if address is None and sso is None:
         return None
-    return await run_in_threadpool(store.repo.get_account, address)
+    account = await run_in_threadpool(_account_of, request, address, sso)
+    if await run_in_threadpool(sso_unmet, account, sso):
+        assert account is not None
+        raise HTTPException(
+            status_code=403,
+            detail=f"{account.party_id} acts only through its single sign-on; sign in "
+            "with your work e-mail",
+        )
+    if sso is not None:
+        # Who acted, for the decision log: the account is the organisation's.
+        request.state.sso_email = sso.email
+    return account
+
+
+async def viewing_account(request: Request) -> Account | None:
+    """The account for a public page that shows its own records in full: a session
+    its organisation's single sign-on requirement shuts out sees the page as anyone
+    would, rather than being refused it."""
+    address = await signed_in_address(request)
+    sso = await signed_in_sso(request)
+    account = await run_in_threadpool(_account_of, request, address, sso)
+    return None if await run_in_threadpool(sso_unmet, account, sso) else account
+
+
+def who(request: Request, account: Account | None, fallback: str) -> str:
+    """The name the decision log records for what this request does: the person, when
+    they came through single sign-on, not the organisation's login."""
+    if account is None:
+        return fallback
+    person = getattr(request.state, "sso_email", None)
+    return person or account.github_login or account.address
 
 
 def refuse_anonymous(account: Account | None, what: str) -> None:
@@ -67,5 +119,6 @@ def require_owner_or_simulation(account: Account | None, party_id: str, what: st
         raise HTTPException(status_code=401, detail=f"sign in to {what}")
 
 
-# The dependency, ready to use as a parameter default.
+# The dependencies, ready to use as parameter defaults.
 SIGNED_IN = Depends(current_account)
+VIEWER = Depends(viewing_account)

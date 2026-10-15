@@ -15,6 +15,7 @@ from misthos.repositories.base import (
     PaymentAlreadyUsed,
     Repository,
     Seed,
+    SsoDomainTaken,
     StaleIssue,
 )
 from misthos.repositories.memory import MemoryRepository
@@ -37,6 +38,7 @@ __all__ = [
     "PaymentAlreadyUsed",
     "Repository",
     "Seed",
+    "SsoDomainTaken",
     "StaleIssue",
     "build_repository",
 ]

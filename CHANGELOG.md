@@ -7,6 +7,12 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **Enterprise staff sign in through their organisation's own identity provider** (#53).
+  An Enterprise organisation connects its OpenID Connect provider (issuer, client id,
+  the client secret by reference in the secret store, and the e-mail domains it speaks
+  for). Staff sign in with a work e-mail and act for the organisation, and the decision
+  log names the person. The organisation can require single sign-on, from a session that
+  came through it; removing the connection or a domain ends its sessions at once.
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:
   white pages, black ink and buttons, Georgia headings and figures, and Arial text. The
   dark, mono, orange theme is gone.

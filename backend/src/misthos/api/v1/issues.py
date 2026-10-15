@@ -10,9 +10,11 @@ from fastapi.responses import JSONResponse
 from misthos.api.guards import idempotent, limit_actions, limit_publish
 from misthos.api.session import (
     SIGNED_IN,
+    VIEWER,
     require_github,
     require_owner_or_simulation,
     require_role,
+    who,
 )
 from misthos.api.v1.auth import callback_url, oauth_configured
 from misthos.config import settings
@@ -108,10 +110,6 @@ _STEPPER = "the demo stepper is the simulation's; use the explicit actions"
 def _demo_only(what: str = _STEPPER) -> None:
     if not settings.simulated:
         raise HTTPException(status_code=403, detail=what)
-
-
-def _who(account: Account | None, fallback: str) -> str:
-    return (account.github_login or account.address) if account else fallback
 
 
 def _refused(exc: Exception) -> HTTPException:
@@ -383,6 +381,14 @@ async def approve_release(
     simulation, for a visitor who is not signed in, as the claim's does.
     """
     await _require(issue_id)
+    if getattr(request.state, "sso_email", None):
+        # The session acts as the organisation, and an approver is a person named by their
+        # own GitHub login; the organisation's login would let any of its staff approve.
+        raise HTTPException(
+            status_code=403,
+            detail="approve a release signed in with the GitHub account the organisation "
+            "named, not through its single sign-on",
+        )
     if account is not None:
         require_github(account, "approve a release")
         approver = account.github_login
@@ -412,7 +418,7 @@ async def approve_criteria(
     require_owner_or_simulation(account, rec.publisher_id, "approve these criteria")
     if account is not None:
         require_github(account, "approve criteria")
-    by = _who(account, "the publisher")
+    by = who(request, account, "the publisher")
     return await idempotent(
         request,
         idempotency_key,
@@ -438,7 +444,7 @@ async def fund(
     require_owner_or_simulation(account, rec.publisher_id, "fund this issue")
     if account is not None:
         require_github(account, "fund an issue")
-    by = _who(account, "the publisher")
+    by = who(request, account, "the publisher")
     # Fix the terms first, in a save of their own: the booking may be refused with
     # `NotCommitted`, which discards the save it happens in, and the plan and the booking
     # both read the terms back (#126).
@@ -474,7 +480,7 @@ async def set_price(
     require_owner_or_simulation(account, rec.publisher_id, "re-price this issue")
     if account is not None:
         require_github(account, "re-price an issue")
-    by = _who(account, "the publisher")
+    by = who(request, account, "the publisher")
     amount = _amount(payload.amount)
     return await idempotent(
         request,
@@ -661,7 +667,7 @@ async def publish(
 
 
 @router.get("/publishers", response_model=list[PublisherListing])
-async def list_publishers(account: Account | None = SIGNED_IN) -> list[PublisherListing]:
+async def list_publishers(account: Account | None = VIEWER) -> list[PublisherListing]:
     """Every publisher. Outside the simulation a publisher's budget and spending
     policy are served only to that publisher, signed in."""
     rows = await run_in_threadpool(store.list_publishers)
