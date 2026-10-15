@@ -14,6 +14,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { api, type MetricsOut } from '../lib/client'
+import { valueMovedStat } from '../lib/value-moved'
 import { useHealth, useMe } from '../lib/session'
 import LandingIssues from '../components/LandingIssues'
 import '../landing.css'
@@ -203,11 +204,13 @@ function Snapshot() {
           </div>
           <div className="metric-item">
             <dt>Paid out</dt>
-            <dd>
+            {/* The most real money there is, never a sum of real, test and simulated
+                (#31); the kicker above already names the network and its money. */}
+            <dd title={m ? valueMovedStat(m.value_moved).hint : undefined}>
               {m ? (
                 <>
                   <small>$</small>
-                  {compactUsd(m.matched_volume_usdc)}
+                  {compactUsd(m.value_moved?.[0]?.settled_usdc ?? 0)}
                 </>
               ) : (
                 '—'

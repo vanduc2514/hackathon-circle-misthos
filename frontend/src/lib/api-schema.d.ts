@@ -218,9 +218,20 @@ export interface paths {
          * Commitment Plan
          * @description The two transactions the publisher's own wallet sends to fund the issue.
          *
-         *     The platform never signs a commitment: it moves the publisher's USDC. Approving
-         *     the price records it as the escrow's ceiling; the publisher's wallet then lets the
-         *     escrow take that amount and commits it, and approving again books it.
+         *     The platform never signs a commitment: it moves the publisher's USDC. Approving the
+         *     price records it as the escrow's ceiling; the publisher's wallet then lets the escrow
+         *     take that amount and commits it, and approving again books it.
+         *
+         *     The amount is the publisher's price -- the same value `_fund` records as the ceiling,
+         *     and never the engine's suggestion. The escrow refuses any commitment above the
+         *     ceiling (`ExceedsCeiling`), so a plan built from the suggestion could not be booked:
+         *     the wallet would be asked for a number the contract had already ruled out (#150).
+         *
+         *     The deadline is the one the approval fixed, to the second, and the amount and rate
+         *     are the approved ones too. Working them out here instead is what made the booking
+         *     refuse a commitment once an hour had passed between the plan and the booking: the
+         *     escrow's term starts at the commit, so `now + 14d` no longer matches what is on
+         *     chain, and it never matches again (#126).
          */
         get: operations["commitment_plan_api_v1_issues__issue_id__commitment_get"];
         put?: never;
@@ -1248,6 +1259,8 @@ export interface components {
             contract: string;
             /** Chain */
             chain: string;
+            /** Money */
+            money?: ("simulated" | "test" | "real" | "unknown") | null;
             /** Tx Hash */
             tx_hash: string;
             /** Amount */
@@ -1594,6 +1607,8 @@ export interface components {
             matched_volume_usdc: string;
             /** Platform Fees Usdc */
             platform_fees_usdc: string;
+            /** Value Moved */
+            value_moved?: components["schemas"]["ValueMoved"][];
             /** Median Hours To Payout */
             median_hours_to_payout: number | null;
             /**
@@ -2181,6 +2196,30 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * ValueMoved
+         * @description What settled on one network with one kind of money (#31). Test money and real
+         *     money are never added into one figure, and neither is the simulation's.
+         */
+        ValueMoved: {
+            /**
+             * Chain
+             * @description arc-mainnet, arc-testnet or chain-<id>
+             */
+            chain: string;
+            /**
+             * Money
+             * @description What the money was; `unrecorded` for a commitment made before it was kept
+             * @enum {string}
+             */
+            money: "simulated" | "test" | "real" | "unknown" | "unrecorded";
+            /** Settled Issues */
+            settled_issues: number;
+            /** Settled Usdc */
+            settled_usdc: string;
+            /** Platform Fees Usdc */
+            platform_fees_usdc: string;
         };
         /** Wallet */
         Wallet: {

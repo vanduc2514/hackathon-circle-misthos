@@ -225,6 +225,9 @@ class TestRefusals:
         assert after.escrow is not None and after.escrow.tx_hash, (
             "the ledger keeps the chain's own reference"
         )
+        # And what the money was, like any other commitment, so it is never counted as
+        # the test money this simulation shares a chain id with (#31).
+        assert after.escrow.money == "simulated"
         assert after.deadline is not None, "and with it the timer that refunds at the end"
         logged = [d for d in after.decisions if d.action == "commitment_adopted"]
         assert len(logged) == 1

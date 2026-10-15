@@ -686,6 +686,7 @@ def _save_escrow(conn: Connection, rec: IssueRecord) -> None:
         {
             "contract": e.contract,
             "chain": e.chain,
+            "money": e.money,
             "tx_hash": e.tx_hash,
             "amount_base_units": int(e.amount["base_units"]),
             "deadline": e.deadline,
@@ -1022,6 +1023,7 @@ def _escrow(row: Row) -> EscrowCommitment:
         issue_id=row["issue_id"],
         contract=row["contract"],
         chain=row["chain"],
+        money=row["money"],
         tx_hash=row["tx_hash"],
         amount=money(Usdc(row["amount_base_units"])),
         deadline=_utc(row["deadline"]),

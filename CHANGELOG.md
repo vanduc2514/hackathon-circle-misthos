@@ -7,6 +7,13 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **Value moved is reported per network and kind of money** (#31). The submission settles
+  on Arc testnet, and the result now says which money it is wherever it appears. The
+  simulation shares testnet's chain id, so a simulated escrow was recorded exactly like a
+  testnet one, and the dashboard added both into one figure. Each commitment now records
+  what its money was (simulated, test, real, or unknown off Arc), `/api/v1/metrics`
+  reports `value_moved` one row per network and kind, real money first, and the
+  dashboard's "Value moved" and the landing page's "Paid out" lead with that row.
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:
   white pages, black ink and buttons, Georgia headings and figures, and Arial text. The
   dark, mono, orange theme is gone.

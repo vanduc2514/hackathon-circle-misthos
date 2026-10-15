@@ -694,7 +694,9 @@ These are unresolved. Each one has a real constraint behind it, and none should 
 
 **Nanopayments require EOA signatures.** Gateway Nanopayments and x402 batch settlement do not support ERC-1271. If a contributor is paid to a smart contract account, Path B is unavailable to them. Path A is unaffected, which is another argument for keeping escrow as the primary rail.
 
-**Testnet or mainnet for the demo.** Testnet is free and repeatable. Mainnet is what the judges weight more heavily, and it is the only place the spending-policy guardrail exists. This is a product decision as much as a technical one.
+**Testnet or mainnet for the demo: Arc testnet (#31).** `MisthosEscrow` is deployed on Arc testnet, chain 5042002 (`contracts/deployments/5042002.json`), and the submission settles there in test USDC. Mainnet is what the judges weight more heavily, and the only place Circle's spending policies exist, but the escrow's per-issue ceiling already holds the guardrail on either network, and mainnet needs `MISTHOS_CONFIRM_MAINNET=5042` on purpose. Choosing it later is a chain id and a deploy.
+
+It is labelled the same way everywhere the result appears. The network and what its money is come from the chain id (`domain/network.py`, `/health`, the header chip). Each escrow commitment also records what its money was when it was committed, because the simulation shares testnet's chain id: `simulated`, `test`, `real`, or `unknown` for a chain that is not Arc. `/metrics` reports `value_moved`, one row per network and kind of money with real money first, and the dashboard and the landing page lead with that row, never with a sum of real, test and simulated USDC.
 
 **Yield on committed funds.** USYC would make idle escrow productive, and it adds a redemption step between acceptance and payment plus an eligibility restriction on who can hold it. Worth doing after the core loop works.
 
