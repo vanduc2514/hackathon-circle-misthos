@@ -117,6 +117,7 @@ issues = Table(
     Column("terms_wallet", String(64)),
     Column("terms_deadline", Timestamp),
     Column("terms_approved_at", Timestamp),
+    Column("escrow_term_days", Integer),
     Column("version", Integer, nullable=False),
 )
 

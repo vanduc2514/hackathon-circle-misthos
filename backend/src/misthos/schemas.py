@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -285,6 +285,9 @@ class IssueOut(BaseModel):
     awaiting_approver: bool = False
     """The payout is held over the organisation's release threshold until one of its
     named approvers approves. Compliance holds are not shown here."""
+    escrow_term: int = 14
+    """The term the publisher chose for the escrow, in whole days (#172). Defaults to 14 days."""
+    escrow_term_days: int = 14
 
 
 class IssueSummaryOut(BaseModel):
@@ -299,6 +302,8 @@ class IssueSummaryOut(BaseModel):
     price_usdc: str | None = None
     confidence: str | None = None
     deadline: datetime | None = None
+    escrow_term: int = 14
+    escrow_term_days: int = 14
     github_url: str
 
 
@@ -368,6 +373,9 @@ class PublishRequest(BaseModel):
     funding is refused until they do. The web form always sends one."""
     compliance_driven: bool = False
     signals: dict[str, float] = Field(default_factory=dict)
+    escrow_term: Any | None = None
+    """The escrow term in whole days, between 3 and 90. Defaults to 14 days (#172)."""
+    escrow_term_days: Any | None = None
 
     @model_validator(mode="after")
     def _name_the_repository(self) -> PublishRequest:
@@ -516,6 +524,12 @@ class PriceRequest(BaseModel):
 
     amount: str
     """USDC, as decimal text. Checked against the platform's bounds and nothing else."""
+
+
+class EscrowTermRequest(BaseModel):
+    """A new escrow term for an issue before funding (#172)."""
+
+    days: Any = Field(description="The escrow term in whole days, between 3 and 90")
 
 
 class GitHubLinkStart(BaseModel):

@@ -9,7 +9,7 @@ importing the module that mutates it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from misthos.domain.issue import FundingTerms, IssueState
 from misthos.domain.ledger import MoneyEvent
@@ -42,6 +42,8 @@ class IssueRecord:
     funding: FundingTerms | None = None
     """The terms approved at the price checkpoint: what the escrow was told, what the
     plan hands the wallet, and what booking checks the commitment against (#126)."""
+    escrow_term: timedelta = field(default_factory=lambda: timedelta(days=14))
+    """The term the publisher chose for the escrow, in whole days (#172). Defaults to 14 days."""
     escrow: EscrowCommitment | None = None
     claim: Claim | None = None
     submission: Submission | None = None
