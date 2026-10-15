@@ -8,7 +8,6 @@ import Dashboard from './routes/Dashboard'
 import Issues from './routes/Issues'
 import IssueDetail from './routes/IssueDetail'
 import Landing from './routes/Landing'
-import Loop from './routes/Loop'
 import Plans from './routes/Plans'
 import Publish from './routes/Publish'
 import Spend from './routes/Spend'
@@ -21,8 +20,9 @@ const REPO_URL = 'https://github.com/vanduc2514/hackathon-circle-misthos'
 /** Say what the money is, in the words a user would look for. */
 const moneyChip: Record<'simulated' | 'test' | 'real' | 'unknown', string> = {
   simulated: 'simulated',
-  test: 'test USDC',
-  real: 'real USDC',
+  // The network chip beside this one already says testnet or mainnet.
+  test: 'USDC',
+  real: 'USDC',
   unknown: 'not Arc: treat as real',
 }
 
@@ -47,9 +47,6 @@ function Layout() {
           </NavLink>
           <NavLink to="/issues" className={({ isActive }) => (isActive ? 'active' : '')}>
             Issues
-          </NavLink>
-          <NavLink to="/loop" className={({ isActive }) => (isActive ? 'active' : '')}>
-            Loop
           </NavLink>
           <NavLink to="/spend" className={({ isActive }) => (isActive ? 'active' : '')}>
             Spend
@@ -135,7 +132,6 @@ export default function App() {
         <Route path="/overview" element={<Dashboard />} />
         <Route path="/issues" element={<Issues />} />
         <Route path="/issues/:issueId" element={<IssueDetail />} />
-        <Route path="/loop" element={<Loop />} />
         <Route path="/spend" element={<Spend />} />
         <Route path="/publish" element={<Publish />} />
         <Route path="/plans" element={<Plans />} />

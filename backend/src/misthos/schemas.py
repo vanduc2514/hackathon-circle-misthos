@@ -634,30 +634,6 @@ class ReputationEventOut(BaseModel):
     settled_at: datetime
 
 
-class LoopSettlement(BaseModel):
-    issue_id: str
-    repo: str
-    number: int
-    title: str
-    amount: dict[str, str | int]
-    contributor: str
-    """The contributor's GitHub handle, which the settlement comment already shows."""
-    settled_at: datetime
-    github_url: str
-
-
-class LoopOut(BaseModel):
-    """The loop in public: what was funded, settled and paid, for one repository or
-    all of them. No wallet and no transfer appears here."""
-
-    repo: str | None
-    funded_open: int
-    settled_issues: int
-    settled_issues_7d: int
-    matched_volume_usdc: str
-    recent: list[LoopSettlement]
-
-
 class DisputeRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
     """Which criteria the contributor believes are met, and where the work shows it."""

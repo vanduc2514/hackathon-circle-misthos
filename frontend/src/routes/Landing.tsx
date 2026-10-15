@@ -54,8 +54,9 @@ const steps = [
 /** Say what the money is, in the words a visitor would look for. */
 const moneyWords: Record<'simulated' | 'test' | 'real' | 'unknown', string> = {
   simulated: 'simulated money',
-  test: 'test USDC',
-  real: 'real USDC',
+  // Shown beside the network's name, which already says testnet or mainnet (#139).
+  test: 'USDC',
+  real: 'USDC',
   unknown: 'not Arc: treat as real',
 }
 

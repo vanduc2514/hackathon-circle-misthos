@@ -33,7 +33,7 @@ class Network:
     def description(self) -> str:
         return {
             "simulated": "Simulation: no chain is contacted and no money moves.",
-            "test": f"{self.label}: test USDC from a faucet, with no real value.",
+            "test": f"{self.label}: USDC from a faucet, with no real value.",
             "real": f"{self.label}: real USDC. Settlement is irreversible.",
             "unknown": (
                 f"{self.label} is not an Arc network. Treat its USDC as real: "

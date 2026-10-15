@@ -218,9 +218,20 @@ export interface paths {
          * Commitment Plan
          * @description The two transactions the publisher's own wallet sends to fund the issue.
          *
-         *     The platform never signs a commitment: it moves the publisher's USDC. Approving
-         *     the price records it as the escrow's ceiling; the publisher's wallet then lets the
-         *     escrow take that amount and commits it, and approving again books it.
+         *     The platform never signs a commitment: it moves the publisher's USDC. Approving the
+         *     price records it as the escrow's ceiling; the publisher's wallet then lets the escrow
+         *     take that amount and commits it, and approving again books it.
+         *
+         *     The amount is the publisher's price -- the same value `_fund` records as the ceiling,
+         *     and never the engine's suggestion. The escrow refuses any commitment above the
+         *     ceiling (`ExceedsCeiling`), so a plan built from the suggestion could not be booked:
+         *     the wallet would be asked for a number the contract had already ruled out (#150).
+         *
+         *     The deadline is the one the approval fixed, to the second, and the amount and rate
+         *     are the approved ones too. Working them out here instead is what made the booking
+         *     refuse a commitment once an hour had passed between the plan and the booking: the
+         *     escrow's term starts at the commit, so `now + 14d` no longer matches what is on
+         *     chain, and it never matches again (#126).
          */
         get: operations["commitment_plan_api_v1_issues__issue_id__commitment_get"];
         put?: never;
@@ -465,27 +476,6 @@ export interface paths {
          *     sweeper's next pass. The publisher or the claimant may ask.
          */
         post: operations["review_api_v1_issues__issue_id__review_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/loop": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Loop
-         * @description The loop in public: issues funded, settled and paid, for one repository or all.
-         *     Built for a repository's watchers to see, so it carries no wallet or transfer.
-         */
-        get: operations["loop_api_v1_loop_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1513,49 +1503,6 @@ export interface components {
             confidence?: string | null;
             /** Deadline */
             deadline?: string | null;
-            /** Github Url */
-            github_url: string;
-        };
-        /**
-         * LoopOut
-         * @description The loop in public: what was funded, settled and paid, for one repository or
-         *     all of them. No wallet and no transfer appears here.
-         */
-        LoopOut: {
-            /** Repo */
-            repo: string | null;
-            /** Funded Open */
-            funded_open: number;
-            /** Settled Issues */
-            settled_issues: number;
-            /** Settled Issues 7D */
-            settled_issues_7d: number;
-            /** Matched Volume Usdc */
-            matched_volume_usdc: string;
-            /** Recent */
-            recent: components["schemas"]["LoopSettlement"][];
-        };
-        /** LoopSettlement */
-        LoopSettlement: {
-            /** Issue Id */
-            issue_id: string;
-            /** Repo */
-            repo: string;
-            /** Number */
-            number: number;
-            /** Title */
-            title: string;
-            /** Amount */
-            amount: {
-                [key: string]: string | number;
-            };
-            /** Contributor */
-            contributor: string;
-            /**
-             * Settled At
-             * Format: date-time
-             */
-            settled_at: string;
             /** Github Url */
             github_url: string;
         };
@@ -3055,38 +3002,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    loop_api_v1_loop_get: {
-        parameters: {
-            query?: {
-                /** @description owner/name; every repository if empty */
-                repo?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LoopOut"];
                 };
             };
             /** @description Validation Error */

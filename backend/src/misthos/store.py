@@ -110,8 +110,6 @@ from misthos.schemas import (
     FileableItem,
     IssueOut,
     IssueSummaryOut,
-    LoopOut,
-    LoopSettlement,
     MetricsOut,
     PaymentRequest,
     Publisher,
@@ -2619,51 +2617,6 @@ class Store:
             for e in reputation.events(self.repo.list_issues())
             if e.contributor_id == contributor_id
         ]
-
-    # ------------------------------------------------------------- the loop
-
-    def loop(self, repo: str | None = None, now: datetime | None = None) -> LoopOut:
-        """The loop in public: funded, settled and paid, for one repository or all."""
-        self.ensure_ready()
-        now = now or _now()
-        records = [
-            r for r in self.repo.list_issues() if repo is None or r.repo.lower() == repo.lower()
-        ]
-        handles = {c.id: c.handle for c in self.repo.list_contributors()}
-        settled = sorted(
-            (
-                (e, r)
-                for r in records
-                for e in r.money_events
-                if e.kind is MoneyEventKind.RELEASED
-            ),
-            key=lambda pair: pair[0].occurred_at,
-            reverse=True,
-        )
-        return LoopOut(
-            repo=repo,
-            funded_open=sum(
-                1 for r in records if r.escrow is not None and lifecycle.is_open(r.state)
-            ),
-            settled_issues=len(settled),
-            settled_issues_7d=sum(
-                1 for e, _ in settled if e.occurred_at >= now - metrics.WEEK
-            ),
-            matched_volume_usdc=f"{Usdc(sum(e.amount.base_units for e, _ in settled)).decimal:.2f}",
-            recent=[
-                LoopSettlement(
-                    issue_id=r.id,
-                    repo=r.repo,
-                    number=r.number,
-                    title=r.title,
-                    amount=money(e.amount),
-                    contributor=handles.get(e.counterparty_id, e.counterparty_id),
-                    settled_at=e.occurred_at,
-                    github_url=r.github_url,
-                )
-                for e, r in settled[:20]
-            ],
-        )
 
     def _demo_pull_request_number(self, rec: IssueRecord) -> int:
         """The number of the first pull request the simulation opens for an issue: its own

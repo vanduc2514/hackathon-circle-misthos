@@ -39,7 +39,6 @@ from misthos.schemas import (
     HealthOut,
     IssueOut,
     IssueSummaryOut,
-    LoopOut,
     MetricsOut,
     PriceRequest,
     Publisher,
@@ -565,15 +564,6 @@ async def review(issue_id: str, account: Account | None = SIGNED_IN) -> IssueOut
     if reviewed is None:
         raise HTTPException(status_code=409, detail=f"{issue_id} has no commit awaiting a verdict")
     return await run_in_threadpool(store.to_out, reviewed)
-
-
-@router.get("/loop", response_model=LoopOut)
-async def loop(
-    repo: str | None = Query(default=None, description="owner/name; every repository if empty"),
-) -> LoopOut:
-    """The loop in public: issues funded, settled and paid, for one repository or all.
-    Built for a repository's watchers to see, so it carries no wallet or transfer."""
-    return await run_in_threadpool(store.loop, repo)
 
 
 @router.post(

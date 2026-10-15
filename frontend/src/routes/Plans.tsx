@@ -249,7 +249,7 @@ function Standing({
       text = `On ${sub.plan}, agreed with us.`
       break
     case 'none':
-      text = 'On Open: nothing to pay, and fixes priced at the Open take rate.'
+      text = 'On Open: nothing to pay, and each settled fix charged at the Open take rate.'
       break
     case 'pending':
       text = 'A plan is chosen and waiting for its payment, below.'

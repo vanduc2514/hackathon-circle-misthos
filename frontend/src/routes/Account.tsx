@@ -166,7 +166,7 @@ const repositoriesQuery = (publisherId: string) => ({
 
 /**
  * Repositories the publisher installed the GitHub App on (#6). There, an issue is
- * priced by a label and funded by a comment, without coming back here.
+ * listed by a label and funded by a comment, without coming back here.
  */
 function Repositories({ publisherId, linked }: { publisherId: string; linked: boolean }) {
   const { data } = useQuery(repositoriesQuery(publisherId))
@@ -191,8 +191,8 @@ function Repositories({ publisherId, linked }: { publisherId: string; linked: bo
         </p>
       )}
       <p className="stat-hint">
-        On a connected repository, add the <code>{data.label}</code> label to an issue to have
-        it priced, then comment <code>/misthos approve</code> on it to commit the funds.
+        On a connected repository, add the <code>{data.label}</code> label to an issue to list
+        it, then comment <code>/misthos approve</code> on it to commit the funds.
         Contributors claim it with <code>/misthos claim</code>.
       </p>
       {linked && (data.settings_url || data.install_url) && (
