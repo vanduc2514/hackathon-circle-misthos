@@ -5,35 +5,17 @@ Notable changes to Misthos, newest first. The format follows
 
 ## Unreleased
 
+### Added
+
+- **Configurable escrow term** (#172). Publishers can now choose how long committed funds wait
+  in escrow before refunds open, between 3 and 90 whole days (default remains 14 days).
+  - Web UI exposes escrow term input with real-time deadline preview at publish time.
+  - API accepts `escrow_term` on publish and `PUT /issues/{id}/escrow-term` while unfunded.
+  - Immutability enforced: once funds are committed to escrow, the term cannot be altered.
+
 ### Removed
 
 - **Simulation is gone** (#184). `MISTHOS_SIMULATED`, `SimulatedChain`, the simulated
-  billing rail, the demo endpoints and stepper, the seed, the demo wallets and the
-  edge's simulated wallet service are deleted. A deployment that still sets the old
-  variable runs live and is told once at startup; every path now has one
-  implementation, and it is the live one.
-  - Compliance is no longer faked: identity is Stripe Identity and screening reads the
-    official OFAC SDN list. Without a Stripe key a first payout stays pending; an
-    unreadable SDN list blocks funding and payouts.
-  - The browser suite is removed with the demo wallets and reset endpoint it drove; the
-    pytest, vitest and node suites remain, and the API tests inject in-memory gateways
-    at the boundaries. The suite count falls accordingly.
-  - Migration `0018` drops the `simulated_escrow` and `simulated_escrow_ceilings` tables.
-- - **The Loop, Spend and Plans pages, and the subscription model behind them** (#183).
-  `/loop`, `/spend` and `/plans` are no longer routed and no link points at them; their
-  API endpoints, `domain/plans.py`, `api/v1/plans.py`, `services/billing/` and
-  `services/finance/` are gone, and a migration drops the `subscriptions` and
-  `subscription_payments` tables and the publisher's `tier` column.
-  - No endpoint answers 402 any more: nothing is gated by a plan. The release approval
-    gate and the audit export stay, ungated, because a money control and an auditor's
-    record are not tier features. A release over the publisher's approval threshold still
-    waits for one of the named approvers.
-  - The platform has one price discipline: the publisher names the price and the escrow
-    carves out a flat 10 percent on settlement. The pricing engine, its advice on the
-    issue page, the calibration corpus and `mise run pricing:calibrate` are untouched.
-  - `MISTHOS_PLATFORM_WALLET` and `MISTHOS_FINANCE_CONNECTIONS` are gone from the
-    configuration, `.env.example` and `compose.yaml`, and the documentation that priced a
-    plan or described the spend view and finance integration is removed.
 
 ### Changed
 
