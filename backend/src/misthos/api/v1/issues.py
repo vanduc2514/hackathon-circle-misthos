@@ -129,6 +129,7 @@ async def health() -> HealthOut:
 async def list_issues(
     state: str | None = Query(default=None, description="Filter by lifecycle state"),
     publisher_id: str | None = None,
+    contributor_id: str | None = None,
     compliance_only: bool = False,
 ) -> list[IssueSummaryOut]:
     states = None
@@ -140,6 +141,15 @@ async def list_issues(
     records = await run_in_threadpool(store.list_issues, states)
     if publisher_id:
         records = [r for r in records if r.publisher_id == publisher_id]
+    if contributor_id:
+        records = [
+            r for r in records
+            if r.contributor_id == contributor_id
+            or (r.claim and getattr(r.claim, "contributor_id", None) == contributor_id)
+            or (hasattr(r, "claims") and any(getattr(c, "contributor_id", None) == contributor_id for c in r.claims))
+            or (r.submission and getattr(r.submission, "contributor_id", None) == contributor_id)
+            or (hasattr(r, "submissions") and any(getattr(s, "contributor_id", None) == contributor_id for s in r.submissions))
+        ]
     if compliance_only:
         records = [r for r in records if r.compliance_driven]
     records.sort(key=lambda r: r.created_at, reverse=True)
