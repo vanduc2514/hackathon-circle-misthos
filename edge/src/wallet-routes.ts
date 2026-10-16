@@ -57,6 +57,35 @@ export function walletRouter(service: WalletService, coreToken = process.env.EDG
       }
     }
 
+  router.post('/session', async (req: Request, res: Response) => {
+    const userId = String(req.body?.userId || '')
+    if (!userId) {
+      res.status(400).json({ error: 'userId required' })
+      return
+    }
+    try {
+      res.json(await service.identitySession(userId))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      res.status(502).json({ error: message })
+    }
+  })
+
+  router.post('/sign', async (req: Request, res: Response) => {
+    const userId = String(req.body?.userId || '')
+    const message = String(req.body?.message || '')
+    if (!userId || !message) {
+      res.status(400).json({ error: 'userId and message required' })
+      return
+    }
+    try {
+      res.json(await service.signMessage(userId, message))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      res.status(502).json({ error: message })
+    }
+  })
+
   router.post('/:party/:id/session', run((p, id) => service.session(p, id)))
   router.get('/:party/:id', run((p, id) => service.wallet(p, id)))
   return router

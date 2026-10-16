@@ -19,16 +19,10 @@ test('installing the App is offered after linking, and is not a sign-in', async 
 
   await page.goto('/account')
   await page.getByRole('button', { name: 'Demo publisher wallet' }).click()
-  await page.getByLabel('Organisation name').fill('Acme Widgets')
-  await page.getByRole('button', { name: 'Continue as a publisher' }).click()
-
-  // Before linking: no install link, because that was the step order the flow got wrong.
-  await expect(page.getByRole('link', { name: /Install the GitHub App/ })).toHaveCount(0)
-  await expect(page.getByText('Link without installing')).toHaveCount(0)
-
-  // Link the account, the way the simulation offers.
   await page.getByLabel('Your GitHub login').fill('acme-widgets')
   await page.getByRole('button', { name: 'Link this login' }).click()
+  await page.getByLabel('Organisation name').fill('Acme Widgets')
+  await page.getByRole('button', { name: 'Continue as a publisher' }).click()
   await expect(page.getByRole('link', { name: 'publisher · acme-widgets' })).toBeVisible()
 
   // Now the install link is offered, and it is the App's plain install page.
@@ -60,10 +54,10 @@ test('a connected repository turns the install button into the App settings', as
 
   await page.goto('/account')
   await page.getByRole('button', { name: 'Demo publisher wallet' }).click()
-  await page.getByLabel('Organisation name').fill('Acme Widgets')
-  await page.getByRole('button', { name: 'Continue as a publisher' }).click()
   await page.getByLabel('Your GitHub login').fill('acme-widgets')
   await page.getByRole('button', { name: 'Link this login' }).click()
+  await page.getByLabel('Organisation name').fill('Acme Widgets')
+  await page.getByRole('button', { name: 'Continue as a publisher' }).click()
 
   // Nothing installed: the button installs.
   await expect(page.getByRole('link', { name: /Install the GitHub App/ })).toBeVisible()

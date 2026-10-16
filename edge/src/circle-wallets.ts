@@ -124,6 +124,8 @@ export interface WalletService {
   config: WalletConfig
   session(party: Party, id: string): Promise<WalletSession>
   wallet(party: Party, id: string): Promise<PartyWallet>
+  identitySession(userId: string): Promise<WalletSession>
+  signMessage(userId: string, message: string): Promise<{ challengeId?: string; signature?: string; simulated: boolean }>
 }
 
 export function createWalletService(
@@ -155,6 +157,21 @@ export function createWalletService(
           simulated: true,
         }
       },
+      identitySession: async (userId: string) => ({
+        circleUserId: userId,
+        appId: 'simulated',
+        userToken: 'simulated',
+        encryptionKey: 'simulated',
+        challengeId: null,
+        address: simulatedAddress(userId),
+        blockchain: config.blockchain,
+        simulated: true,
+      }),
+      signMessage: async (_userId: string, _message: string) => ({
+        challengeId: undefined,
+        signature: undefined,
+        simulated: true,
+      }),
     }
   }
 
@@ -215,6 +232,48 @@ export function createWalletService(
         circleUserId: userId,
         address: await arcAddress(userToken),
         blockchain: config.blockchain,
+        simulated: false,
+      }
+    },
+    async identitySession(userId: string) {
+      try {
+        await circle.createUser({ userId })
+      } catch (err) {
+        if (!isUserExists(err)) throw err
+      }
+      const { userToken, encryptionKey } = await token(userId)
+      const address = await arcAddress(userToken)
+
+      let challengeId: string | null = null
+      if (address === null) {
+        const res = await circle.createUserPinWithWallets({
+          userToken,
+          blockchains: [config.blockchain],
+          accountType: 'SCA',
+        })
+        challengeId = res.data?.challengeId ?? null
+      }
+
+      return {
+        circleUserId: userId,
+        appId: config.appId,
+        userToken,
+        encryptionKey,
+        challengeId,
+        address,
+        blockchain: config.blockchain,
+        simulated: false,
+      }
+    },
+    async signMessage(userId: string, _message: string) {
+      const { userToken } = await token(userId)
+      const res = await (circle as unknown as { signMessage: (arg: unknown) => Promise<{ data?: { challengeId: string } }> }).signMessage?.({
+        userToken,
+        message: _message,
+      })
+      return {
+        challengeId: res?.data?.challengeId,
+        signature: undefined,
         simulated: false,
       }
     },

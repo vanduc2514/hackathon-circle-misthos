@@ -1,0 +1,308 @@
+/* Sign-in Gate dialog matching landing.css aesthetics */
+
+.gate-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background-color: rgba(23, 39, 31, 0.45);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.gate-dialog {
+  position: relative;
+  width: 100%;
+  max-width: 540px;
+  background-color: var(--card, #fffefa);
+  border: 1px solid var(--border, #e4e3da);
+  border-radius: 12px;
+  box-shadow: 0 28px 80px rgba(41, 57, 43, 0.16), 0 2px 7px rgba(41, 57, 43, 0.05);
+  padding: 2.25rem;
+  color: var(--foreground, #17271f);
+  font-family: inherit;
+  outline: none;
+}
+
+.gate-close-button {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted-foreground, #5c6c62);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gate-close-button:hover,
+.gate-close-button:focus-visible {
+  border-color: var(--border, #e4e3da);
+  color: var(--foreground, #17271f);
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.gate-header {
+  margin-bottom: 1.5rem;
+  text-align: left;
+}
+
+.gate-kicker {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--primary, #224735);
+  margin-bottom: 0.25rem;
+}
+
+.gate-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.75rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.5rem 0;
+  color: var(--foreground, #17271f);
+}
+
+.gate-subtitle {
+  font-size: 0.95rem;
+  color: var(--muted-foreground, #5c6c62);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.gate-steps-nav {
+  margin-bottom: 1.75rem;
+}
+
+.gate-steps-list {
+  display: flex;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-bottom: 1px solid var(--border, #e4e3da);
+}
+
+.gate-step-indicator {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted-foreground, #8a968f);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all 0.15s ease;
+}
+
+.gate-step-indicator .step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background-color: rgba(0, 0, 0, 0.04);
+  color: inherit;
+}
+
+.gate-step-indicator.active {
+  color: var(--primary, #224735);
+  font-weight: 600;
+  border-bottom-color: var(--primary, #224735);
+}
+
+.gate-step-indicator.active .step-num {
+  background-color: var(--primary, #224735);
+  color: #fff;
+}
+
+.gate-step-indicator.done {
+  color: var(--primary, #224735);
+}
+
+.gate-step-indicator.done .step-num {
+  background-color: #dbece0;
+  color: var(--primary, #224735);
+}
+
+.gate-error {
+  background-color: #fdf2f2;
+  border: 1px solid #f8b4b4;
+  color: #9b1c1c;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 1.25rem;
+}
+
+.gate-panel-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.25rem;
+  font-weight: 400;
+  margin: 0 0 0.5rem 0;
+}
+
+.gate-panel-copy {
+  font-size: 0.9rem;
+  color: var(--muted-foreground, #5c6c62);
+  margin: 0 0 1.25rem 0;
+  line-height: 1.45;
+}
+
+.gate-panel-copy code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.gate-button-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.gate-button {
+  width: 100%;
+  justify-content: center;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.gate-notice-box {
+  background-color: #f6f5ee;
+  border: 1px solid var(--border, #e4e3da);
+  color: var(--muted-foreground, #5c6c62);
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.gate-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 0.75rem 0;
+  color: var(--muted-foreground, #8a968f);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.gate-divider::before,
+.gate-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--border, #e4e3da);
+}
+
+.gate-divider span {
+  padding: 0 0.75rem;
+}
+
+.gate-demo-wallets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.gate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.gate-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.gate-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--foreground, #17271f);
+}
+
+.gate-input {
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border, #e4e3da);
+  border-radius: 6px;
+  font-size: 0.95rem;
+  background-color: #fff;
+  color: var(--foreground, #17271f);
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.gate-input:focus {
+  outline: none;
+  border-color: var(--primary, #224735);
+  box-shadow: 0 0 0 2px rgba(34, 71, 53, 0.1);
+}
+
+.gate-input-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.gate-input-row .gate-input {
+  flex: 1;
+}
+
+.gate-input-row .gate-button {
+  width: auto;
+  white-space: nowrap;
+}
+
+.gate-fieldset {
+  border: 1px solid var(--border, #e4e3da);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.gate-fieldset legend {
+  padding: 0 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--foreground, #17271f);
+}
+
+.gate-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.25rem 0;
+}
+
+.gate-radio-label input[type="radio"] {
+  accent-color: var(--primary, #224735);
+  width: 1.1rem;
+  height: 1.1rem;
+}

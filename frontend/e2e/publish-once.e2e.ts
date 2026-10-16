@@ -22,10 +22,10 @@ test('a GitHub issue is published once, and publishing it again links to it', as
 
   await page.goto('/account')
   await page.getByRole('button', { name: 'Demo publisher wallet' }).click()
+  await page.getByLabel('Your GitHub login').fill('acme-widgets')
+  await page.getByRole('button', { name: 'Link this login' }).click()
   await page.getByLabel('Organisation name').fill('Acme Widgets')
   await page.getByRole('button', { name: 'Continue as a publisher' }).click()
-  await page.getByLabel('GitHub login').fill('acme-widgets')
-  await page.getByRole('button', { name: 'Link this login' }).click()
   await expect(page.getByRole('link', { name: 'publisher · acme-widgets' })).toBeVisible()
 
   const fill = async (repo: string) => {

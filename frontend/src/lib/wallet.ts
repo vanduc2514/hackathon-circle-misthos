@@ -6,7 +6,7 @@ import { toChecksumAddress } from './siwe'
 
 /** Something that can prove it holds an address by signing a message. */
 export type Signer = {
-  kind: 'browser' | 'demo'
+  kind: 'browser' | 'demo' | 'circle'
   address: string
   sign: (message: string) => Promise<string>
 }

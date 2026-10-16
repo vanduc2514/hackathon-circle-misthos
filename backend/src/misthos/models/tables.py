@@ -291,6 +291,15 @@ accounts = Table(
     Column("created_at", Timestamp, nullable=False),
 )
 
+# A GitHub login held against a wallet before its account is created (#181).
+pending_github_links = Table(
+    "pending_github_links",
+    metadata,
+    Column("address", String(42), primary_key=True),
+    Column("github_login", String(64), nullable=False, unique=True),
+    Column("created_at", Timestamp, nullable=False),
+)
+
 # Every GitHub webhook delivery handled, so a redelivery is recognised and ignored.
 webhook_deliveries = Table(
     "webhook_deliveries",

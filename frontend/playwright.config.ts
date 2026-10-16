@@ -64,8 +64,8 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: `npm run dev -- --port ${webPort} --strictPort`,
-      url: `http://localhost:${webPort}`,
+      command: `npm run dev -- --host 0.0.0.0 --port ${webPort} --strictPort`,
+      url: `http://127.0.0.1:${webPort}`,
       env: {
         // The web app proxies /api to the API this run started, wherever it landed.
         VITE_API_TARGET: `http://127.0.0.1:${apiPort}`,

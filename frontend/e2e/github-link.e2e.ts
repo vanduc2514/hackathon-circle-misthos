@@ -18,24 +18,18 @@ test('without an OAuth App the page offers no GitHub button and links by login',
 
   await page.goto('/account')
   await page.getByRole('button', { name: 'Demo contributor wallet' }).click()
-  await page.getByLabel('Contributor: I fix issues').check()
-  await page.getByLabel('Your name').fill('Octo')
-  await page.getByRole('button', { name: 'Continue as a contributor' }).click()
-  await expect(page.getByRole('heading', { name: 'Link your GitHub account' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Step 2: Link your GitHub account' })).toBeVisible()
 
-  await expect(page.getByRole('button', { name: 'Link with GitHub' })).toHaveCount(0)
-  const note = page.getByRole('note')
-  await expect(note).toContainText("GitHub linking isn't set up on this server")
-  for (const needed of [
-    'MISTHOS_GITHUB_OAUTH_CLIENT_ID',
-    'MISTHOS_GITHUB_OAUTH_CLIENT_SECRET',
-    'http://localhost:5173/api/v1/auth/github/callback',
-  ]) {
-    await expect(note).toContainText(needed)
-  }
+  await expect(page.getByRole('button', { name: 'Connect with GitHub OAuth' })).toHaveCount(0)
 
   await page.getByLabel('Your GitHub login').fill('octo-dev')
   await page.getByRole('button', { name: 'Link this login' }).click()
+
+  await expect(page.getByRole('heading', { name: 'Step 3: Choose your side' })).toBeVisible()
+  await page.getByLabel('Contributor: I fix issues').check()
+  await page.getByLabel('Your name').fill('Octo')
+  await page.getByRole('button', { name: 'Continue as a contributor' }).click()
+
   await expect(page.getByRole('link', { name: 'contributor · octo-dev' })).toBeVisible()
   expect(errors).toEqual([])
 })

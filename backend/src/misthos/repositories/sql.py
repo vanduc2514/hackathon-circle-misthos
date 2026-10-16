@@ -284,6 +284,10 @@ class SqlRepository:
 
     def save_account(self, account: Account) -> None:
         self.migrate()
+        if account.github_login:
+            pending_owner = self.get_wallet_by_pending_github_link(account.github_login)
+            if pending_owner and pending_owner.lower() != account.address.lower():
+                raise AccountConflict(f"{account.github_login} is linked to another wallet")
         values = {
             "role": account.role,
             "party_id": account.party_id,
@@ -293,8 +297,65 @@ class SqlRepository:
         try:
             with self.engine.begin() as conn:
                 _upsert(conn, t.accounts, {"address": account.address.lower()}, values)
+                conn.execute(
+                    t.pending_github_links.delete().where(
+                        func.lower(t.pending_github_links.c.address) == account.address.lower()
+                    )
+                )
         except IntegrityError as exc:
             raise AccountConflict(f"{account.github_login} is linked to another wallet") from exc
+
+    def set_pending_github_link(self, address: str, login: str) -> None:
+        self.migrate()
+        existing = self.get_account_by_github_login(login)
+        if existing and existing.address.lower() != address.lower():
+            raise AccountConflict(f"{login} is linked to another wallet")
+        pending_owner = self.get_wallet_by_pending_github_link(login)
+        if pending_owner and pending_owner.lower() != address.lower():
+            raise AccountConflict(f"{login} is linked to another wallet")
+        values = {"github_login": login, "created_at": datetime.now(UTC)}
+        try:
+            with self.engine.begin() as conn:
+                _upsert(conn, t.pending_github_links, {"address": address.lower()}, values)
+        except IntegrityError as exc:
+            raise AccountConflict(f"{login} is linked to another wallet") from exc
+
+    def get_pending_github_link(self, address: str) -> str | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            row = (
+                conn.execute(
+                    select(t.pending_github_links.c.github_login).where(
+                        func.lower(t.pending_github_links.c.address) == address.lower()
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return row["github_login"] if row else None
+
+    def get_wallet_by_pending_github_link(self, login: str) -> str | None:
+        self.migrate()
+        with self.engine.connect() as conn:
+            row = (
+                conn.execute(
+                    select(t.pending_github_links.c.address).where(
+                        func.lower(t.pending_github_links.c.github_login) == login.lower()
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return row["address"] if row else None
+
+    def clear_pending_github_link(self, address: str) -> None:
+        self.migrate()
+        with self.engine.begin() as conn:
+            conn.execute(
+                t.pending_github_links.delete().where(
+                    func.lower(t.pending_github_links.c.address) == address.lower()
+                )
+            )
 
     # ---------------------------------------------------------- GitHub connections
 

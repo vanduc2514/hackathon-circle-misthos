@@ -7,6 +7,14 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **A single sign-in gate replaces bifurcated onboarding** (#181). Visitors now enter Misthos through a single mandatory three-step gate:
+  1. Prove a wallet (MetaMask first, or a user-controlled Circle wallet signing via `ChallengeType.SIGN_MESSAGE`).
+  2. Link a GitHub account before choosing a side. The login is held as a pending link against the wallet, enforcing one-login-one-wallet for pending links as well as accounts.
+  3. Choose a side (publisher or contributor) and name the party, creating the account carrying the linked GitHub login.
+  - The app opens at `/overview` only when all three steps are complete. Leaving early costs nothing and leaves no account behind; reopening resumes at the first unfinished step.
+  - The gate is an accessible modal dialog (`role="dialog"`, `aria-modal="true"`, focus trap/restore, Esc to close).
+  - All landing links into the app open the gate when unfinished; the landing header reads *Finish signing in* while unfinished.
+  - The profile page (`/account`) displays identity and GitHub App installation rather than acting as a second onboarding wizard.
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:
   white pages, black ink and buttons, Georgia headings and figures, and Arial text. The
   dark, mono, orange theme is gone.

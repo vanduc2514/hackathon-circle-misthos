@@ -79,15 +79,13 @@ function Layout() {
               {moneyChip[health.money]}
             </span>
           )}
-          {me ? (
+          {account ? (
             <Link to="/account" className="chip">
-              {account
-                ? `${account.role} · ${account.github_login ?? account.party_id}`
-                : 'Choose a side'}
+              {`${account.role} · ${account.github_login ?? account.party_id}`}
             </Link>
           ) : (
             <Link to="/account" className="nav-cta">
-              Sign in <ArrowRight aria-hidden="true" />
+              {me ? 'Finish signing in' : 'Sign in'} <ArrowRight aria-hidden="true" />
             </Link>
           )}
         </div>

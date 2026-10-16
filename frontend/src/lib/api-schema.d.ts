@@ -218,9 +218,20 @@ export interface paths {
          * Commitment Plan
          * @description The two transactions the publisher's own wallet sends to fund the issue.
          *
-         *     The platform never signs a commitment: it moves the publisher's USDC. Approving
-         *     the price records it as the escrow's ceiling; the publisher's wallet then lets the
-         *     escrow take that amount and commits it, and approving again books it.
+         *     The platform never signs a commitment: it moves the publisher's USDC. Approving the
+         *     price records it as the escrow's ceiling; the publisher's wallet then lets the escrow
+         *     take that amount and commits it, and approving again books it.
+         *
+         *     The amount is the publisher's price -- the same value `_fund` records as the ceiling,
+         *     and never the engine's suggestion. The escrow refuses any commitment above the
+         *     ceiling (`ExceedsCeiling`), so a plan built from the suggestion could not be booked:
+         *     the wallet would be asked for a number the contract had already ruled out (#150).
+         *
+         *     The deadline is the one the approval fixed, to the second, and the amount and rate
+         *     are the approved ones too. Working them out here instead is what made the booking
+         *     refuse a commitment once an hour had passed between the plan and the booking: the
+         *     escrow's term starts at the commit, so `now + 14d` no longer matches what is on
+         *     chain, and it never matches again (#126).
          */
         get: operations["commitment_plan_api_v1_issues__issue_id__commitment_get"];
         put?: never;
@@ -958,6 +969,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/wallets/circle/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Identity Session
+         * @description Start a Circle wallet session before a party is known (#181).
+         */
+        post: operations["identity_session_api_v1_wallets_circle_session_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wallets/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Identity Session
+         * @description Start a Circle wallet session before a party is known (#181).
+         */
+        post: operations["identity_session_api_v1_wallets_session_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wallets/circle/sign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Identity Sign
+         * @description Ask Circle to sign a SIWE message via ChallengeType.SIGN_MESSAGE (#181).
+         */
+        post: operations["identity_sign_api_v1_wallets_circle_sign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wallets/sign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Identity Sign
+         * @description Ask Circle to sign a SIWE message via ChallengeType.SIGN_MESSAGE (#181).
+         */
+        post: operations["identity_sign_api_v1_wallets_sign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1100,6 +1191,30 @@ export interface components {
             counterparty_id: string;
             /** Tx Hash */
             tx_hash: string | null;
+        };
+        /** CircleSessionRequest */
+        CircleSessionRequest: {
+            /** User Id */
+            user_id?: string | null;
+        };
+        /** CircleSignOut */
+        CircleSignOut: {
+            /** Challenge Id */
+            challenge_id?: string | null;
+            /** Signature */
+            signature?: string | null;
+            /**
+             * Simulated
+             * @default false
+             */
+            simulated: boolean;
+        };
+        /** CircleSignRequest */
+        CircleSignRequest: {
+            /** User Id */
+            user_id: string;
+            /** Message */
+            message: string;
         };
         /** Claim */
         Claim: {
@@ -1564,6 +1679,8 @@ export interface components {
             /** Address */
             address: string;
             account: components["schemas"]["Account"] | null;
+            /** Pending Github Login */
+            pending_github_login?: string | null;
         };
         /**
          * MetricsOut
@@ -1670,6 +1787,13 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+        };
+        /** PendingLinkOut */
+        PendingLinkOut: {
+            /** Address */
+            address: string;
+            /** Github Login */
+            github_login: string;
         };
         /** PlanOut */
         PlanOut: {
@@ -2214,13 +2338,10 @@ export interface components {
          * @description What the browser needs to run Circle's PIN challenge for its own wallet.
          */
         WalletSessionOut: {
-            /**
-             * Party
-             * @enum {string}
-             */
-            party: "publisher" | "contributor";
+            /** Party */
+            party?: ("publisher" | "contributor") | null;
             /** Party Id */
-            party_id: string;
+            party_id?: string | null;
             /** Circle User Id */
             circle_user_id: string;
             /** App Id */
@@ -2389,6 +2510,13 @@ export interface operations {
                     "application/json": components["schemas"]["GitHubLinkStart"];
                 };
             };
+            /** @description The visitor has not signed in with a wallet */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description The browser is on another address than GitHub returns to */
             409: {
                 headers: {
@@ -2424,7 +2552,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Account"];
+                    "application/json": components["schemas"]["Account"] | components["schemas"]["PendingLinkOut"];
                 };
             };
             /** @description Validation Error */
@@ -3848,6 +3976,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Wallet"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    identity_session_api_v1_wallets_circle_session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CircleSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    identity_session_api_v1_wallets_session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CircleSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    identity_sign_api_v1_wallets_circle_sign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CircleSignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CircleSignOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    identity_sign_api_v1_wallets_sign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CircleSignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CircleSignOut"];
                 };
             };
             /** @description Validation Error */

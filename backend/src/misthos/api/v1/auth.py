@@ -20,6 +20,7 @@ from misthos.schemas import (
     GitHubLinkStart,
     MeOut,
     NonceOut,
+    PendingLinkOut,
     RoleRequest,
     SessionOut,
     SignInRequest,
@@ -135,7 +136,8 @@ async def me(request: Request) -> MeOut:
     if address is None:
         raise HTTPException(status_code=401, detail="not signed in")
     account = await run_in_threadpool(store.repo.get_account, address)
-    return MeOut(address=address, account=account)
+    pending_login = await run_in_threadpool(store.repo.get_pending_github_link, address)
+    return MeOut(address=address, account=account, pending_github_login=pending_login)
 
 
 @router.post("/role", response_model=Account, status_code=201)
@@ -174,16 +176,18 @@ async def mint_link_state(address: str) -> str:
     "/github/start",
     response_model=GitHubLinkStart,
     responses={
+        401: {"description": "The visitor has not signed in with a wallet"},
         409: {"description": "The browser is on another address than GitHub returns to"},
         503: {"description": "No GitHub OAuth App is configured; the detail says what to set"},
     },
 )
 async def start_github_link(
-    request: Request, account: Account | None = SIGNED_IN
+    request: Request,
 ) -> GitHubLinkStart:
     """Where to send the user to approve linking their GitHub account."""
-    if account is None:
-        raise HTTPException(status_code=401, detail="sign in and choose a role first")
+    address = await signed_in_address(request)
+    if address is None:
+        raise HTTPException(status_code=401, detail="sign in with a wallet first")
     client = oauth()
     if client is None:
         raise not_configured()
@@ -199,7 +203,7 @@ async def start_github_link(
             detail=f"GitHub sends you back to {public}, and this browser is on {origin}; "
             f"open the app at {public} and link from there",
         )
-    state = await mint_link_state(account.address)
+    state = await mint_link_state(address)
     return GitHubLinkStart(authorize_url=client.authorize_url(state, callback_url()))
 
 
@@ -239,19 +243,25 @@ async def github_callback(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except AccountConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return RedirectResponse(f"{settings.public_url.rstrip('/')}/account?linked=github", 303)
+    has_account = await run_in_threadpool(store.repo.get_account, address)
+    target = "/account?linked=github" if has_account else "/?gate=open&step=3"
+    return RedirectResponse(f"{settings.public_url.rstrip('/')}{target}", 303)
 
 
-@router.post("/github/simulate", response_model=Account)
+@router.post("/github/simulate", response_model=Account | PendingLinkOut)
 async def simulate_github_link(
-    payload: SimulatedLink, account: Account | None = SIGNED_IN
-) -> Account:
+    payload: SimulatedLink, request: Request, account: Account | None = SIGNED_IN
+) -> Account | PendingLinkOut:
     """Link a GitHub login without OAuth, for the simulation's demo only."""
     if not settings.simulated:
         raise HTTPException(status_code=403, detail="link through GitHub")
-    if account is None:
-        raise HTTPException(status_code=401, detail="sign in and choose a role first")
+    address = await signed_in_address(request)
+    if address is None:
+        raise HTTPException(status_code=401, detail="sign in with a wallet first")
     try:
-        return await run_in_threadpool(store.link_github, account.address, payload.login)
+        res = await run_in_threadpool(store.link_github, address, payload.login)
     except AccountConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if res is not None:
+        return res
+    return PendingLinkOut(address=address, github_login=payload.login)

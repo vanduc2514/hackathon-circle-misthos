@@ -48,6 +48,7 @@ class SimulatedGitHub:
         self.checks: dict[tuple[str, str], bool | None] = {}
         self.files: dict[tuple[str, int], list[ChangedFile]] = {}
         self.history: dict[tuple[str, str], int] = {}
+        self.installations: list[Installation] = []
         self.sent: list[Sent] = []
         self.fail_writes = False
         """Make every write raise, to prove a failed post never fails the action."""

@@ -35,8 +35,8 @@ class Wallet(BaseModel):
 class WalletSessionOut(BaseModel):
     """What the browser needs to run Circle's PIN challenge for its own wallet."""
 
-    party: Literal["publisher", "contributor"]
-    party_id: str
+    party: Literal["publisher", "contributor"] | None = None
+    party_id: str | None = None
     circle_user_id: str
     app_id: str
     user_token: str
@@ -434,6 +434,27 @@ class SessionOut(BaseModel):
 class MeOut(BaseModel):
     address: str
     account: Account | None
+    pending_github_login: str | None = None
+
+
+class PendingLinkOut(BaseModel):
+    address: str
+    github_login: str
+
+
+class CircleSessionRequest(BaseModel):
+    user_id: str | None = None
+
+
+class CircleSignRequest(BaseModel):
+    user_id: str
+    message: str
+
+
+class CircleSignOut(BaseModel):
+    challenge_id: str | None = None
+    signature: str | None = None
+    simulated: bool = False
 
 
 class RoleRequest(BaseModel):

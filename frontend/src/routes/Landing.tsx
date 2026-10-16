@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowDownRight,
   ArrowRight,
@@ -16,6 +17,7 @@ import {
 import { api, type MetricsOut } from '../lib/client'
 import { useHealth, useMe } from '../lib/session'
 import LandingIssues from '../components/LandingIssues'
+import { SignInGate } from '../components/SignInGate'
 import '../landing.css'
 
 /**
@@ -149,16 +151,25 @@ function IssuePreview() {
 }
 
 /** The way in: sign in, or straight to the app once signed in. */
-function HeaderAction() {
+function HeaderAction({ onOpenGate }: { onOpenGate: () => void }) {
   const { data: me } = useMe()
-  return me ? (
-    <Link className="nav-cta demo-preview-trigger" to="/overview">
-      Open the app <ArrowRight aria-hidden="true" />
-    </Link>
-  ) : (
-    <Link className="nav-cta demo-preview-trigger" to="/account">
-      Sign in <ArrowRight aria-hidden="true" />
-    </Link>
+  const isFinished = Boolean(me?.account?.role)
+  if (isFinished) {
+    return (
+      <Link className="nav-cta demo-preview-trigger" to="/overview">
+        Open the app <ArrowRight aria-hidden="true" />
+      </Link>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className="nav-cta demo-preview-trigger"
+      onClick={onOpenGate}
+      style={{ background: 'transparent', cursor: 'pointer' }}
+    >
+      {me?.address ? 'Finish signing in' : 'Sign in'} <ArrowRight aria-hidden="true" />
+    </button>
   )
 }
 
@@ -221,18 +232,40 @@ function Snapshot() {
 }
 
 export default function Landing() {
+  const [params] = useSearchParams()
+  const [gateOpen, setGateOpen] = useState(false)
+  const { data: me } = useMe()
+  const isFinished = Boolean(me?.account?.role)
+
+  useEffect(() => {
+    if (params.get('gate') === 'open' || params.get('linked') === 'github') {
+      setGateOpen(true)
+    }
+  }, [params])
+
   return (
     <main id="top" className="landing">
+      <SignInGate isOpen={gateOpen} onClose={() => setGateOpen(false)} />
       <header className="site-header">
         <div className="nav-shell">
           <BrandMark />
           <nav className="main-nav" aria-label="Main navigation">
             <a href="#how-it-works">How it works</a>
             <a href="#why-misthos">Why Misthos</a>
-            <Link to="/plans">Plans</Link>
+            <Link
+              to="/plans"
+              onClick={(e) => {
+                if (!isFinished) {
+                  e.preventDefault()
+                  setGateOpen(true)
+                }
+              }}
+            >
+              Plans
+            </Link>
             <a href="#current-issues">Current issues</a>
           </nav>
-          <HeaderAction />
+          <HeaderAction onOpenGate={() => setGateOpen(true)} />
         </div>
       </header>
 
@@ -274,7 +307,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <LandingIssues />
+      <LandingIssues onOpenGate={() => setGateOpen(true)} />
 
       <section className="trust-strip" aria-label="Platform details">
         <div className="trust-inner">

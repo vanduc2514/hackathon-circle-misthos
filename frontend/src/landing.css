@@ -1,3 +1,5 @@
+@import './styles/gate.css';
+
 /* The public landing page at `/`. Ported from the landing-page-for-misthos prototype:
    light and editorial where the app is dark and mono, so every rule is scoped under
    `.landing` and nothing here reaches the app's own pages. The two class names the app

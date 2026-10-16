@@ -2763,6 +2763,8 @@ class Store:
         if self.repo.get_account(address) is not None:
             raise AccountExists(f"{address} already has a role")
         name = name.strip()
+        pending_login = self.repo.get_pending_github_link(address)
+        github_login = pending_login
         if role == "publisher":
             try:
                 budget = Usdc.from_decimal(budget_usdc.replace(",", ""))
@@ -2784,7 +2786,7 @@ class Store:
             self.repo.save_contributor(
                 Contributor(
                     id=party_id,
-                    handle=name,
+                    handle=github_login or name,
                     wallet=Wallet(address=address, chain=settings.chain),
                     reputation=0,
                     settled_issues=0,
@@ -2792,17 +2794,25 @@ class Store:
                 )
             )
         account = Account(
-            address=address, role=role, party_id=party_id, created_at=now or _now()  # type: ignore[arg-type]
+            address=address,
+            role=role,
+            party_id=party_id,
+            github_login=github_login,
+            created_at=now or _now(),  # type: ignore[arg-type]
         )
         self.repo.save_account(account)
+        if pending_login:
+            self.repo.clear_pending_github_link(address)
         return account
 
-    def link_github(self, address: str, login: str) -> Account:
+    def link_github(self, address: str, login: str) -> Account | None:
         """Link the wallet's GitHub account (#80). A contributor's handle is their login."""
         self.ensure_ready()
+        address = address.lower()
         account = self.repo.get_account(address)
         if account is None:
-            raise KeyError(address)
+            self.repo.set_pending_github_link(address, login)
+            return None
         linked = account.model_copy(update={"github_login": login})
         self.repo.save_account(linked)
         if account.role == "contributor":

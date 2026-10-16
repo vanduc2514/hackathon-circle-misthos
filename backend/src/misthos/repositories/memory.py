@@ -59,6 +59,7 @@ class MemoryRepository:
             self._screenings: list[Screening] = []
             self._deliveries: dict[str, tuple[str, datetime]] = {}
             self._accounts: dict[str, Account] = {}
+            self._pending_github_links: dict[str, str] = {}
             self._subscriptions: dict[str, Subscription] = {}
             self._connections: dict[str, RepoConnection] = {}
             self._subscription_payments: list[SubscriptionPayment] = []
@@ -226,14 +227,57 @@ class MemoryRepository:
 
     def save_account(self, account: Account) -> None:
         with self._guard:
-            if account.github_login and any(
+            if account.github_login:
+                login_lower = account.github_login.lower()
+                addr_lower = account.address.lower()
+                if any(
+                    other.github_login
+                    and other.github_login.lower() == login_lower
+                    and other.address.lower() != addr_lower
+                    for other in self._accounts.values()
+                ):
+                    raise AccountConflict(f"{account.github_login} is linked to another wallet")
+                if any(
+                    p_login.lower() == login_lower and p_addr != addr_lower
+                    for p_addr, p_login in self._pending_github_links.items()
+                ):
+                    raise AccountConflict(f"{account.github_login} is linked to another wallet")
+            self._accounts[account.address.lower()] = account.model_copy(deep=True)
+            self._pending_github_links.pop(account.address.lower(), None)
+
+    def set_pending_github_link(self, address: str, login: str) -> None:
+        with self._guard:
+            addr_lower = address.lower()
+            login_lower = login.lower()
+            if any(
                 other.github_login
-                and other.github_login.lower() == account.github_login.lower()
-                and other.address != account.address
+                and other.github_login.lower() == login_lower
+                and other.address.lower() != addr_lower
                 for other in self._accounts.values()
             ):
-                raise AccountConflict(f"{account.github_login} is linked to another wallet")
-            self._accounts[account.address.lower()] = account.model_copy(deep=True)
+                raise AccountConflict(f"{login} is linked to another wallet")
+            if any(
+                p_login.lower() == login_lower and p_addr != addr_lower
+                for p_addr, p_login in self._pending_github_links.items()
+            ):
+                raise AccountConflict(f"{login} is linked to another wallet")
+            self._pending_github_links[addr_lower] = login
+
+    def get_pending_github_link(self, address: str) -> str | None:
+        with self._guard:
+            return self._pending_github_links.get(address.lower())
+
+    def get_wallet_by_pending_github_link(self, login: str) -> str | None:
+        with self._guard:
+            login_lower = login.lower()
+            for addr, p_login in self._pending_github_links.items():
+                if p_login.lower() == login_lower:
+                    return addr
+            return None
+
+    def clear_pending_github_link(self, address: str) -> None:
+        with self._guard:
+            self._pending_github_links.pop(address.lower(), None)
 
     # ---------------------------------------------------------- deliveries
 

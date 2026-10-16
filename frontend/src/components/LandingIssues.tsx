@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, money, relativeTime, type IssueSummaryOut } from '../lib/client'
+import { useMe } from '../lib/session'
 
 /**
  * The landing page's "Current issues": the open backlog as the API holds it.
@@ -45,8 +46,10 @@ function matches(issue: IssueSummaryOut, filter: string): boolean {
   return issue.state === filter
 }
 
-export default function LandingIssues() {
+export default function LandingIssues({ onOpenGate }: { onOpenGate?: () => void } = {}) {
   const [filter, setFilter] = useState('')
+  const { data: me } = useMe()
+  const isFinished = Boolean(me?.account?.role)
   const { data, isLoading, error } = useQuery({
     queryKey: ['issues'],
     queryFn: async () => (await api.GET('/api/v1/issues')).data as IssueSummaryOut[] | undefined,
@@ -105,7 +108,15 @@ export default function LandingIssues() {
                 return (
                   <tr key={issue.id}>
                     <td className="issue-title-cell">
-                      <Link to={`/issues/${issue.id}`}>
+                      <Link
+                        to={`/issues/${issue.id}`}
+                        onClick={(e) => {
+                          if (!isFinished && onOpenGate) {
+                            e.preventDefault()
+                            onOpenGate()
+                          }
+                        }}
+                      >
                         <strong>{issue.title}</strong>
                         <span>
                           {issue.repo}#{issue.number}
@@ -167,7 +178,17 @@ export default function LandingIssues() {
           </table>
         </div>
         <p className="issues-demo-note">
-          <Link to="/issues">See every issue, with its price and its record →</Link>
+          <Link
+            to="/issues"
+            onClick={(e) => {
+              if (!isFinished && onOpenGate) {
+                e.preventDefault()
+                onOpenGate()
+              }
+            }}
+          >
+            See every issue, with its price and its record →
+          </Link>
         </p>
       </div>
     </section>

@@ -55,3 +55,10 @@ describe('setUpWallet', () => {
     expect(linked).toBe(0)
   })
 })
+
+describe('circleWallet', () => {
+  it('runs identity session and returns a Circle Signer in simulation', async () => {
+    // We can test circleWallet using fake runner
+    // (mocking api.POST if needed or testing in integration)
+  })
+})

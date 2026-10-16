@@ -24,10 +24,12 @@ function watchForErrors(page: Page, errors: string[]) {
 async function onboardPublisher(page: Page, name: string, login: string) {
   await page.goto('/account')
   await page.getByRole('button', { name: 'Demo publisher wallet' }).click()
+  await expect(page.getByRole('heading', { name: 'Step 2: Link your GitHub account' })).toBeVisible()
+  await page.getByLabel('Your GitHub login').fill(login)
+  await page.getByRole('button', { name: 'Link this login' }).click()
+  await expect(page.getByRole('heading', { name: 'Step 3: Choose your side' })).toBeVisible()
   await page.getByLabel('Organisation name').fill(name)
   await page.getByRole('button', { name: 'Continue as a publisher' }).click()
-  await page.getByLabel('GitHub login').fill(login)
-  await page.getByRole('button', { name: 'Link this login' }).click()
   await expect(page.getByRole('link', { name: `publisher · ${login}` })).toBeVisible()
 }
 

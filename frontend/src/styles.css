@@ -1,3 +1,5 @@
+@import './styles/gate.css';
+
 /* Misthos web. Light and editorial, like the landing page at `/` (#168): white pages,
    black ink, Georgia for headings and figures, Arial for everything else. State colours
    stay, darkened for a white background. No component library: the surface is small

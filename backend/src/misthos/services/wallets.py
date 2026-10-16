@@ -80,6 +80,28 @@ def simulated_address(party: Party, party_id: str) -> str:
     return f"0x{digest[:40]}"
 
 
+def simulated_identity_key(user_id: str) -> bytes:
+    return hashlib.sha256(f"misthos-circle-simulated:{user_id}".encode()).digest()
+
+
+def simulated_identity_address(user_id: str) -> str:
+    from coincurve import PrivateKey
+    from misthos.auth.siwe import address_of
+
+    key = PrivateKey(simulated_identity_key(user_id))
+    return address_of(key.public_key).lower()
+
+
+def sign_simulated_identity(user_id: str, message: str) -> str:
+    from coincurve import PrivateKey
+    from misthos.auth.siwe import personal_digest
+
+    key = PrivateKey(simulated_identity_key(user_id))
+    raw = key.sign_recoverable(personal_digest(message), hasher=None)
+    v = raw[64] + 27
+    return "0x" + (raw[:64] + bytes([v])).hex()
+
+
 class Wallets:
     def __init__(self, cfg: Settings, client: httpx.AsyncClient | None = None) -> None:
         self.cfg = cfg
@@ -113,6 +135,41 @@ class Wallets:
             blockchain=body["blockchain"],
             simulated=False,
         )
+
+    async def identity_session(self, user_id: str) -> WalletSession:
+        if self.cfg.simulated:
+            return WalletSession(
+                circle_user_id=user_id,
+                app_id="simulated",
+                user_token="simulated",
+                encryption_key="simulated",
+                challenge_id=None,
+                address=simulated_identity_address(user_id),
+                blockchain=self.blockchain,
+                simulated=True,
+            )
+        body = self._live(
+            await self._call("POST", "/wallets/session", json={"userId": user_id})
+        )
+        return WalletSession(
+            circle_user_id=body["circleUserId"],
+            app_id=body["appId"],
+            user_token=body["userToken"],
+            encryption_key=body["encryptionKey"],
+            challenge_id=body.get("challengeId"),
+            address=body.get("address"),
+            blockchain=body["blockchain"],
+            simulated=False,
+        )
+
+    async def sign_message(self, user_id: str, message: str) -> dict:
+        if self.cfg.simulated:
+            sig = sign_simulated_identity(user_id, message)
+            return {"challengeId": None, "signature": sig, "simulated": True}
+        body = await self._call(
+            "POST", "/wallets/sign", json={"userId": user_id, "message": message}
+        )
+        return body
 
     async def wallet(self, party: Party, party_id: str) -> PartyWallet:
         if self.cfg.simulated:

@@ -18,10 +18,10 @@ test('a publisher names the price, and that is what the escrow commits', async (
 
   await page.goto('/account')
   await page.getByRole('button', { name: 'Demo publisher wallet' }).click()
+  await page.getByLabel('Your GitHub login').fill('acme-ledger')
+  await page.getByRole('button', { name: 'Link this login' }).click()
   await page.getByLabel('Organisation name').fill('Acme Ledger Co')
   await page.getByRole('button', { name: 'Continue as a publisher' }).click()
-  await page.getByLabel('GitHub login').fill('acme-ledger')
-  await page.getByRole('button', { name: 'Link this login' }).click()
 
   // A price the engine would not have suggested: the form takes it, and says what the
   // split will be before anything is published.
@@ -84,10 +84,10 @@ test('a price below the platform minimum is refused before anything is published
 
   await page.goto('/account')
   await page.getByRole('button', { name: 'Demo publisher wallet' }).click()
+  await page.getByLabel('Your GitHub login').fill('acme-ledger')
+  await page.getByRole('button', { name: 'Link this login' }).click()
   await page.getByLabel('Organisation name').fill('Acme Ledger Co')
   await page.getByRole('button', { name: 'Continue as a publisher' }).click()
-  await page.getByLabel('GitHub login').fill('acme-ledger')
-  await page.getByRole('button', { name: 'Link this login' }).click()
 
   await page.getByRole('link', { name: 'Publish', exact: true }).click()
   await page.getByLabel('Repository').fill('acme/ledger-core')

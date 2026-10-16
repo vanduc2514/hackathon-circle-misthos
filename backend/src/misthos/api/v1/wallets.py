@@ -8,15 +8,23 @@ The simulation lets a visitor try them, like every other write.
 
 from __future__ import annotations
 
+import secrets
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from misthos.api.guards import limit_actions
 from misthos.api.session import SIGNED_IN, require_owner_or_simulation, require_role
 from misthos.config import settings
-from misthos.schemas import Account, Wallet, WalletSessionOut
+from misthos.schemas import (
+    Account,
+    CircleSessionRequest,
+    CircleSignOut,
+    CircleSignRequest,
+    Wallet,
+    WalletSessionOut,
+)
 from misthos.services.wallets import Wallets, WalletUnavailable
 from misthos.store import store
 
@@ -114,3 +122,42 @@ async def link(party: PartyPath, party_id: str, account: Account | None = SIGNED
     if found.address is None:
         raise HTTPException(status_code=409, detail="the wallet has not been created yet")
     return store.link_wallet(party, party_id, _kept(found.address))
+
+
+@router.post("/session", response_model=WalletSessionOut, dependencies=[limit_actions])
+@router.post("/circle/session", response_model=WalletSessionOut, dependencies=[limit_actions])
+async def identity_session(
+    payload: CircleSessionRequest = Body(default_factory=CircleSessionRequest),
+) -> WalletSessionOut:
+    """Start a Circle wallet session before a party is known (#181)."""
+    user_id = payload.user_id or f"user-{secrets.token_hex(8)}"
+    try:
+        session = await Wallets(settings).identity_session(user_id)
+    except WalletUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    wallet = _kept(session.address) if session.address else None
+    return WalletSessionOut(
+        circle_user_id=session.circle_user_id,
+        app_id=session.app_id,
+        user_token=session.user_token,
+        encryption_key=session.encryption_key,
+        challenge_id=session.challenge_id,
+        wallet=wallet,
+        simulated=session.simulated,
+    )
+
+
+@router.post("/sign", response_model=CircleSignOut, dependencies=[limit_actions])
+@router.post("/circle/sign", response_model=CircleSignOut, dependencies=[limit_actions])
+async def identity_sign(payload: CircleSignRequest) -> CircleSignOut:
+    """Ask Circle to sign a SIWE message via ChallengeType.SIGN_MESSAGE (#181)."""
+    try:
+        res = await Wallets(settings).sign_message(payload.user_id, payload.message)
+    except WalletUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return CircleSignOut(
+        challenge_id=res.get("challengeId"),
+        signature=res.get("signature"),
+        simulated=res.get("simulated", False),
+    )
