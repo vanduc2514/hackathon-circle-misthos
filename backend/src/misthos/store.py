@@ -100,7 +100,6 @@ from misthos.schemas import (
     ContributorDashboardOut,
     DashboardAction,
     DashboardIssueItem,
-    DashboardOut,
     Decision,
     EscrowCommitment,
     IssueOut,

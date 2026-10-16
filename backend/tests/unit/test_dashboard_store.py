@@ -1,14 +1,16 @@
-from datetime import datetime, timezone, timedelta
-import pytest
+from datetime import UTC, datetime, timedelta
+
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc
 from misthos.models.records import IssueRecord
-from misthos.schemas import Publisher, Contributor, Wallet, Claim, Submission, Review
-from misthos.store import store, _publisher_next_action, _contributor_next_action
+from misthos.schemas import Claim, Contributor, Publisher, Submission, Wallet
+from misthos.store import _contributor_next_action, _publisher_next_action, store
 
 
-def _make_issue(id: str, publisher_id: str, number: int, state: IssueState, title: str = "T", **kwargs) -> IssueRecord:
-    now = datetime.now(timezone.utc)
+def _make_issue(
+    id: str, publisher_id: str, number: int, state: IssueState, title: str = "T", **kwargs
+) -> IssueRecord:
+    now = datetime.now(UTC)
     base_kwargs = {
         "summary": "A summary",
         "labels": [],
@@ -29,7 +31,7 @@ def _make_issue(id: str, publisher_id: str, number: int, state: IssueState, titl
 
 
 def test_publisher_next_action_priority():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # 1. SETTLED / PAID
     rec_settled = _make_issue("ISS-1", "P1", 1, IssueState.PAID)
     code, label, needed = _publisher_next_action(rec_settled)
@@ -43,7 +45,11 @@ def test_publisher_next_action_priority():
     # 3. awaiting_approver
     rec_appr = _make_issue("ISS-3", "P1", 3, IssueState.IN_REVIEW, payout_hold="await_approver")
     code, label, needed = _publisher_next_action(rec_appr)
-    assert (code, label, needed) == ("contact_approver", "Get one of the named approvers to approve", True)
+    assert (code, label, needed) == (
+        "contact_approver",
+        "Get one of the named approvers to approve",
+        True,
+    )
 
     # 4. IN_REVIEW / ACCEPTED / verdict ready
     rec_rev = _make_issue("ISS-4", "P1", 4, IssueState.IN_REVIEW)
@@ -51,7 +57,14 @@ def test_publisher_next_action_priority():
     assert (code, label, needed) == ("review_and_merge", "Read the verdict, then merge", True)
 
     # 5. AWAITING_APPROVAL without criteria
-    rec_crit = _make_issue("ISS-5", "P1", 5, IssueState.AWAITING_APPROVAL, criteria_approved_at=None, acceptance_criteria=[])
+    rec_crit = _make_issue(
+        "ISS-5",
+        "P1",
+        5,
+        IssueState.AWAITING_APPROVAL,
+        criteria_approved_at=None,
+        acceptance_criteria=[],
+    )
     code, label, needed = _publisher_next_action(rec_crit)
     assert (code, label, needed) == ("approve_criteria", "Approve the acceptance criteria", True)
 
@@ -67,7 +80,7 @@ def test_publisher_next_action_priority():
 
 
 def test_contributor_next_action_priority():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # 1. SETTLED / PAID
     rec_settled = _make_issue("ISS-1", "P1", 1, IssueState.PAID, contributor_id="C1")
     code, label, needed = _contributor_next_action(rec_settled, "C1", "c1_gh")
@@ -76,7 +89,11 @@ def test_contributor_next_action_priority():
     # 2. ACCEPTED -> wait merge
     rec_acc = _make_issue("ISS-2", "P1", 2, IssueState.ACCEPTED, contributor_id="C1")
     code, label, needed = _contributor_next_action(rec_acc, "C1", "c1_gh")
-    assert (code, label, needed) == ("wait_merge", "The publisher merges; nothing for you to do", False)
+    assert (code, label, needed) == (
+        "wait_merge",
+        "The publisher merges; nothing for you to do",
+        False,
+    )
 
     # 3. REWORK
     rec_rew = _make_issue("ISS-3", "P1", 3, IssueState.REWORK, contributor_id="C1")
@@ -85,15 +102,36 @@ def test_contributor_next_action_priority():
 
     # 4. IN_REVIEW -> wait verdict
     claim = Claim(contributor_id="C1", issued_at=now, expires_at=now + timedelta(days=7))
-    sub = Submission(pr_number=10, head_sha="abc", checks_passed=True, files_changed=2, additions=20, deletions=5)
-    rec_in_rev = _make_issue("ISS-4", "P1", 4, IssueState.IN_REVIEW, contributor_id="C1", claim=claim, submission=sub)
+    sub = Submission(
+        pr_number=10,
+        head_sha="abc",
+        checks_passed=True,
+        files_changed=2,
+        additions=20,
+        deletions=5,
+    )
+    rec_in_rev = _make_issue(
+        "ISS-4",
+        "P1",
+        4,
+        IssueState.IN_REVIEW,
+        contributor_id="C1",
+        claim=claim,
+        submission=sub,
+    )
     code, label, needed = _contributor_next_action(rec_in_rev, "C1", "c1_gh")
     assert (code, label, needed) == ("wait_verdict", "Wait for the verdict", False)
 
     # 5. Claimed, no submission -> open_pr
-    rec_claimed = _make_issue("ISS-5", "P1", 5, IssueState.FUNDED, contributor_id="C1", claim=claim)
+    rec_claimed = _make_issue(
+        "ISS-5", "P1", 5, IssueState.FUNDED, contributor_id="C1", claim=claim
+    )
     code, label, needed = _contributor_next_action(rec_claimed, "C1", "c1_gh")
-    assert (code, label, needed) == ("open_pr", "Open the pull request, or submit the one you opened", True)
+    assert (code, label, needed) == (
+        "open_pr",
+        "Open the pull request, or submit the one you opened",
+        True,
+    )
 
 
 def test_publisher_and_contributor_dashboard_queries():
@@ -120,7 +158,6 @@ def test_publisher_and_contributor_dashboard_queries():
     )
     store.save_contributor(con)
 
-    now = datetime.now(timezone.utc)
     issue_pub1 = _make_issue(
         "ISS-DASH-P1",
         "pub_test_dash_1",

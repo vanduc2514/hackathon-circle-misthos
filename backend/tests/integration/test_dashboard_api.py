@@ -45,7 +45,9 @@ def test_anonymous_request_is_refused_with_401(client: TestClient):
     assert "Authentication required" in res.json()["detail"]
 
 
-def test_anonymous_request_is_refused_with_401_when_not_simulated(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+def test_anonymous_request_is_refused_with_401_when_not_simulated(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
     monkeypatch.setattr(settings, "simulated", False)
     res = client.get(f"{API}/dashboard")
     assert res.status_code == 401

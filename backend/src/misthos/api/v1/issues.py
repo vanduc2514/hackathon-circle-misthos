@@ -143,12 +143,21 @@ async def list_issues(
         records = [r for r in records if r.publisher_id == publisher_id]
     if contributor_id:
         records = [
-            r for r in records
+            r
+            for r in records
             if r.contributor_id == contributor_id
             or (r.claim and getattr(r.claim, "contributor_id", None) == contributor_id)
-            or (hasattr(r, "claims") and any(getattr(c, "contributor_id", None) == contributor_id for c in r.claims))
+            or (
+                hasattr(r, "claims")
+                and any(getattr(c, "contributor_id", None) == contributor_id for c in r.claims)
+            )
             or (r.submission and getattr(r.submission, "contributor_id", None) == contributor_id)
-            or (hasattr(r, "submissions") and any(getattr(s, "contributor_id", None) == contributor_id for s in r.submissions))
+            or (
+                hasattr(r, "submissions")
+                and any(
+                    getattr(s, "contributor_id", None) == contributor_id for s in r.submissions
+                )
+            )
         ]
     if compliance_only:
         records = [r for r in records if r.compliance_driven]

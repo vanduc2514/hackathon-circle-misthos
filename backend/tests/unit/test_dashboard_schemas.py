@@ -1,17 +1,16 @@
-from datetime import datetime, timezone
-import pytest
+from datetime import UTC, datetime
+
 from misthos.schemas import (
-    DashboardAction,
-    DashboardIssueItem,
-    PublisherDashboardOut,
     ContributorDashboardOut,
+    DashboardIssueItem,
     DashboardOut,
     IssueSummaryOut,
+    PublisherDashboardOut,
 )
 
 
 def test_dashboard_schemas_instantiation():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     item = DashboardIssueItem(
         id="ISS-1",
         github_issue_number=42,
@@ -67,7 +66,7 @@ def test_dashboard_schemas_instantiation():
 
 
 def test_issue_summary_out_widened_fields():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     summary = IssueSummaryOut(
         id="ISS-1",
         repo="owner/repo",
