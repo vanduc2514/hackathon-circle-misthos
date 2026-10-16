@@ -1133,7 +1133,7 @@ export interface components {
              * Next Action
              * @enum {string}
              */
-            next_action: "approve_criteria" | "commit_funds" | "watch_deadline" | "review_and_merge" | "contact_approver" | "open_pr" | "wait_verdict" | "rework" | "wait_merge" | "settled" | "closed";
+            next_action: "approve_criteria" | "commit_funds" | "watch_deadline" | "review_and_merge" | "contact_approver" | "open_pr" | "wait_verdict" | "rework" | "wait_merge" | "claim_expired" | "settled" | "closed";
             /** Next Action Label */
             next_action_label: string;
             /** Action Needed */

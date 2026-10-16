@@ -2511,7 +2511,7 @@ class Store:
 
         for rec in all_records:
             price_val = float(rec.price.decimal) if rec.price else 0.0
-            if rec.state in (IssueState.FUNDED, IssueState.IN_REVIEW, IssueState.ACCEPTED, IssueState.REWORK):
+            if rec.state in (IssueState.FUNDED, IssueState.CLAIMED, IssueState.IN_REVIEW, IssueState.ACCEPTED, IssueState.REWORK):
                 committed_escrow_usdc += price_val
             elif rec.state == IssueState.PAID:
                 released_usdc += price_val
@@ -2562,18 +2562,22 @@ class Store:
 
         items: list[DashboardIssueItem] = []
         action_needed_items: list[DashboardIssueItem] = []
+        seen_issue_ids: set[str] = set()
 
         all_records = self.list_issues()
         for rec in all_records:
+            if rec.id in seen_issue_ids:
+                continue
+
             claims = getattr(rec, "claims", None) or ([rec.claim] if rec.claim else [])
             my_claim = next(
-                (c for c in claims if getattr(c, "contributor_id", None) == party_id or (github_login and getattr(c, "github_login", None) == github_login)),
+                (c for c in reversed(claims) if getattr(c, "contributor_id", None) == party_id or (github_login and getattr(c, "github_login", None) == github_login)),
                 None,
             )
             submissions = getattr(rec, "submissions", None) or ([rec.submission] if rec.submission else [])
             my_sub = next(
                 (
-                    s for s in submissions
+                    s for s in reversed(submissions)
                     if getattr(s, "contributor_id", None) == party_id
                     or (github_login and getattr(s, "contributor_author", None) == github_login)
                     or (rec.submission == s and (rec.contributor_id == party_id or (my_claim is not None)))
@@ -2584,18 +2588,21 @@ class Store:
             if not is_mine:
                 continue
 
+            seen_issue_ids.add(rec.id)
             price_val = float(rec.price.decimal) if rec.price else 0.0
 
-            if rec.state in (IssueState.FUNDED, IssueState.IN_REVIEW, IssueState.REWORK):
-                owed_in_flight_usdc += price_val
-            elif rec.state == IssueState.ACCEPTED:
-                about_to_release_usdc += price_val
-            elif rec.state == IssueState.PAID:
-                paid_date = getattr(rec, "updated_at", None) or rec.paid_at or rec.created_at
-                if paid_date and paid_date.year == current_year:
-                    paid_this_year_usdc += price_val
+            code, label, needed = _contributor_next_action(rec, party_id, github_login, now=now)
 
-            code, label, needed = _contributor_next_action(rec, party_id, github_login)
+            if code != "claim_expired":
+                if rec.state in (IssueState.FUNDED, IssueState.CLAIMED, IssueState.IN_REVIEW, IssueState.REWORK):
+                    owed_in_flight_usdc += price_val
+                elif rec.state == IssueState.ACCEPTED:
+                    about_to_release_usdc += price_val
+                elif rec.state == IssueState.PAID:
+                    paid_date = getattr(rec, "updated_at", None) or rec.paid_at or rec.created_at
+                    if paid_date and paid_date.year == current_year:
+                        paid_this_year_usdc += price_val
+
             item = _record_to_dashboard_item(rec, code, label, needed, my_claim=my_claim, my_sub=my_sub)
             items.append(item)
             if needed:
@@ -2681,11 +2688,29 @@ def _publisher_next_action(rec: IssueRecord) -> tuple[DashboardAction, str, bool
     return ("watch_deadline", "Nothing yet: watch the deadline", False)
 
 
+def _is_claim_expired(claim: Claim | None, now: datetime | None = None) -> bool:
+    if claim is None:
+        return False
+    if not getattr(claim, "active", True):
+        return True
+    expires_at = getattr(claim, "expires_at", None)
+    if expires_at is not None:
+        current = now or _now()
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=UTC)
+        return expires_at < current
+    return False
+
+
 def _contributor_next_action(
     rec: IssueRecord,
     party_id: str,
     github_login: str | None = None,
+    now: datetime | None = None,
 ) -> tuple[DashboardAction, str, bool]:
+    now = now or _now()
     # 1. Settled / Paid
     if rec.state in (IssueState.PAID, "SETTLED", "PAID"):
         return ("settled", "Paid, and on your statement", False)
@@ -2703,18 +2728,22 @@ def _contributor_next_action(
     submissions = getattr(rec, "submissions", None) or ([rec.submission] if rec.submission else [])
     claims = getattr(rec, "claims", None) or ([rec.claim] if rec.claim else [])
     my_claim = next(
-        (c for c in claims if getattr(c, "contributor_id", None) == party_id or (github_login and getattr(c, "github_login", None) == github_login)),
+        (c for c in reversed(claims) if getattr(c, "contributor_id", None) == party_id or (github_login and getattr(c, "github_login", None) == github_login)),
         None,
     )
     my_sub = next(
         (
-            s for s in submissions
+            s for s in reversed(submissions)
             if getattr(s, "contributor_id", None) == party_id
             or (github_login and getattr(s, "contributor_author", None) == github_login)
             or (rec.submission == s and (rec.contributor_id == party_id or my_claim is not None))
         ),
         None,
     )
+    # Check expired claim without active submission
+    if my_claim and my_sub is None and _is_claim_expired(my_claim, now):
+        return ("claim_expired", "Claim expired: issue returned to pool", False)
+
     if rec.state == IssueState.IN_REVIEW or (my_sub is not None and rec.state in (IssueState.FUNDED, IssueState.CLAIMED)):
         return ("wait_verdict", "Wait for the verdict", False)
     # 5. Claimed, no submission yet

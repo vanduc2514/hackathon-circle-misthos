@@ -207,3 +207,74 @@ def test_publisher_and_contributor_dashboard_queries():
     assert "ISS-DASH-P1" not in con_issue_ids  # Isolation: Charlie didn't work on P1
     assert "ISS-DASH-P2" not in con_issue_ids
     assert dash_c.about_to_release_usdc == 250.0
+
+
+def test_contributor_accepted_issue_excluded_from_action_needed():
+    store.ensure_ready()
+    now = datetime.now(UTC)
+    issue = _make_issue(
+        "ISS-ACCEPTED-1",
+        "pub_test_dash_1",
+        301,
+        IssueState.ACCEPTED,
+        title="Accepted Work",
+        price=Usdc(350_000_000),
+        contributor_id="con_test_dash_1",
+        claim=Claim(
+            contributor_id="con_test_dash_1",
+            issued_at=now - timedelta(days=2),
+            expires_at=now + timedelta(days=1),
+            active=True,
+        ),
+        submission=Submission(
+            pr_number=55,
+            head_sha="sha_acc",
+            checks_passed=True,
+            files_changed=1,
+            additions=10,
+            deletions=2,
+        ),
+    )
+    store.repo.save_issues(issue)
+
+    dash = store.contributor_dashboard("con_test_dash_1", "charlie")
+    action_ids = [item.id for item in dash.action_needed]
+    assert "ISS-ACCEPTED-1" not in action_ids, "ACCEPTED issue must not appear in contributor action_needed"
+
+    work_item = next((w for w in dash.all_work if w.id == "ISS-ACCEPTED-1"), None)
+    assert work_item is not None
+    assert work_item.next_action == "wait_merge"
+    assert work_item.next_action_label == "The publisher merges; nothing for you to do"
+    assert work_item.action_needed is False
+
+
+def test_contributor_expired_claim_excluded_from_action_needed_and_inflight():
+    store.ensure_ready()
+    now = datetime.now(UTC)
+    expired_claim = Claim(
+        contributor_id="con_test_dash_1",
+        issued_at=now - timedelta(days=4),
+        expires_at=now - timedelta(hours=1),
+        active=True,
+    )
+    expired_issue = _make_issue(
+        "ISS-EXPIRED-CLAIM",
+        "pub_test_dash_1",
+        302,
+        IssueState.FUNDED,
+        title="Expired Claim Work",
+        price=Usdc(400_000_000),
+        contributor_id="con_test_dash_1",
+        claim=expired_claim,
+    )
+    store.repo.save_issues(expired_issue)
+
+    dash = store.contributor_dashboard("con_test_dash_1", "charlie")
+    action_ids = [item.id for item in dash.action_needed]
+    assert "ISS-EXPIRED-CLAIM" not in action_ids, "Expired claim must not prompt contributor to open/submit PR"
+
+    work_item = next((w for w in dash.all_work if w.id == "ISS-EXPIRED-CLAIM"), None)
+    assert work_item is not None
+    assert work_item.next_action == "claim_expired"
+    assert work_item.next_action_label == "Claim expired: issue returned to pool"
+    assert work_item.action_needed is False
