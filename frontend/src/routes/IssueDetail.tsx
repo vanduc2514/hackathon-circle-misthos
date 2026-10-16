@@ -289,6 +289,8 @@ export default function IssueDetail() {
                 <dd className="muted">{shortHash(issue.escrow.tx_hash)}</dd>
                 <dt>Deadline</dt>
                 <dd>{issue.deadline ? relativeTime(issue.deadline) : '—'}</dd>
+                <dt>Escrow term</dt>
+                <dd>{issue.escrow_term_days ? `${issue.escrow_term_days} days (publisher-named)` : '14 days (default)'}</dd>
                 <dt>Status</dt>
                 <dd>
                   {issue.escrow.released ? (

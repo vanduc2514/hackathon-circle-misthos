@@ -80,8 +80,47 @@ SILENT_PUBLISHER_GRACE = timedelta(days=7)
 CLAIM_WINDOW = timedelta(hours=72)
 
 # How long committed funds wait for acceptable work before they go back to the
-# publisher. The escrow contract holds the same deadline on chain.
+# publisher. The escrow contract holds the same deadline on chain. This is also the
+# default escrow term when the publisher names none (#172).
 ESCROW_TERM = timedelta(days=14)
+
+# The bounds a publisher's named escrow term must sit inside (#172). The floor stops
+# an instant commit-and-reclaim before a contributor can work; the ceiling stops
+# money stranding in escrow indefinitely. Whole days only.
+MIN_ESCROW_TERM = timedelta(days=3)
+MAX_ESCROW_TERM = timedelta(days=90)
+
+
+class EscrowTermRefused(Exception):
+    """A named escrow term outside the bounds, with the bound that would work."""
+
+    def __init__(self, justification: str) -> None:
+        super().__init__(justification)
+        self.justification = justification
+
+
+def check_escrow_term(days: int | float) -> timedelta:
+    """The term as a timedelta, or a refusal naming the bound it breaks.
+
+    Whole days only: a fractional, zero, negative or non-number term is refused
+    with why, the way `check_price` refuses a price outside its bounds.
+    """
+    if isinstance(days, bool) or not isinstance(days, (int, float)):
+        raise EscrowTermRefused(f"{days!r} is not a number of days")
+    if days != int(days) or days <= 0:
+        raise EscrowTermRefused(
+            f"{days} is not a whole number of days above zero"
+        )
+    term = timedelta(days=int(days))
+    if term < MIN_ESCROW_TERM:
+        raise EscrowTermRefused(
+            f"{int(days)} days is below the {MIN_ESCROW_TERM.days}-day minimum escrow term"
+        )
+    if term > MAX_ESCROW_TERM:
+        raise EscrowTermRefused(
+            f"{int(days)} days is above the {MAX_ESCROW_TERM.days}-day maximum escrow term"
+        )
+    return term
 
 # How long approved terms stand, while nothing is committed to the escrow. Within it,
 # approving again keeps the terms the plan already handed the wallet rather than moving

@@ -9,7 +9,7 @@ importing the module that mutates it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from misthos.domain.issue import FundingTerms, IssueState
 from misthos.domain.ledger import MoneyEvent
@@ -39,6 +39,10 @@ class IssueRecord:
     """What the publisher said the work is worth, in USDC. Named by them and never by
     the engine, and the amount the escrow commits. Nothing refuses it but the two
     bounds in `domain/pricing.py`."""
+    escrow_term: timedelta | None = None
+    """How long the escrow holds the money, named by the publisher at publish time
+    (#172). None means the default `ESCROW_TERM`; it is fixed with the money and
+    cannot move once the escrow holds a commitment."""
     funding: FundingTerms | None = None
     """The terms approved at the price checkpoint: what the escrow was told, what the
     plan hands the wallet, and what booking checks the commitment against (#126)."""

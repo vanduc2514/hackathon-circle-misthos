@@ -272,6 +272,10 @@ class IssueOut(BaseModel):
     publisher_name: str
     created_at: datetime
     deadline: datetime | None = None
+    escrow_term_days: int | None = None
+    """How long the escrow holds the money, named by the publisher at publish time
+    (#172). Null means the 14-day default. Shown to the contributor before claiming,
+    so the term is disclosed rather than sprung."""
     price_usdc: str | None = None
     """What the publisher said the work is worth, and what the escrow commits (#142).
     Null on an issue published before #142, whose amount came from the recommendation."""
@@ -374,6 +378,11 @@ class PublishRequest(BaseModel):
     funding is refused until they do. The web form always sends one."""
     compliance_driven: bool = False
     signals: dict[str, float] = Field(default_factory=dict)
+    escrow_term_days: int | None = None
+    """How long the escrow holds the money, in whole days, named by the publisher at
+    publish time (#172). Optional: None means the 14-day default. Validated against
+    `MIN_ESCROW_TERM`/`MAX_ESCROW_TERM` at publish, with the bound named in the
+    refusal, and fixed with the money once the escrow holds a commitment."""
 
     @model_validator(mode="after")
     def _name_the_repository(self) -> PublishRequest:
