@@ -65,6 +65,8 @@ class Submitted:
     files: tuple[ChangedFile, ...]
     checks_passed: bool | None
     """None when the project's checks have not reported on this commit."""
+    draft: bool = False
+    prior_submissions: tuple[Submitted, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,91 @@ class Judgement:
     summary: str
     reviewer: str
     cost: Usdc = Usdc(0)
+    prescreen_failed: bool = False
+    prescreen_reason: str | None = None
+    is_duplicate: bool = False
+    derived_from_pr: int | None = None
+
+
+def is_whitespace_only(patch: str) -> bool:
+    """Return True if unified diff patch contains only whitespace additions/deletions."""
+    adds = []
+    dels = []
+    all_empty = True
+    for line in patch.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            stripped = "".join(line[1:].split())
+            if stripped:
+                all_empty = False
+            adds.append(stripped)
+        elif line.startswith("-") and not line.startswith("---"):
+            stripped = "".join(line[1:].split())
+            if stripped:
+                all_empty = False
+            dels.append(stripped)
+    return all_empty or (adds == dels)
+
+
+def prescreen(submitted: Submitted) -> Judgement | None:
+    """Pre-screen submission before running review inference."""
+    if submitted.draft:
+        return Judgement(
+            checks=(),
+            summary="Draft pull requests are not reviewed.",
+            reviewer="prescreen",
+            prescreen_failed=True,
+            prescreen_reason="draft",
+        )
+    if not submitted.files or all(f.additions == 0 and f.deletions == 0 for f in submitted.files):
+        return Judgement(
+            checks=(),
+            summary="The pull request changes no files.",
+            reviewer="prescreen",
+            prescreen_failed=True,
+            prescreen_reason="empty_diff",
+        )
+    # Check if whitespace only: only when patches exist and every patch is whitespace-only
+    has_patches = any(bool(f.patch) for f in submitted.files)
+    if has_patches and all(not f.patch or is_whitespace_only(f.patch) for f in submitted.files):
+        return Judgement(
+            checks=(),
+            summary="The pull request contains only whitespace changes.",
+            reviewer="prescreen",
+            prescreen_failed=True,
+            prescreen_reason="whitespace_only",
+        )
+    return None
+
+
+def detect_derivation(submitted: Submitted) -> tuple[bool, int | None]:
+    """Check against prior competing submissions on the same issue.
+
+    Returns (is_duplicate, derived_from_pr).
+    """
+    if not submitted.prior_submissions or not submitted.files:
+        return False, None
+
+    curr_patches = {f.path: f.patch.strip() for f in submitted.files if f.patch}
+    if not curr_patches:
+        return False, None
+
+    for prior in submitted.prior_submissions:
+        if prior.pr_number == submitted.pr_number:
+            continue
+        prior_patches = {f.path: f.patch.strip() for f in prior.files if f.patch}
+        if not prior_patches:
+            continue
+
+        if curr_patches == prior_patches:
+            return True, prior.pr_number
+
+        common_files = set(curr_patches.keys()) & set(prior_patches.keys())
+        if common_files and len(common_files) >= 0.8 * len(curr_patches):
+            matching = sum(1 for fn in common_files if curr_patches[fn] == prior_patches[fn])
+            if matching >= 0.8 * len(curr_patches):
+                return False, prior.pr_number
+
+    return False, None
 
 
 @dataclass(frozen=True)
@@ -110,10 +197,22 @@ def decide(
     files_changed: int,
     rework_rounds: int,
 ) -> Decided:
+    if judgement.prescreen_failed:
+        return Decided(Verdict.REJECT, [judgement.summary], judgement.prescreen_reason or "prescreen_failed")
+
+    if judgement.is_duplicate:
+        return Decided(
+            Verdict.REJECT,
+            [f"The pull request is an exact duplicate of competing submission #{judgement.derived_from_pr}."],
+            "duplicate_submission",
+        )
+
     if files_changed == 0:
         return Decided(Verdict.REJECT, ["The pull request changes no files."], "empty_diff")
 
     findings = [_line(c) for c in judgement.checks]
+    if judgement.derived_from_pr is not None:
+        findings.append(f"Notice: This submission appears substantially derived from pull request #{judgement.derived_from_pr}.")
     if checks_passed is False:
         findings.append("The project's own checks do not pass on this commit.")
     elif checks_passed is None:

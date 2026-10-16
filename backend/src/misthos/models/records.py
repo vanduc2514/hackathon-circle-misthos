@@ -47,6 +47,10 @@ class IssueRecord:
     submission: Submission | None = None
     review: Review | None = None
     contributor_id: str | None = None
+    claims: list[Claim] = field(default_factory=list)
+    submissions: list[Submission] = field(default_factory=list)
+    reviews: list[Review] = field(default_factory=list)
+    reviews_spent: int = 0
     paid: Usdc | None = None
     platform_fee: Usdc | None = None
     """The platform's take rate carved out of the settlement (#32). The contributor
@@ -62,6 +66,77 @@ class IssueRecord:
     """Why an entitled payout has not left the escrow yet, from the compliance gate."""
     payout_checked_at: datetime | None = None
     criteria_approved_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.claim and not self.claims:
+            self.claims = [self.claim]
+        elif self.claims and not self.claim:
+            self.claim = self.claims[-1]
+
+        if self.submission and not self.submissions:
+            self.submissions = [self.submission]
+        elif self.submissions and not self.submission:
+            self.submission = self.submissions[-1]
+
+        if self.review and not self.reviews:
+            self.reviews = [self.review]
+        elif self.reviews and not self.review:
+            self.review = self.reviews[-1]
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(name, value)
+        if name == "submission":
+            if hasattr(self, "submissions"):
+                if value is None:
+                    self.submissions.clear()
+                else:
+                    found = False
+                    for i, s in enumerate(self.submissions):
+                        if s.pr_number == value.pr_number or s.head_sha == value.head_sha:
+                            self.submissions[i] = value
+                            found = True
+                            break
+                    if not found:
+                        self.submissions.append(value)
+        elif name == "claim":
+            if hasattr(self, "claims"):
+                if value is None:
+                    self.claims.clear()
+                else:
+                    found = False
+                    for i, c in enumerate(self.claims):
+                        if c.contributor_id == value.contributor_id:
+                            self.claims[i] = value
+                            found = True
+                            break
+                    if not found:
+                        self.claims.append(value)
+        elif name == "review":
+            if hasattr(self, "reviews"):
+                if value is None:
+                    self.reviews.clear()
+                else:
+                    found = False
+                    for i, r in enumerate(self.reviews):
+                        if r.decided_at == value.decided_at or (r.head_sha and r.head_sha == value.head_sha):
+                            self.reviews[i] = value
+                            found = True
+                            break
+                    if not found:
+                        self.reviews.append(value)
+
+    @property
+    def contributor_ids(self) -> list[str]:
+        seen = set()
+        res = []
+        if self.contributor_id:
+            seen.add(self.contributor_id)
+            res.append(self.contributor_id)
+        for c in self.claims:
+            if c.contributor_id and c.contributor_id not in seen:
+                seen.add(c.contributor_id)
+                res.append(c.contributor_id)
+        return res
 
     @property
     def received(self) -> Usdc:

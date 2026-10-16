@@ -100,7 +100,59 @@ export default function IssueDetail() {
             </ul>
           </Panel>
 
-          {issue.submission && (
+          {issue.claims && issue.claims.length > 0 && (
+            <Panel title={`Roster (${issue.claims.filter(c => c.active).length} active)`}>
+              <ul className="comparables">
+                {issue.claims.map((c) => (
+                  <li key={c.contributor_id + c.issued_at} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span className="cell-title">{c.handle ?? c.contributor_id}</span>
+                      <span className="cell-repo">
+                        claimed {relativeTime(c.issued_at)}
+                      </span>
+                    </div>
+                    <span className={`chip ${c.active ? 'ok' : 'dim'}`}>
+                      {c.state ?? (c.active ? 'active' : 'inactive')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
+
+          {issue.submissions && issue.submissions.length > 0 ? (
+            <Panel title={`Submissions (${issue.submissions.length})`}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {issue.submissions.map((sub) => (
+                  <dl className="kv" key={sub.head_sha} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    <dt>Pull request</dt>
+                    <dd>
+                      #{sub.pr_number} {sub.contributor_id ? `(${sub.contributor_id})` : ''} &middot; {sub.files_changed} files
+                      &middot; <span style={{ color: 'var(--ok)' }}>+{sub.additions}</span>{' '}
+                      <span style={{ color: 'var(--bad)' }}>-{sub.deletions}</span>
+                      {sub.draft && <span className="chip warn" style={{ marginLeft: 6 }}>draft</span>}
+                    </dd>
+                    <dt>Checks</dt>
+                    <dd>
+                      <ChecksChip passed={sub.checks_passed} />
+                    </dd>
+                    <dt>Commit</dt>
+                    <dd className="muted">{shortHash(sub.head_sha)}</dd>
+                    {sub.deposit_state && sub.deposit_state !== 'none' && (
+                      <>
+                        <dt>Deposit</dt>
+                        <dd>
+                          <span className={`chip ${sub.deposit_state === 'refunded' ? 'ok' : sub.deposit_state === 'held' ? 'accent' : 'warn'}`}>
+                            {sub.deposit_state} (${sub.deposit_amount_usdc ?? '6.31'})
+                          </span>
+                        </dd>
+                      </>
+                    )}
+                  </dl>
+                ))}
+              </div>
+            </Panel>
+          ) : issue.submission ? (
             <Panel title="Submission">
               <dl className="kv">
                 <dt>Pull request</dt>
@@ -117,7 +169,7 @@ export default function IssueDetail() {
                 <dd className="muted">{shortHash(issue.submission.head_sha)}</dd>
               </dl>
             </Panel>
-          )}
+          ) : null}
 
           {issue.review && (
             <Panel title="Review">

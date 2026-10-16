@@ -164,12 +164,14 @@ claims = Table(
     Column("issue_id", Id, ForeignKey("issues.id"), nullable=False),
     Column("contributor_id", Id, ForeignKey("contributors.id"), nullable=False),
     Column("issued_at", Timestamp, nullable=False),
-    Column("expires_at", Timestamp, nullable=False),
+    Column("expires_at", Timestamp, nullable=True),
     Column("active", Boolean, nullable=False),
+    Column("state", String(32), nullable=False, server_default="CLAIMED"),
     UniqueConstraint("issue_id", "contributor_id", "issued_at"),
     Index(
-        "uq_claims_one_active_per_issue",
+        "uq_claims_one_active_per_contributor",
         "issue_id",
+        "contributor_id",
         unique=True,
         postgresql_where=text("active"),
         sqlite_where=text("active = 1"),
@@ -187,6 +189,11 @@ submissions = Table(
     Column("files_changed", Integer, nullable=False),
     Column("additions", Integer, nullable=False),
     Column("deletions", Integer, nullable=False),
+    Column("contributor_id", Id, ForeignKey("contributors.id"), nullable=True),
+    Column("review_count", Integer, nullable=False, server_default="0"),
+    Column("deposit_state", String(32), nullable=False, server_default="none"),
+    Column("deposit_amount", BigInteger, nullable=True),
+    Column("draft", Boolean, nullable=False, server_default="0"),
     UniqueConstraint("issue_id", "head_sha"),
 )
 

@@ -579,32 +579,35 @@ def _save_escrow(conn: Connection, rec: IssueRecord) -> None:
 
 
 def _save_claim(conn: Connection, rec: IssueRecord) -> None:
-    c = rec.claim if rec.claim is not None and rec.claim.active else None
-    others = t.claims.c.issue_id == rec.id
-    if c is not None:
-        others = others & ~(
-            (t.claims.c.contributor_id == c.contributor_id) & (t.claims.c.issued_at == c.issued_at)
-        )
-    # Retire whatever was active before, then record the current claim, so the
-    # one-active-claim index never sees two at once.
-    conn.execute(update(t.claims).where(others, t.claims.c.active.is_(True)).values(active=False))
-    if c is not None:
+    for c in rec.claims:
         _upsert(
             conn,
             t.claims,
             {"issue_id": rec.id, "contributor_id": c.contributor_id, "issued_at": c.issued_at},
-            {"expires_at": c.expires_at, "active": True},
+            {"expires_at": c.expires_at, "active": c.active, "state": c.state},
         )
 
 
 def _save_submission(conn: Connection, rec: IssueRecord) -> None:
-    s = rec.submission
-    if s is None:
-        return
-    # One row per submitted commit. The project's checks on that commit finish after
-    # it is submitted, so the row is updated when their result arrives.
-    key = {"issue_id": rec.id, "head_sha": s.head_sha}
-    _upsert(conn, t.submissions, key, s.model_dump(exclude={"head_sha"}))
+    for s in rec.submissions:
+        key = {"issue_id": rec.id, "head_sha": s.head_sha}
+        data = {
+            "pr_number": s.pr_number,
+            "checks_passed": s.checks_passed,
+            "files_changed": s.files_changed,
+            "additions": s.additions,
+            "deletions": s.deletions,
+            "contributor_id": s.contributor_id,
+            "review_count": s.review_count,
+            "deposit_state": s.deposit_state,
+            "deposit_amount": (
+                Usdc.from_decimal(s.deposit_amount_usdc).base_units
+                if s.deposit_amount_usdc is not None
+                else None
+            ),
+            "draft": s.draft,
+        }
+        _upsert(conn, t.submissions, key, data)
 
 
 def _save_review(conn: Connection, rec: IssueRecord) -> None:
@@ -734,9 +737,25 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
 
     proposals = newest(t.price_proposals, t.price_proposals.c.seq)
     escrows = newest(t.escrow_commitments, t.escrow_commitments.c.issue_id)
-    claims = newest(t.claims, t.claims.c.issued_at, t.claims.c.active.is_(True))
-    submissions = newest(t.submissions, t.submissions.c.id)
     reviews = newest(t.reviews, t.reviews.c.id)
+
+    all_claims: dict[str, list[Claim]] = defaultdict(list)
+    for row in conn.execute(
+        select(t.claims).where(t.claims.c.issue_id.in_(ids)).order_by(t.claims.c.issued_at)
+    ).mappings():
+        all_claims[row["issue_id"]].append(_claim(row))
+
+    all_submissions: dict[str, list[Submission]] = defaultdict(list)
+    for row in conn.execute(
+        select(t.submissions).where(t.submissions.c.issue_id.in_(ids)).order_by(t.submissions.c.id)
+    ).mappings():
+        all_submissions[row["issue_id"]].append(_submission(row))
+
+    all_reviews: dict[str, list[Review]] = defaultdict(list)
+    for row in conn.execute(
+        select(t.reviews).where(t.reviews.c.issue_id.in_(ids)).order_by(t.reviews.c.decided_at)
+    ).mappings():
+        all_reviews[row["issue_id"]].append(_review(row))
 
     logs: dict[str, list[Decision]] = defaultdict(list)
     for row in conn.execute(
@@ -774,9 +793,9 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             ),
             funding=_funding_terms(row),
             escrow=_escrow(escrows[row["id"]]) if row["id"] in escrows else None,
-            claim=_claim(claims[row["id"]]) if row["id"] in claims else None,
-            submission=_submission(submissions[row["id"]]) if row["id"] in submissions else None,
-            review=_review(reviews[row["id"]]) if row["id"] in reviews else None,
+            claims=all_claims[row["id"]],
+            submissions=all_submissions[row["id"]],
+            reviews=all_reviews[row["id"]],
             contributor_id=row["contributor_id"],
             paid=Usdc(row["paid_base_units"]) if row["paid_base_units"] is not None else None,
             platform_fee=(
@@ -925,15 +944,18 @@ def _escrow(row: Row) -> EscrowCommitment:
 
 
 def _claim(row: Row) -> Claim:
+    exp = row["expires_at"]
     return Claim(
         contributor_id=row["contributor_id"],
         issued_at=_utc(row["issued_at"]),
-        expires_at=_utc(row["expires_at"]),
-        active=row["active"],
+        expires_at=_utc(exp) if exp else None,
+        active=bool(row["active"]),
+        state=row.get("state") or ("CLAIMED" if bool(row["active"]) else "SUPERSEDED"),
     )
 
 
 def _submission(row: Row) -> Submission:
+    dep = row["deposit_amount"] if "deposit_amount" in row else None
     return Submission(
         pr_number=row["pr_number"],
         head_sha=row["head_sha"],
@@ -941,6 +963,11 @@ def _submission(row: Row) -> Submission:
         files_changed=row["files_changed"],
         additions=row["additions"],
         deletions=row["deletions"],
+        contributor_id=row.get("contributor_id"),
+        review_count=row.get("review_count", 0) or 0,
+        deposit_state=row.get("deposit_state", "none") or "none",
+        deposit_amount_usdc=str(Usdc(dep).decimal) if dep is not None else None,
+        draft=bool(row.get("draft", False)),
     )
 
 

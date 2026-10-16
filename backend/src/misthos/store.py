@@ -24,6 +24,7 @@ the step.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import random
 import threading
@@ -33,7 +34,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from misthos.config import settings
-from misthos.domain import comparables, compliance, ledger, timers
+from misthos.domain import comparables, compliance, ledger, pricing, timers
 from misthos.domain import criteria as acceptance
 from misthos.domain import issue as lifecycle
 from misthos.domain.comparables import Comparable, SettledWork
@@ -73,6 +74,8 @@ from misthos.domain.review import (
     Submitted,
     Verdict,
     decide,
+    detect_derivation,
+    prescreen,
     ready_for_review,
 )
 from misthos.domain.signals import read as read_signals
@@ -303,6 +306,39 @@ class Store:
         self.screening: ScreeningProvider = screening or build_screening(settings)
         self.identity: IdentityProvider = identity or build_identity(settings)
 
+    def _build(self, spec: dict) -> IssueRecord:
+        publisher = self.repo.get_publisher(spec["publisher_id"])
+        assert publisher is not None, spec["publisher_id"]
+        signals = ComplexitySignals(**spec["signals"])
+        proposal = propose(
+            signals,
+            compliance_driven=spec.get("compliance_driven", False),
+            comparables=self._comparables_for(signals, spec["repo"]),
+            urgency=Usdc.from_decimal(spec["urgency"]) if spec.get("urgency") else None,
+            risk_premium=Usdc.from_decimal(spec["risk"]) if spec.get("risk") else None,
+        )
+        target = IssueState(spec["state"])
+        now = _now()
+        if "price" in spec:
+            price = Usdc.from_decimal(spec["price"]) if spec["price"] else None
+        else:
+            price = proposal.recommended
+        return IssueRecord(
+            id=self._next_issue_id(),
+            repo=spec["repo"],
+            number=spec["number"],
+            title=spec["title"],
+            summary=spec["summary"],
+            state=target if target in _PRE_FUNDING else IssueState.AWAITING_APPROVAL,
+            labels=spec["labels"],
+            compliance_driven=spec.get("compliance_driven", False),
+            acceptance_criteria=spec["criteria"],
+            publisher_id=spec["publisher_id"],
+            created_at=now - timedelta(days=spec["age_days"]),
+            proposal=proposal,
+            price=price,
+        )
+
     # -------------------------------------------------------------- reading
 
     def get(self, issue_id: str) -> IssueRecord | None:
@@ -492,26 +528,51 @@ class Store:
         )
 
     def _claim(self, rec: IssueRecord, contributor_id: str, when: datetime | None = None) -> None:
-        self._move(rec, IssueState.CLAIMED)
         at = when or _now()
-        rec.claim = Claim(
-            contributor_id=contributor_id, issued_at=at, expires_at=at + lifecycle.CLAIM_WINDOW
+        for c in rec.claims:
+            if c.contributor_id == contributor_id and c.active:
+                rec.claim = c
+                rec.contributor_id = contributor_id
+                return
+        claim = Claim(
+            contributor_id=contributor_id,
+            issued_at=at,
+            expires_at=None,
+            active=True,
+            state="CLAIMED",
         )
+        rec.claims.append(claim)
+        rec.claim = claim
         rec.contributor_id = contributor_id
+        if rec.state is IssueState.FUNDED:
+            self._move(rec, IssueState.CLAIMED)
 
-    def _submit(self, rec: IssueRecord, pr: dict) -> None:
+    def _submit(self, rec: IssueRecord, pr: dict, contributor_id: str | None = None) -> None:
         if rec.review is not None and rec.review.head_sha == pr["head_sha"]:
-            # A commit gets one verdict, and the review only takes a commit without
-            # one. Submitted again, it would leave the issue in IN_REVIEW, where no
-            # review takes it and no timer runs, with the money held there (#119).
             raise NotTheSubmission(
                 f"the review already judged {pr['head_sha'][:7]}, the head of "
                 f"#{pr['pr_number']}; push the requested changes as a new commit, then "
                 "submit again"
             )
-        self._move(rec, IssueState.IN_REVIEW)
-        rec.submission = Submission(**pr)
-        sha = rec.submission.head_sha
+        cid = contributor_id or pr.get("contributor_id") or rec.contributor_id
+        sub = Submission(**pr)
+        if cid and not sub.contributor_id:
+            sub.contributor_id = cid
+
+        found = False
+        for i, s in enumerate(rec.submissions):
+            if s.pr_number == sub.pr_number:
+                rec.submissions[i] = sub
+                found = True
+                break
+        if not found:
+            rec.submissions.append(sub)
+        rec.submission = sub
+
+        if rec.state in {IssueState.CLAIMED, IssueState.REWORK}:
+            self._move(rec, IssueState.IN_REVIEW)
+
+        sha = sub.head_sha
         self._post(
             f"pending status on {rec.repo}@{sha[:7]}",
             lambda gh: gh.status(
@@ -533,15 +594,30 @@ class Store:
         seconds: float | None = None,
         cost: Usdc | None = None,
     ) -> None:
-        """Record the platform's verdict. It is the decision, not a draft for one."""
-        self._move(
-            rec,
-            {
+        target_claim_state = {
+            "accept": "ACCEPTED",
+            "rework": "REWORK",
+            "reject": "REJECTED",
+        }.get(verdict, "IN_REVIEW")
+        if rec.submission and rec.submission.contributor_id:
+            for c in rec.claims:
+                if c.contributor_id == rec.submission.contributor_id:
+                    c.state = target_claim_state
+        elif rec.claim:
+            rec.claim.state = target_claim_state
+
+        if rec.state in {
+            IssueState.IN_REVIEW,
+            IssueState.REWORK,
+            IssueState.ACCEPTED,
+            IssueState.REJECTED,
+        }:
+            rec.state = {
                 "accept": IssueState.ACCEPTED,
                 "rework": IssueState.REWORK,
                 "reject": IssueState.REJECTED,
-            }[verdict],
-        )
+            }[verdict]
+
         rec.review = Review(
             verdict=verdict,  # type: ignore[arg-type]
             findings=findings,
@@ -642,21 +718,6 @@ class Store:
             action="refunded",
             rule=rule,
             outcome="no acceptable work arrived, funds returned",
-            when=when,
-        )
-
-    def _expire_claim(self, rec: IssueRecord, *, rule: str, when: datetime) -> None:
-        assert rec.claim is not None
-        holder = self._handle(rec.claim.contributor_id)
-        self._move(rec, IssueState.FUNDED)
-        rec.claim = None
-        rec.contributor_id = None
-        self._log(
-            rec,
-            actor="system",
-            action="claim_expired",
-            rule=rule,
-            outcome=f"{holder} opened no pull request in time, the issue is back in the pool",
             when=when,
         )
 
@@ -1163,14 +1224,11 @@ class Store:
 
     @staticmethod
     def _clocks(rec: IssueRecord) -> timers.Clocks:
-        # The grace period only runs until something accepts the work; after that the
-        # payout is owed, and what is timed is retrying it when compliance held it.
         passed = rec.review is not None and rec.review.verdict == "accept"
         awaiting_acceptance = passed and rec.accepted_by is None
         return timers.Clocks(
             state=rec.state,
             deadline=rec.deadline,
-            claim_expires_at=rec.claim.expires_at if rec.claim else None,
             verdict_passed_at=rec.review.decided_at if awaiting_acceptance and rec.review else None,
             payout_held_since=rec.payout_checked_at if rec.payout_hold else None,
         )
@@ -1178,26 +1236,15 @@ class Store:
     def _apply_due(
         self, rec: IssueRecord, now: datetime
     ) -> tuple[list[TimedAction], list[IssueRecord]]:
-        """Carry out every timer due on `rec` at `now`. Returns what ran and any new
-        records it created. Each action moves the state, so this ends in at most two."""
         applied: list[TimedAction] = []
         created: list[IssueRecord] = []
         while (action := timers.due(self._clocks(rec), now)) is not None:
             match action:
                 case TimedAction.RELEASE_AFTER_GRACE:
-                    # The verdict passed and the publisher went quiet past the grace
-                    # window. Release rather than strand finished work.
                     rec.accepted_by = "grace"
                     self._pay(rec, now)
                 case TimedAction.RETRY_PAYOUT:
                     self._pay(rec, now)
-                case TimedAction.EXPIRE_CLAIM:
-                    rule = (
-                        "deadline_passed"
-                        if timers.deadline_passed(self._clocks(rec), now)
-                        else "claim_window_elapsed"
-                    )
-                    self._expire_claim(rec, rule=rule, when=now)
                 case TimedAction.REFUND:
                     self._refund(rec, rule="deadline_passed", when=now)
             applied.append(action)
@@ -1389,29 +1436,26 @@ class Store:
 
     @staticmethod
     def _awaiting_review(rec: IssueRecord, now: datetime) -> bool:
-        """In review, the commit under review has no verdict yet, and its checks have
-        reported or had their time to (`CHECKS_WAIT`)."""
-        return (
-            rec.state is IssueState.IN_REVIEW
-            and rec.submission is not None
-            and (rec.review is None or rec.review.head_sha != rec.submission.head_sha)
-            and ready_for_review(rec.submission.checks_passed, _submitted_at(rec), now)
-        )
+        if rec.state in lifecycle.TERMINAL_STATES:
+            return False
+        reviewed_shas = {r.head_sha for r in rec.reviews if r.head_sha}
+        if rec.review and rec.review.head_sha:
+            reviewed_shas.add(rec.review.head_sha)
+        for s in rec.submissions:
+            if s.head_sha not in reviewed_shas and ready_for_review(s.checks_passed, _submitted_at(rec), now):
+                return True
+        if rec.submission and rec.submission.head_sha not in reviewed_shas:
+            return ready_for_review(rec.submission.checks_passed, _submitted_at(rec), now)
+        return False
 
     def reviews_due(self, now: datetime | None = None) -> list[str]:
         now = now or _now()
         return [
-            r.id for r in self.list_issues({IssueState.IN_REVIEW}) if self._awaiting_review(r, now)
+            r.id for r in self.list_issues() if self._awaiting_review(r, now)
         ]
 
     @staticmethod
     def _judged_already(rec: IssueRecord) -> bool:
-        """In review on a commit the review has already judged.
-
-        Only a resubmission of the same commit could do this, before #119 refused it.
-        No review takes the commit again and no timer runs in review, so nothing would
-        ever move the issue or the money it holds.
-        """
         return (
             rec.state is IssueState.IN_REVIEW
             and rec.submission is not None
@@ -1454,17 +1498,42 @@ class Store:
             moved.append(listed.id)
         return moved
 
-    def _submitted(self, rec: IssueRecord) -> Submitted:
-        assert rec.submission is not None
-        files = self.github.read_files(rec.repo, rec.submission.pr_number)
+    def _submitted(self, rec: IssueRecord, pr_number: int | None = None) -> Submitted:
+        sub = None
+        if pr_number is not None:
+            sub = next((s for s in rec.submissions if s.pr_number == pr_number), None)
+        if sub is None:
+            sub = rec.submission
+        assert sub is not None
+        files = self.github.read_files(rec.repo, sub.pr_number)
+
+        priors = []
+        for other_sub in rec.submissions:
+            if other_sub.pr_number != sub.pr_number:
+                other_files = self.github.read_files(rec.repo, other_sub.pr_number)
+                priors.append(
+                    Submitted(
+                        repo=rec.repo,
+                        pr_number=other_sub.pr_number,
+                        head_sha=other_sub.head_sha,
+                        title=rec.title,
+                        criteria=tuple(rec.acceptance_criteria),
+                        files=tuple(other_files),
+                        checks_passed=other_sub.checks_passed,
+                        draft=other_sub.draft,
+                    )
+                )
+
         return Submitted(
             repo=rec.repo,
-            pr_number=rec.submission.pr_number,
-            head_sha=rec.submission.head_sha,
+            pr_number=sub.pr_number,
+            head_sha=sub.head_sha,
             title=rec.title,
             criteria=tuple(rec.acceptance_criteria),
             files=tuple(files),
-            checks_passed=rec.submission.checks_passed,
+            checks_passed=sub.checks_passed,
+            draft=sub.draft,
+            prior_submissions=tuple(priors),
         )
 
     @staticmethod
@@ -1473,7 +1542,13 @@ class Store:
         judgement = reviewer.judge(submitted)
         return judgement, round(time.monotonic() - started, 2)
 
-    def review(self, issue_id: str, now: datetime | None = None) -> IssueRecord | None:
+    def review(
+        self,
+        issue_id: str,
+        now: datetime | None = None,
+        *,
+        pr_number: int | None = None,
+    ) -> IssueRecord | None:
         """Have the review agent judge the submitted commit, and record the verdict.
 
         Reading the diff and judging it can take minutes with a model, so it happens
@@ -1486,8 +1561,29 @@ class Store:
             raise KeyError(issue_id)
         if not self._awaiting_review(rec, now or _now()):
             return None
-        submitted = self._submitted(rec)
-        judgement, seconds = self._judge(self.reviewer, submitted)
+        submitted = self._submitted(rec, pr_number)
+
+        # 1. Pre-screen check
+        prescreen_judgement = prescreen(submitted)
+        if prescreen_judgement is not None:
+            judgement = prescreen_judgement
+            seconds = 0.0
+        else:
+            # 2. Check for derivation / duplicate
+            is_dup, derived_from = detect_derivation(submitted)
+            if is_dup:
+                judgement = Judgement(
+                    checks=(),
+                    summary=f"The pull request is an exact duplicate of #{derived_from}.",
+                    reviewer="derivation_detector",
+                    is_duplicate=True,
+                    derived_from_pr=derived_from,
+                )
+                seconds = 0.0
+            else:
+                judgement, seconds = self._judge(self.reviewer, submitted)
+                if derived_from:
+                    judgement = dataclasses.replace(judgement, derived_from_pr=derived_from)
 
         with self._exclusive(issue_id), self._posting():
             fresh = self.repo.get_issue(issue_id)
@@ -1495,15 +1591,36 @@ class Store:
                 fresh is None
                 or not self._awaiting_review(fresh, now or _now())
                 or fresh.submission is None
-                or fresh.submission.head_sha != submitted.head_sha
             ):
                 return None
+            sub = next((s for s in fresh.submissions if s.pr_number == submitted.pr_number), fresh.submission)
+            if sub.head_sha != submitted.head_sha:
+                return None
+
             decided = decide(
                 judgement,
-                checks_passed=fresh.submission.checks_passed,
+                checks_passed=sub.checks_passed,
                 files_changed=len(submitted.files),
                 rework_rounds=_rework_rounds(fresh),
             )
+
+            if not judgement.prescreen_failed:
+                budget = pricing.review_budget(fresh.price) if fresh.price else 1
+                is_first_review = sub.review_count == 0
+                if is_first_review and fresh.reviews_spent < budget:
+                    fresh.reviews_spent += 1
+                else:
+                    sub.deposit_state = "held"
+                    sub.deposit_amount_usdc = str(pricing.DEPOSIT_AMOUNT.decimal)
+
+                sub.review_count += 1
+
+                if sub.deposit_state == "held":
+                    if decided.verdict in {Verdict.ACCEPT, Verdict.REWORK}:
+                        sub.deposit_state = "refunded"
+                    elif decided.verdict is Verdict.REJECT:
+                        sub.deposit_state = "forfeited"
+
             when = now or _now()
             self._review(
                 fresh,
@@ -2021,22 +2138,25 @@ class Store:
         )
 
     def claim(self, issue_id: str, contributor_id: str, now: datetime | None = None) -> IssueRecord:
-        """A contributor takes the exclusive, time-boxed claim. First claim wins."""
+        """A contributor joins the open roster to work on the issue."""
         with self._exclusive(issue_id), self._posting():
             rec = self.repo.get_issue(issue_id)
             if rec is None:
                 raise KeyError(issue_id)
-            if rec.state is not IssueState.FUNDED:
-                raise lifecycle.IllegalTransition(rec.state, IssueState.CLAIMED)
+            if rec.state is not IssueState.FUNDED and rec.state not in {
+                IssueState.CLAIMED,
+                IssueState.IN_REVIEW,
+                IssueState.REWORK,
+            }:
+                raise lifecycle.IllegalTransition(rec.state, IssueState.FUNDED)
             when = now or _now()
             self._claim(rec, contributor_id, when=when)
             self._log(
                 rec,
                 actor="contributor",
                 action="claimed",
-                rule="first_claim_wins",
-                outcome=f"{self._handle(contributor_id)} took an exclusive "
-                f"{int(lifecycle.CLAIM_WINDOW.total_seconds() // 3600)}h claim",
+                rule="open_roster",
+                outcome=f"{self._handle(contributor_id)} joined the roster",
                 when=when,
             )
             self.repo.save_issues(rec)
@@ -2166,13 +2286,12 @@ class Store:
 
     def find_by_pull_request(self, repo: str, pr_number: int) -> IssueRecord | None:
         for rec in self.list_issues():
-            if (
-                rec.repo.lower() == repo.lower()
-                and rec.submission is not None
-                and rec.submission.pr_number == pr_number
-                and rec.state not in lifecycle.TERMINAL_STATES
-            ):
-                return rec
+            if rec.repo.lower() == repo.lower() and rec.state not in lifecycle.TERMINAL_STATES:
+                for sub in rec.submissions:
+                    if sub.pr_number == pr_number:
+                        return rec
+                if rec.submission is not None and rec.submission.pr_number == pr_number:
+                    return rec
         return None
 
     def reprice(self, issue_id: str, now: datetime | None = None) -> IssueRecord:
@@ -2231,35 +2350,32 @@ class Store:
     def submit_pull_request(
         self, issue_id: str, pr: PullRequest, now: datetime | None = None
     ) -> IssueRecord:
-        """A pull request that closes the issue was opened, or pushed to after rework.
-
-        Only the contributor holding the claim submits: anyone can open a pull
-        request that mentions an issue, and only one of them is owed money. A pull
-        request counts toward one issue only, and a commit the review already judged
-        is not submitted again: the contributor pushes a new one.
-        """
+        """A pull request that closes the issue was opened, or pushed to after rework."""
         with self._exclusive(issue_id), self._posting():
             rec = self.repo.get_issue(issue_id)
             if rec is None:
                 raise KeyError(issue_id)
-            if rec.contributor_id is None or rec.state not in {
+            if rec.state not in {
+                IssueState.FUNDED,
                 IssueState.CLAIMED,
+                IssueState.IN_REVIEW,
                 IssueState.REWORK,
             }:
                 raise lifecycle.IllegalTransition(rec.state, IssueState.IN_REVIEW)
-            claimant = self._handle(rec.contributor_id)
-            if pr.author.lower() != claimant.lower():
-                raise NotTheSubmission(
-                    f"{pr.author} opened #{pr.number}, but {claimant} holds the claim"
-                )
-            if rec.state is IssueState.REWORK and rec.submission is not None:
-                if rec.submission.pr_number != pr.number:
-                    raise NotTheSubmission(
-                        f"rework continues on #{rec.submission.pr_number}, not #{pr.number}"
-                    )
-            # Two issues take two different issue locks, so the pull request has one of
-            # its own: without it, the same pull request submitted to both at once
-            # would pass the check below twice.
+
+            contributor_id = None
+            account = self.repo.get_account_by_github_login(pr.author)
+            if account and account.role == "contributor":
+                contributor_id = account.party_id
+            else:
+                for c in rec.claims:
+                    if self._handle(c.contributor_id).lower() == pr.author.lower():
+                        contributor_id = c.contributor_id
+                        break
+            if not contributor_id:
+                contributor_id = f"c_{pr.author.lower()}"
+                self._claim(rec, contributor_id, when=now)
+
             with self._pull_request_exclusive(rec.repo, pr.number):
                 elsewhere = self._submitted_elsewhere(rec, pr.number)
                 if elsewhere is not None:
@@ -2267,20 +2383,21 @@ class Store:
                         f"#{pr.number} was already submitted for {elsewhere.id}; a pull "
                         "request counts toward one issue only"
                     )
-                resubmitted = rec.state is IssueState.REWORK
+                resubmitted = any(s.pr_number == pr.number for s in rec.submissions)
                 history = self.github.merged_pull_requests(rec.repo, pr.author)
                 self._submit(
                     rec,
                     {
                         "pr_number": pr.number,
                         "head_sha": pr.head_sha,
-                        # None until the project's own checks finish, and check_run says
-                        # when they do. A repository with no CI never says.
                         "checks_passed": self.github.checks_passed(rec.repo, pr.head_sha),
                         "files_changed": pr.files_changed,
                         "additions": pr.additions,
                         "deletions": pr.deletions,
+                        "contributor_id": contributor_id,
+                        "draft": getattr(pr, "draft", False),
                     },
+                    contributor_id=contributor_id,
                 )
                 pushed = (
                     f"pushed a new commit, {pr.head_sha[:7]}, to PR #{pr.number}"
@@ -2292,7 +2409,7 @@ class Store:
                     actor="contributor",
                     action="resubmitted" if resubmitted else "submitted",
                     rule="pull_request_synchronized" if resubmitted else "pull_request_opened",
-                    outcome=f"{claimant} {pushed}; {history} earlier pull request(s) of "
+                    outcome=f"{pr.author} {pushed}; {history} earlier pull request(s) of "
                     f"theirs merged in {rec.repo}",
                     when=now,
                 )
@@ -2303,13 +2420,12 @@ class Store:
         """Another issue this pull request was submitted for, in any state, paid ones
         included: the same work counted twice is reviewed, accepted and paid twice."""
         for other in self.repo.list_issues():
-            if (
-                other.id != rec.id
-                and other.repo.lower() == rec.repo.lower()
-                and other.submission is not None
-                and other.submission.pr_number == pr_number
-            ):
-                return other
+            if other.id != rec.id and other.repo.lower() == rec.repo.lower():
+                for s in other.submissions:
+                    if s.pr_number == pr_number:
+                        return other
+                if other.submission is not None and other.submission.pr_number == pr_number:
+                    return other
         return None
 
     def record_checks(self, issue_id: str, head_sha: str, now: datetime | None = None) -> bool:
@@ -2345,22 +2461,24 @@ class Store:
             rec = self.repo.get_issue(issue_id)
             if rec is None:
                 raise KeyError(issue_id)
-            if rec.submission is None or rec.submission.pr_number != pr_number:
+            sub = next((s for s in rec.submissions if s.pr_number == pr_number), rec.submission)
+            if sub is None and not merged:
                 raise NotTheSubmission(f"{rec.id} is not waiting on #{pr_number}")
             when = now or _now()
             if not merged:
+                if sub and sub.contributor_id:
+                    for c in rec.claims:
+                        if c.contributor_id == sub.contributor_id:
+                            c.state = "WITHDRAWN"
                 self._log(
                     rec,
                     actor="publisher",
                     action="pull_request_closed",
                     rule="merge_is_acceptance",
-                    outcome=f"PR #{pr_number} was closed without merging; nothing is owed "
-                    "for it",
+                    outcome=f"PR #{pr_number} was closed without merging; nothing is owed for it",
                     when=when,
                 )
             elif rec.state is IssueState.REJECTED:
-                # Taking a rejected patch is the move escrow exists to make costly.
-                # REJECTED has no road to PAID, so a person settles it (#39).
                 self._log(
                     rec,
                     actor="publisher",
@@ -2376,19 +2494,62 @@ class Store:
             return rec
 
     def _accept_by_merge(self, rec: IssueRecord, pr_number: int, now: datetime) -> None:
-        if rec.state is IssueState.REWORK:
-            # The publisher merged what was there, so that is the submission.
-            self._move(rec, IssueState.IN_REVIEW)
-        if rec.state is IssueState.IN_REVIEW:
-            self._move(rec, IssueState.ACCEPTED)
-            outcome = (
-                f"the publisher merged PR #{pr_number} before the review finished, "
-                "which is acceptance"
+        if rec.deadline and now > rec.deadline:
+            self._log(
+                rec,
+                actor="system",
+                action="merge_after_deadline",
+                rule="deadline_passed",
+                outcome=f"PR #{pr_number} was merged after the escrow deadline; no release attempted",
+                when=now,
             )
-        elif rec.state is IssueState.ACCEPTED:
-            outcome = f"the publisher merged PR #{pr_number}, which is acceptance"
-        else:
-            raise lifecycle.IllegalTransition(rec.state, IssueState.PAID)
+            return
+
+        sub = next((s for s in rec.submissions if s.pr_number == pr_number), rec.submission)
+        winning_contributor_id = sub.contributor_id if sub and sub.contributor_id else None
+
+        if not winning_contributor_id and rec.claim:
+            winning_contributor_id = rec.claim.contributor_id
+
+        if not winning_contributor_id:
+            try:
+                pr_info = self.github.read_pull_request(rec.repo, pr_number)
+                author = pr_info.author if pr_info else f"pr_{pr_number}_author"
+            except Exception:
+                author = f"pr_{pr_number}_author"
+            winning_contributor_id = f"c_{author.lower()}"
+            retro_claim = Claim(
+                contributor_id=winning_contributor_id,
+                issued_at=now,
+                expires_at=None,
+                active=True,
+                state="ACCEPTED",
+            )
+            rec.claims.append(retro_claim)
+
+        if not self.repo.get_contributor(winning_contributor_id):
+            wallet_addr = f"0x{'22'*20}"
+            self.repo.save_contributor(
+                Contributor(
+                    id=winning_contributor_id,
+                    handle=author if "author" in locals() else winning_contributor_id,
+                    wallet=Wallet(address=wallet_addr, chain="arbitrum_sepolia"),
+                    reputation=1,
+                    settled_issues=0,
+                    earned_usdc="0.00",
+                )
+            )
+
+        rec.contributor_id = winning_contributor_id
+
+        for c in rec.claims:
+            if c.contributor_id == winning_contributor_id:
+                c.state = "ACCEPTED"
+            elif c.active:
+                c.active = False
+                c.state = "SUPERSEDED"
+
+        outcome = f"the publisher merged PR #{pr_number}, which is acceptance"
         if rec.accepted_by is None:
             self._log(
                 rec,
@@ -2399,6 +2560,8 @@ class Store:
                 when=now,
             )
             rec.accepted_by = "merge"
+        if rec.state is not IssueState.ACCEPTED:
+            self._move(rec, IssueState.ACCEPTED)
         self._pay(rec, now)
 
     # ------------------------------------------------------------ projections
@@ -2448,10 +2611,15 @@ class Store:
             price_usdc=_display_price(rec),
             proposal=proposal_out,
             escrow=rec.escrow,
+            claims=rec.claims,
+            submissions=rec.submissions,
             claim=rec.claim,
             submission=rec.submission,
             review=rec.review,
             contributor_id=rec.contributor_id,
+            contributor_ids=rec.contributor_ids,
+            review_budget=pricing.review_budget(rec.price) if rec.price else 1,
+            reviews_spent=rec.reviews_spent,
             paid_usdc=str(rec.paid.decimal) if rec.paid else None,
             platform_fee_usdc=str(rec.platform_fee.decimal) if rec.platform_fee else None,
             github_url=rec.github_url,

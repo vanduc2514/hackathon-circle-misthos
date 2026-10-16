@@ -62,31 +62,23 @@ class TestDeadlines:
 
         report = sweep_once(store, now=claimed.deadline + A_MINUTE)
 
-        assert report.applied["ISS-1003"] == ["expire_claim", "refund"]
+        assert report.applied["ISS-1003"] == ["refund"]
         after = get("ISS-1003")
         assert after.state is IssueState.REFUNDED
-        assert after.decisions[-2].rule == "deadline_passed"
+        assert after.decisions[-1].rule == "deadline_passed"
         assert not any(r.relisted_from == "ISS-1003" for r in store.list_issues())
 
 
 class TestClaims:
-    def test_a_lapsed_claim_returns_the_issue_to_the_pool(self) -> None:
+    def test_claims_never_expire(self) -> None:
+        """In the open claim model, claims never expire."""
         claimed = get("ISS-1003")
         assert claimed.claim is not None
-
-        sweep_once(store, now=claimed.claim.expires_at + A_MINUTE)
-
+        assert claimed.claim.expires_at is None
+        report = sweep_once(store, now=claimed.created_at + timedelta(days=5))
+        assert "expire_claim" not in report.applied.get("ISS-1003", [])
         after = get("ISS-1003")
-        assert after.state is IssueState.FUNDED
-        assert after.claim is None and after.contributor_id is None
-        assert after.decisions[-1].rule == "claim_window_elapsed"
-
-    def test_a_live_claim_is_left_alone(self) -> None:
-        claimed = get("ISS-1003")
-        assert claimed.claim is not None
-        report = sweep_once(store, now=claimed.claim.expires_at - A_MINUTE)
-        assert "ISS-1003" not in report.applied
-        assert get("ISS-1003").state is IssueState.CLAIMED
+        assert after.claim is not None and after.claim.active
 
 
 class TestSilentPublisher:
@@ -190,14 +182,13 @@ class TestSweeping:
     def test_a_timer_acts_on_what_was_saved_not_on_the_copy_it_listed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The contributor opened a pull request after the sweeper listed the issue:
-        the claim it would have expired no longer exists, and the submission stands."""
+        """The contributor opened a pull request after the sweeper listed the issue."""
         stale = get("ISS-1003")  # seeded CLAIMED
         assert stale.claim is not None
         store.advance("ISS-1003")  # submitted while the sweeper holds the old copy
         monkeypatch.setattr(store.current(), "list_issues", lambda states=None: [stale])
 
-        report = sweep_once(store, now=stale.claim.expires_at + A_MINUTE)
+        report = sweep_once(store, now=stale.created_at + timedelta(days=3))
 
         assert "ISS-1003" not in report.applied
         after = get("ISS-1003")
