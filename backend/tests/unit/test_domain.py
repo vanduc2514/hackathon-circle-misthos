@@ -17,6 +17,7 @@ from misthos.domain import comparables
 from misthos.domain.comparables import SettledWork
 from misthos.domain.issue import (
     ESCROW_TERM,
+    RELEASE_MARGIN,
     SILENT_PUBLISHER_GRACE,
     IllegalTransition,
     IssueState,
@@ -139,13 +140,13 @@ class TestGraceAgainstTheEscrowDeadline:
         deadline = decided_at + ESCROW_TERM
         assert silent_release_at(decided_at, deadline) == decided_at + SILENT_PUBLISHER_GRACE
 
-    def test_a_verdict_inside_the_last_week_releases_at_the_deadline(self) -> None:
+    def test_a_verdict_inside_the_last_week_releases_before_the_deadline(self) -> None:
         """Day ten of a fourteen-day funding window: six days of grace remain, not
-        seven, so the release is the deadline rather than a day the contract has
-        already closed."""
+        seven, so the release comes a margin before the deadline rather than on a day
+        the contract has already closed, or at an instant a sweep can only miss."""
         decided_at = datetime(2026, 10, 1, tzinfo=UTC)
         deadline = decided_at + timedelta(days=4)
-        assert silent_release_at(decided_at, deadline) == deadline
+        assert silent_release_at(decided_at, deadline) == deadline - RELEASE_MARGIN
 
     def test_every_passing_verdict_before_the_deadline_has_a_reachable_release(self) -> None:
         """Whatever the verdict time, the release lands inside the escrow window."""
@@ -154,7 +155,8 @@ class TestGraceAgainstTheEscrowDeadline:
         for hours in range(0, 14 * 24, 7):
             decided_at = funded_at + timedelta(hours=hours)
             release_at = silent_release_at(decided_at, deadline)
-            assert decided_at <= release_at <= deadline
+            assert release_at < deadline
+            assert decided_at <= release_at or decided_at > deadline - RELEASE_MARGIN
 
 
 class TestPricing:

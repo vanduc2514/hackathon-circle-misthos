@@ -3,6 +3,13 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError, api, unwrap } from '../lib/client'
 import { MINIMUM_PRICE, contributorShare, parseAmount, platformFee } from '../lib/fee'
+import {
+  DEFAULT_ESCROW_TERM_DAYS,
+  MAX_ESCROW_TERM_DAYS,
+  MIN_ESCROW_TERM_DAYS,
+  deadlineFor,
+  termProblem,
+} from '../lib/term'
 import { parseRepoLink } from '../lib/repo-link'
 import { useHealth, useMe } from '../lib/session'
 import { Panel } from '../components/ui'
@@ -26,6 +33,7 @@ export default function Publish() {
   const [summary, setSummary] = useState('')
   const [labels, setLabels] = useState('')
   const [price, setPrice] = useState('')
+  const [term, setTerm] = useState(String(DEFAULT_ESCROW_TERM_DAYS))
   const [compliance, setCompliance] = useState(false)
 
   // What the publisher typed or pasted, read once: the request carries the
@@ -37,6 +45,8 @@ export default function Publish() {
   // at least the platform's minimum.
   const named = parseAmount(price)
   const priced = !Number.isNaN(named) && named >= MINIMUM_PRICE
+  // How long the escrow holds the money once committed, the publisher's to name (#172).
+  const termRefused = termProblem(term)
 
   const account = me.data?.account ?? null
   const ready = account?.role === 'publisher' && Boolean(account.github_login)
@@ -60,6 +70,7 @@ export default function Publish() {
               .filter(Boolean),
             // The publisher's own number, and the amount the escrow commits (#142).
             price: price.trim(),
+            escrow_term_days: term.trim(),
             // The API publishes as the signed-in publisher whatever this says.
             publisher_id: account?.party_id ?? '',
             compliance_driven: compliance,
@@ -205,6 +216,22 @@ export default function Publish() {
                     : `Any amount from $${MINIMUM_PRICE}. You can change it on the issue's page until someone claims it.`}
                 </span>
               </label>
+              <label className="field">
+                <span>How long the escrow holds the money, in days</span>
+                <input
+                  className="input"
+                  value={term}
+                  onChange={(e) => setTerm(e.target.value)}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  required
+                />
+                <span className={termRefused ? 'field-note bad' : 'field-note'}>
+                  {termRefused
+                    ? termRefused
+                    : `${MIN_ESCROW_TERM_DAYS} to ${MAX_ESCROW_TERM_DAYS} days. Funded today, the money is held until ${deadlineFor(Number(term), new Date()).toUTCString().slice(5, 16)}, then goes back to you if no work was accepted. Contributors see it before they claim.`}
+                </span>
+              </label>
               <label className="check">
                 <input
                   type="checkbox"
@@ -217,7 +244,7 @@ export default function Publish() {
                 <button
                   className="btn primary"
                   type="submit"
-                  disabled={publish.isPending || !link.repo || !title.trim() || !priced}
+                  disabled={publish.isPending || !link.repo || !title.trim() || !priced || Boolean(termRefused)}
                 >
                   {publish.isPending ? 'Publishing…' : 'Publish at this price'}
                 </button>

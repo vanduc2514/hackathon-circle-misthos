@@ -18,7 +18,7 @@ from misthos.api.v1.auth import callback_url, oauth_configured
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.escrow import approve_call, commit_call, issue_key
-from misthos.domain.issue import IllegalTransition, IssueState
+from misthos.domain.issue import EscrowTermRefused, IllegalTransition, IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import PriceRefused
@@ -46,6 +46,7 @@ from misthos.schemas import (
     PublisherListing,
     PublishRequest,
     SubmitRequest,
+    TermRequest,
     TimelineEntry,
     WalletCall,
     money,
@@ -63,6 +64,7 @@ from misthos.store import (
     IssueRecord,
     NotSimulated,
     NotTheSubmission,
+    TermFixed,
     UnreadableIssue,
     UntestableCriteria,
     store,
@@ -266,8 +268,12 @@ async def _act(
         DeclineRefused,
         CriteriaNotApproved,
         NotTheSubmission,
+        TermFixed,
     ) as exc:
         raise _conflict(exc) from exc
+    except EscrowTermRefused as exc:
+        # The term named is the problem, with the bound it broke (#172).
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (ComplianceRefusal, PolicyRefusal, NotSimulated) as exc:
         raise _refused(exc) from exc
     except PriceRefused as exc:
@@ -483,6 +489,36 @@ async def set_price(
     )
 
 
+@router.patch(
+    "/issues/{issue_id}/term",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={
+        409: {"description": "The money is committed, or its approved terms still stand"},
+        422: {"description": "A term outside the bounds, or not a whole number of days"},
+    },
+)
+async def set_escrow_term(
+    issue_id: str,
+    payload: TermRequest,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
+) -> Any:
+    """The publisher names a new escrow term, in whole days, until the money is
+    committed. After that the term is fixed with it, as the price is (#172)."""
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "change this escrow term")
+    if account is not None:
+        require_github(account, "change an escrow term")
+    by = _who(account, "the publisher")
+    return await idempotent(
+        request,
+        idempotency_key,
+        lambda: _act(store.set_escrow_term, issue_id, payload.days, by),
+    )
+
+
 def _amount(text: str) -> Usdc:
     """A price the publisher typed, as USDC.
 
@@ -649,6 +685,9 @@ async def publish(
             # Well formed, but outside the bounds a price may be published at. This is
             # the only thing that refuses a price (#142).
             raise HTTPException(status_code=422, detail=exc.justification) from exc
+        except EscrowTermRefused as exc:
+            # A term the escrow should not hold, with the bound it broke (#172).
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except UnreadableIssue as exc:
             # The App is not installed there, or the issue does not exist.
             raise HTTPException(status_code=422, detail=str(exc)) from exc

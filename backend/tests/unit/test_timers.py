@@ -10,7 +10,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from misthos.domain.issue import CLAIM_WINDOW, ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.issue import (
+    CLAIM_WINDOW,
+    ESCROW_TERM,
+    RELEASE_MARGIN,
+    SILENT_PUBLISHER_GRACE,
+    IssueState,
+)
 from misthos.domain.timers import TIMED_STATES, Clocks, TimedAction, due
 
 T0 = datetime(2026, 10, 1, 12, tzinfo=UTC)
@@ -57,17 +63,19 @@ class TestSilentPublisher:
         assert due(clocks, T0 + ESCROW_TERM) is None
 
     def test_the_grace_is_capped_at_the_escrow_deadline(self) -> None:
-        """A verdict that leaves less than a full grace on the clock releases at the
-        deadline. Uncapped it would release after `release` has started reverting, and
-        the work the verdict passed would be refunded instead. See #33."""
+        """A verdict that leaves less than a full grace on the clock releases a margin
+        before the deadline. Uncapped it would release after `release` has started
+        reverting, and the work the verdict passed would be refunded instead (#33); at
+        the deadline itself, a sweep could only find it due once past it (#172)."""
         clocks = Clocks(
             IssueState.ACCEPTED,
             deadline=T0 + timedelta(days=4),
             verdict_passed_at=T0,
         )
 
-        assert due(clocks, T0 + timedelta(days=4)) is None
-        assert due(clocks, T0 + timedelta(days=4) + A_MOMENT) is TimedAction.RELEASE_AFTER_GRACE
+        due_at = T0 + timedelta(days=4) - RELEASE_MARGIN
+        assert due(clocks, due_at) is None
+        assert due(clocks, due_at + A_MOMENT) is TimedAction.RELEASE_AFTER_GRACE
         # Not a day later, which is where the uncapped grace would have put it.
         assert T0 + SILENT_PUBLISHER_GRACE > clocks.deadline
 

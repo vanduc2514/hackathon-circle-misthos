@@ -8,7 +8,7 @@ from datetime import timedelta
 import pytest
 
 from misthos.domain.compliance import PAYOUT_RETRY_INTERVAL, PayoutGate
-from misthos.domain.issue import ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.issue import ESCROW_TERM, RELEASE_MARGIN, SILENT_PUBLISHER_GRACE, IssueState
 from misthos.models.records import IssueRecord
 from misthos.services.chain import ChainRevert
 from misthos.services.review import ReviewFailed
@@ -127,21 +127,25 @@ class TestSilentPublisher:
         sweep_once(store, now=decided + SILENT_PUBLISHER_GRACE + A_MINUTE)
         assert get("ISS-1002").state is IssueState.PAID
 
-    def test_a_verdict_inside_the_last_week_releases_at_the_deadline(self) -> None:
-        """Five days of grace left on a fourteen-day term: the release window ends at
-        the deadline, because `release` reverts after it. Uncapped it would fire two days
-        later, and the work the verdict passed would be stranded instead of paid (#33)."""
+    def test_a_verdict_inside_the_last_week_releases_before_the_deadline(self) -> None:
+        """Five days of grace left on a fourteen-day term: the release fires a margin
+        before the deadline, because `release` reverts after it. Uncapped it would fire
+        two days later (#33); due at the deadline itself, the sweep that found it due
+        would already be past it, and the contract would refuse it (#172)."""
         store.advance("ISS-1002")
         rec = get("ISS-1002")
         assert rec.review is not None and rec.deadline is not None
         decided = rec.review.decided_at
         assert decided + SILENT_PUBLISHER_GRACE > rec.deadline
 
-        sweep_once(store, now=rec.deadline - A_MINUTE)
+        due_at = rec.deadline - RELEASE_MARGIN
+        sweep_once(store, now=due_at - A_MINUTE)
         assert get("ISS-1002").state is IssueState.ACCEPTED
 
-        sweep_once(store, now=rec.deadline + A_MINUTE)
-        assert get("ISS-1002").state is IssueState.PAID
+        sweep_once(store, now=due_at + A_MINUTE)
+        paid = get("ISS-1002")
+        assert paid.state is IssueState.PAID
+        assert due_at + A_MINUTE < rec.deadline  # inside the window the escrow pays in
 
     def test_a_release_the_chain_refused_is_held_and_paid_on_a_later_pass(
         self, monkeypatch: pytest.MonkeyPatch

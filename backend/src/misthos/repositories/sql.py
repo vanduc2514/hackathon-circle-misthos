@@ -23,7 +23,7 @@ import zlib
 from collections import defaultdict
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Connection, create_engine, delete, func, insert, select, text, update
@@ -37,7 +37,7 @@ from misthos.domain.compliance import (
     ScreeningOutcome,
     ScreeningReason,
 )
-from misthos.domain.issue import FundingTerms, IssueState
+from misthos.domain.issue import ESCROW_TERM, FundingTerms, IssueState
 from misthos.domain.ledger import MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc, format_usdc
 from misthos.domain.pricing import PriceProposal
@@ -603,6 +603,7 @@ def _save(conn: Connection, rec: IssueRecord, floor: int) -> int:
         "criteria_approved_at": rec.criteria_approved_at,
         "relisted_from": rec.relisted_from,
         "price_base_units": rec.price.base_units if rec.price else None,
+        "escrow_term_days": rec.escrow_term.days,
         "terms_amount_base_units": rec.funding.amount.base_units if rec.funding else None,
         "terms_fee_bps": rec.funding.fee_bps if rec.funding else None,
         "terms_wallet": rec.funding.wallet if rec.funding else None,
@@ -862,6 +863,11 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             created_at=_utc(row["created_at"]),
             deadline=_utc(row["deadline"]) if row["deadline"] else None,
             proposal=_proposal(proposals[row["id"]]) if row["id"] in proposals else None,
+            escrow_term=(
+                timedelta(days=row["escrow_term_days"])
+                if row["escrow_term_days"] is not None
+                else ESCROW_TERM
+            ),
             price=(
                 Usdc(row["price_base_units"]) if row["price_base_units"] is not None else None
             ),

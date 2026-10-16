@@ -218,9 +218,20 @@ export interface paths {
          * Commitment Plan
          * @description The two transactions the publisher's own wallet sends to fund the issue.
          *
-         *     The platform never signs a commitment: it moves the publisher's USDC. Approving
-         *     the price records it as the escrow's ceiling; the publisher's wallet then lets the
-         *     escrow take that amount and commits it, and approving again books it.
+         *     The platform never signs a commitment: it moves the publisher's USDC. Approving the
+         *     price records it as the escrow's ceiling; the publisher's wallet then lets the escrow
+         *     take that amount and commits it, and approving again books it.
+         *
+         *     The amount is the publisher's price -- the same value `_fund` records as the ceiling,
+         *     and never the engine's suggestion. The escrow refuses any commitment above the
+         *     ceiling (`ExceedsCeiling`), so a plan built from the suggestion could not be booked:
+         *     the wallet would be asked for a number the contract had already ruled out (#150).
+         *
+         *     The deadline is the one the approval fixed, to the second, and the amount and rate
+         *     are the approved ones too. Working them out here instead is what made the booking
+         *     refuse a commitment once an hour had passed between the plan and the booking: the
+         *     escrow's term starts at the commit, so `now + 14d` no longer matches what is on
+         *     chain, and it never matches again (#126).
          */
         get: operations["commitment_plan_api_v1_issues__issue_id__commitment_get"];
         put?: never;
@@ -407,6 +418,27 @@ export interface paths {
          *     nobody claimed on the publisher's behalf (#142).
          */
         patch: operations["set_price_api_v1_issues__issue_id__price_patch"];
+        trace?: never;
+    };
+    "/api/v1/issues/{issue_id}/term": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set Escrow Term
+         * @description The publisher names a new escrow term, in whole days, until the money is
+         *     committed. After that the term is fixed with it, as the price is (#172).
+         */
+        patch: operations["set_escrow_term_api_v1_issues__issue_id__term_patch"];
         trace?: never;
     };
     "/api/v1/issues/{issue_id}/claim": {
@@ -1466,6 +1498,12 @@ export interface components {
             created_at: string;
             /** Deadline */
             deadline?: string | null;
+            /**
+             * Escrow Term Days
+             * @description How long the escrow holds the money once committed, named by the publisher (#172). Shown before anyone claims; `deadline` is set from it at funding.
+             * @default 14
+             */
+            escrow_term_days: number;
             /** Price Usdc */
             price_usdc?: string | null;
             proposal?: components["schemas"]["PriceProposalOut"] | null;
@@ -1513,6 +1551,11 @@ export interface components {
             confidence?: string | null;
             /** Deadline */
             deadline?: string | null;
+            /**
+             * Escrow Term Days
+             * @default 14
+             */
+            escrow_term_days: number;
             /** Github Url */
             github_url: string;
         };
@@ -1776,6 +1819,11 @@ export interface components {
             labels?: string[];
             /** Publisher Id */
             publisher_id: string;
+            /**
+             * Escrow Term Days
+             * @description How many whole days the escrow holds the money once committed: 3 to 90, 14 when not named (#172). The deadline is the approval plus this term.
+             */
+            escrow_term_days?: number | string | null;
             /** Price */
             price?: number | string | null;
             /**
@@ -2147,6 +2195,17 @@ export interface components {
              * Format: date-time
              */
             paid_at: string;
+        };
+        /**
+         * TermRequest
+         * @description A new escrow term for an issue whose money is not committed yet (#172).
+         */
+        TermRequest: {
+            /**
+             * Days
+             * @description Whole days, within the published bounds
+             */
+            days: number | string;
         };
         /** TimelineEntry */
         TimelineEntry: {
@@ -2958,6 +3017,49 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    set_escrow_term_api_v1_issues__issue_id__term_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TermRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueOut"];
+                };
+            };
+            /** @description The money is committed, or its approved terms still stand */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A term outside the bounds, or not a whole number of days */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -7,6 +7,15 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **The publisher names how long the escrow holds the money** (#172). Publishing takes
+  an escrow term in whole days, from 3 to 90, instead of the fixed 14, which stays the
+  default: `"escrow_term_days": 30` holds the money for thirty days from the moment the
+  price is approved. A term outside the bounds, or not a whole number of days, is refused
+  with the bound named. The term is shown on the issue before anyone claims, can change
+  with `PATCH /api/v1/issues/{id}/term` until the money is committed, and is then fixed
+  with it. When the deadline caps the seven-day silent-publisher grace, the release now
+  fires ten minutes before the deadline rather than at it, where the escrow would already
+  refuse it.
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:
   white pages, black ink and buttons, Georgia headings and figures, and Arial text. The
   dark, mono, orange theme is gone.

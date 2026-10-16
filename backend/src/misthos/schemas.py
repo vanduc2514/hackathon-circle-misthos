@@ -272,6 +272,11 @@ class IssueOut(BaseModel):
     publisher_name: str
     created_at: datetime
     deadline: datetime | None = None
+    escrow_term_days: int = Field(
+        default=14,
+        description="How long the escrow holds the money once committed, named by the "
+        "publisher (#172). Shown before anyone claims; `deadline` is set from it at funding.",
+    )
     price_usdc: str | None = None
     """What the publisher said the work is worth, and what the escrow commits (#142).
     Null on an issue published before #142, whose amount came from the recommendation."""
@@ -305,6 +310,7 @@ class IssueSummaryOut(BaseModel):
     price_usdc: str | None = None
     confidence: str | None = None
     deadline: datetime | None = None
+    escrow_term_days: int = 14
     github_url: str
 
 
@@ -365,6 +371,11 @@ class PublishRequest(BaseModel):
     summary: str = ""
     labels: list[str] = Field(default_factory=list)
     publisher_id: str
+    escrow_term_days: Decimal | None = Field(
+        default=None,
+        description="How many whole days the escrow holds the money once committed: 3 to "
+        "90, 14 when not named (#172). The deadline is the approval plus this term.",
+    )
     price: Decimal | None = None
     """USDC, as the publisher types it. Their number, and the amount the escrow
     commits: the engine's suggestion is advice beside it, never a bound (#142).
@@ -452,6 +463,12 @@ class FundRequest(BaseModel):
     after it was published and audited, so the price is set at publish time and moved
     with `PATCH /issues/{issue_id}/price` until someone claims the issue (#142).
     """
+
+
+class TermRequest(BaseModel):
+    """A new escrow term for an issue whose money is not committed yet (#172)."""
+
+    days: Decimal = Field(description="Whole days, within the published bounds")
 
 
 class PriceRequest(BaseModel):

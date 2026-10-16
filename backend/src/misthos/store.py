@@ -228,6 +228,11 @@ class AccountExists(Exception):
     """A wallet chooses its role once."""
 
 
+class TermFixed(Exception):
+    """The escrow term is fixed with the money: the wallet committed, or is about to
+    commit, the deadline it implies (#172)."""
+
+
 class CriteriaNotApproved(Exception):
     """No funding before the publisher approves the acceptance criteria (#21)."""
 
@@ -746,7 +751,8 @@ class Store:
             wallet=publisher.wallet.address,
             # Whole seconds, as the escrow holds it, so the plan, the escrow and the
             # booking all name the same instant.
-            deadline=(at + lifecycle.ESCROW_TERM).replace(microsecond=0),
+            # The term the publisher named at publish time (#172), 14 days by default.
+            deadline=(at + rec.escrow_term).replace(microsecond=0),
             approved_at=at,
         )
 
@@ -1721,6 +1727,9 @@ class Store:
         # (#142). Absent on an issue the GitHub flow listed, which is priced later by
         # `/misthos price`; nothing is funded until it is named.
         price = check_price(Usdc.from_decimal(payload.price)) if payload.price is not None else None
+        # Checked before anything is read or opened, so a term the escrow should not
+        # hold is refused with its bound rather than after a GitHub call (#172).
+        term = self._escrow_term(payload.escrow_term_days)
         spec = {
             "repo": payload.repo,
             "number": number or self._unlisted_number(payload.repo),
@@ -1755,6 +1764,7 @@ class Store:
             spec["signals"] = reading.signals.as_dict()
             spec["signals_read"] = f"read {facts.repo}#{facts.number}: {reading.summary()}"
         rec = self._build(spec)
+        rec.escrow_term = term
         self._move(rec, IssueState.AWAITING_APPROVAL)
         self._log(
             rec,
@@ -2931,6 +2941,61 @@ class Store:
             self.repo.save_issues(rec)
             return rec
 
+    @staticmethod
+    def _escrow_term(days: object) -> timedelta:
+        return lifecycle.escrow_term(
+            days,  # type: ignore[arg-type]
+            shortest=timedelta(days=settings.escrow_term_min_days),
+            longest=timedelta(days=settings.escrow_term_max_days),
+        )
+
+    def set_escrow_term(
+        self, issue_id: str, days: object, by: str, now: datetime | None = None
+    ) -> IssueRecord:
+        """The publisher names a new escrow term, while the money is not committed.
+
+        The term is fixed with the money, as the price and the fee are: once the escrow
+        holds a commitment the wallet has committed the deadline the term implies, and
+        booking checks against it. Approved terms that still stand are fixed too,
+        because the plan has already handed that deadline to the wallet (#172).
+        """
+        self.ensure_ready()
+        term = self._escrow_term(days)
+        when = now or _now()
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            committed = rec.escrow is not None or self.chain.commitment(rec.id) is not None
+            if committed or rec.state not in _PRE_FUNDING:
+                deadline = rec.deadline or (rec.funding.deadline if rec.funding else None)
+                raise TermFixed(
+                    f"the money for {rec.id} is already committed"
+                    + (f", with a deadline of {deadline:%Y-%m-%d %H:%M} UTC" if deadline else "")
+                    + "; the escrow term is fixed with it"
+                )
+            if rec.funding is not None and rec.funding.stand(when):
+                raise TermFixed(
+                    f"the price of {rec.id} was approved with a deadline of "
+                    f"{rec.funding.deadline:%Y-%m-%d %H:%M} UTC, which the wallet may be "
+                    "committing now; the term can change once that approval lapses at "
+                    f"{rec.funding.approved_at + lifecycle.COMMIT_WINDOW:%Y-%m-%d %H:%M} UTC"
+                )
+            if rec.escrow_term == term:
+                return rec
+            previous = rec.escrow_term
+            rec.escrow_term = term
+            self._log(
+                rec,
+                actor="publisher",
+                action="escrow_term_set",
+                rule="publisher_names_the_term",
+                outcome=f"{by} moved the escrow term from {previous.days} to {term.days} days",
+                when=when,
+            )
+            self.repo.save_issues(rec)
+            return rec
+
     def _approve_and_fund(self, rec: IssueRecord, now: datetime, outcome: str) -> None:
         if rec.criteria_approved_at is None:
             raise CriteriaNotApproved(
@@ -3388,6 +3453,7 @@ class Store:
             publisher_name=publisher.name,
             created_at=rec.created_at,
             deadline=rec.deadline,
+            escrow_term_days=rec.escrow_term.days,
             price_usdc=_display_price(rec),
             proposal=proposal_out,
             escrow=rec.escrow,
@@ -3417,6 +3483,7 @@ class Store:
                 price_usdc=_display_price(rec),
                 confidence=rec.proposal.confidence if rec.proposal else None,
                 deadline=rec.deadline,
+                escrow_term_days=rec.escrow_term.days,
                 github_url=rec.github_url,
             )
             for rec in records

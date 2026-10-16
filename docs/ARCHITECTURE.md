@@ -506,6 +506,22 @@ erDiagram
 | Issue | Repo, number, acceptance criteria, state, deadline | State owned by the lifecycle service |
 | PriceProposal | Band low, band high, recommended, signals, justification, confidence, fundable | The engine's suggestion on the issue, surfaced as `IssueOut.proposal`. `fundable` is always true: it never refuses or caps the price the publisher names |
 | EscrowCommitment | Issue id, amount, chain, tx hash, deadline | Mirrors on-chain state. The chain is the source of truth |
+
+**The escrow term** (#172). How long the escrow holds the money is the publisher's to name at publish time, in whole days from 3 to 90 (`MIN_ESCROW_TERM`, `MAX_ESCROW_TERM` in `domain/issue.py`, configurable as `MISTHOS_ESCROW_TERM_MIN_DAYS` and `MISTHOS_ESCROW_TERM_MAX_DAYS`), and 14 days when they name none. The floor stops a commitment that could be refunded before anyone could work; the ceiling stops money stranded for years, since the contract only checks that a deadline is in the future. The term is shown on the issue before anyone claims, and the deadline is the approval plus the term, to the second, which is what the wallet commits and what booking checks. It can change with `PATCH /issues/{id}/term` until the money is committed, and then it is fixed with it, as the price and the fee are:
+
+```http
+POST /api/v1/issues
+{"repo": "acme/widgets", "number": 5, "title": "Retry on 503", "publisher_id": "PUB-1",
+ "price": "500", "escrow_term_days": 30}
+
+→ 201 {"id": "ISS-1009", "escrow_term_days": 30, "deadline": null, ...}
+   (funded on 15 October, the deadline is 14 November at the same second)
+
+POST /api/v1/issues   … "escrow_term_days": 2
+→ 422 {"detail": "the escrow term must be at least 3 days, so a contributor has time to work before the money can go back; 2 is too short"}
+```
+
+A short term always caps the seven-day silent-publisher grace. The capped release is due `RELEASE_MARGIN` (ten minutes) before the deadline rather than at it, because the contract refuses a release after its deadline and a sweep that found it due at the deadline itself would already be past it.
 | Claim | Contributor, issued at, expires at | At most one active claim per issue |
 | Submission | PR number, head sha, checks result | Immutable per sha |
 | Review | Verdict, findings, decided at | The platform's verdict is the decision. There is no draft to confirm |

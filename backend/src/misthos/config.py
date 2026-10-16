@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     # recovery and a nonce the store has to remember, so it is budgeted like publish.
     rate_limit_signin_per_minute: int = 20
 
+    # The bounds on the escrow term a publisher may name, in whole days (#172).
+    escrow_term_min_days: int = 3
+    escrow_term_max_days: int = 90
+
     # The name of the acceptance attestation key in the managed secret store. A
     # reference, never the key: see docs/runbooks/attestor-rotation.md.
     attestor_secret_ref: str = ""

@@ -110,6 +110,9 @@ issues = Table(
     # What the publisher priced the work at. Null only on issues funded before #142,
     # which took their amount from the engine's recommendation instead.
     Column("price_base_units", BigInteger),
+    # The escrow term the publisher named, in whole days (#172). Null is the default
+    # 14 days, which every issue published before it has.
+    Column("escrow_term_days", Integer),
     # The terms the price approval fixed (#126), so a booking checks the commitment
     # against what the publisher was shown rather than a deadline recomputed from the
     # clock. Null until a price is approved.

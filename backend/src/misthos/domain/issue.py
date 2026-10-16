@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 
 from misthos.domain.money import Usdc
@@ -80,8 +81,22 @@ SILENT_PUBLISHER_GRACE = timedelta(days=7)
 CLAIM_WINDOW = timedelta(hours=72)
 
 # How long committed funds wait for acceptable work before they go back to the
-# publisher. The escrow contract holds the same deadline on chain.
+# publisher, when the publisher names no term of their own (#172). The escrow
+# contract holds the deadline the term implies; it takes any deadline in the future.
 ESCROW_TERM = timedelta(days=14)
+
+# The bounds on a term the publisher names (#172). The contract only checks that a
+# deadline is in the future, so without a floor a publisher could commit for a second
+# and reclaim before anyone could work, and without a ceiling strand the money for
+# years. Whole days, both ways.
+MIN_ESCROW_TERM = timedelta(days=3)
+MAX_ESCROW_TERM = timedelta(days=90)
+
+# How long before the escrow deadline the silent-publisher release fires when the
+# deadline caps the grace. The contract refuses a release after its deadline, so a
+# release due at the deadline itself would be tried a sweep too late, every time; a
+# short term always caps the grace, which made that the common case (#172).
+RELEASE_MARGIN = timedelta(minutes=10)
 
 # How long approved terms stand, while nothing is committed to the escrow. Within it,
 # approving again keeps the terms the plan already handed the wallet rather than moving
@@ -125,6 +140,47 @@ class FundingTerms:
         return now < self.approved_at + COMMIT_WINDOW
 
 
+class EscrowTermRefused(ValueError):
+    """A term the publisher named that the escrow should not hold, with the reason."""
+
+
+def escrow_term(
+    days: Decimal | int | str | None,
+    *,
+    shortest: timedelta = MIN_ESCROW_TERM,
+    longest: timedelta = MAX_ESCROW_TERM,
+) -> timedelta:
+    """The term a publisher named, checked; 14 days when they named none (#172).
+
+    Whole days only, so the deadline a contributor reads is a date, not an instant
+    someone chose to the second. The refusal names the bound it broke.
+    """
+    if days is None:
+        return ESCROW_TERM
+    try:
+        value = Decimal(str(days).strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise EscrowTermRefused(f"{days!r} is not a number of days") from exc
+    if not value.is_finite():
+        raise EscrowTermRefused(f"{days!r} is not a number of days")
+    if value != value.to_integral_value():
+        raise EscrowTermRefused(f"name the escrow term in whole days, not {value}")
+    low, high = shortest.days, longest.days
+    if value <= 0:
+        raise EscrowTermRefused(f"the escrow term must be {low} to {high} days, not {value}")
+    if value < low:
+        raise EscrowTermRefused(
+            f"the escrow term must be at least {low} days, so a contributor has time to "
+            f"work before the money can go back; {value} is too short"
+        )
+    if value > high:
+        raise EscrowTermRefused(
+            f"the escrow term can be at most {high} days, so the money is never stranded; "
+            f"{value} is too long"
+        )
+    return timedelta(days=int(value))
+
+
 class IllegalTransition(Exception):
     def __init__(self, current: IssueState, requested: IssueState) -> None:
         super().__init__(f"cannot move an issue from {current} to {requested}")
@@ -150,9 +206,12 @@ def silent_release_at(decided_at: datetime, deadline: datetime) -> datetime:
     """When a passing verdict releases without the publisher's signature.
 
     The escrow only pays inside its own window, so the grace can never outlive the
-    deadline. A verdict that leaves less than the full grace on the clock releases at
-    the deadline instead of later: uncapped, the release the grace exists for would
-    land after the contract has closed and the only path left would be the refund to
-    the publisher that the grace was written to avoid.
+    deadline. A verdict that leaves less than the full grace on the clock releases a
+    `RELEASE_MARGIN` before the deadline instead of later: uncapped, the release the
+    grace exists for would land after the contract has closed and the only path left
+    would be the refund to the publisher that the grace was written to avoid. Due at
+    the deadline itself, the sweep that found it due would already be past it.
     """
-    return min(decided_at + SILENT_PUBLISHER_GRACE, deadline)
+    # Capped, it is due a margin before the deadline: a sweep that finds it due can
+    # still land it. A verdict later than that is due at once (#172).
+    return min(decided_at + SILENT_PUBLISHER_GRACE, deadline - RELEASE_MARGIN)

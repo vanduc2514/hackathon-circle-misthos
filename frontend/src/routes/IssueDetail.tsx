@@ -10,6 +10,7 @@ import {
   type IssueOut,
   type TimelineEntry,
 } from '../lib/client'
+import { termNote } from '../lib/term'
 import { Bar, ChecksChip, Panel, StateBadge, Stepper } from '../components/ui'
 import IssueActions, { roleOn } from '../components/IssueActions'
 import { BridgeToArc } from '../components/BridgeToArc'
@@ -363,6 +364,8 @@ export default function IssueDetail() {
               <dd>{issue.publisher_name}</dd>
               <dt>Contributor</dt>
               <dd>{issue.contributor_id ?? '— not claimed'}</dd>
+              <dt>Escrow term</dt>
+              <dd>{termNote(issue.escrow_term_days, issue.deadline)}</dd>
               <dt>Opened</dt>
               <dd className="muted">{shortTime(issue.created_at)}</dd>
             </dl>
