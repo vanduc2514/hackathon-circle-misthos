@@ -50,7 +50,11 @@ from misthos.domain.compliance import (
     ScreeningOutcome,
     ScreeningReason,
 )
-from misthos.domain.issue import FundingTerms, IssueState
+from misthos.domain.issue import (
+    FundingTerms,
+    IssueState,
+    check_escrow_term,
+)
 from misthos.domain.ledger import Divergence, MoneyEvent, MoneyEventKind, OnChain
 from misthos.domain.money import Usdc
 from misthos.domain.policy import (
@@ -497,6 +501,7 @@ class Store:
             created_at=now - timedelta(days=spec["age_days"]),
             proposal=proposal,
             price=price,
+            escrow_term=spec.get("escrow_term"),
         )
 
         if spec.get("signals_read"):
@@ -745,8 +750,11 @@ class Store:
             # commits. A Circle wallet they set up never replaces it (#123).
             wallet=publisher.wallet.address,
             # Whole seconds, as the escrow holds it, so the plan, the escrow and the
-            # booking all name the same instant.
-            deadline=(at + lifecycle.ESCROW_TERM).replace(microsecond=0),
+            # booking all name the same instant. The term is the publisher's dial
+            # (#172): the stored one when they named it, the default otherwise.
+            deadline=(
+                at + (rec.escrow_term if rec.escrow_term is not None else lifecycle.ESCROW_TERM)
+            ).replace(microsecond=0),
             approved_at=at,
         )
 
@@ -1721,6 +1729,13 @@ class Store:
         # (#142). Absent on an issue the GitHub flow listed, which is priced later by
         # `/misthos price`; nothing is funded until it is named.
         price = check_price(Usdc.from_decimal(payload.price)) if payload.price is not None else None
+        # The escrow term is the publisher's other dial (#172): validated here, with
+        # the bound named, and None left meaning the default 14 days.
+        escrow_term = (
+            check_escrow_term(payload.escrow_term_days)
+            if payload.escrow_term_days is not None
+            else None
+        )
         spec = {
             "repo": payload.repo,
             "number": number or self._unlisted_number(payload.repo),
@@ -1729,6 +1744,7 @@ class Store:
             "state": IssueState.PRICED,
             "labels": list(payload.labels),
             "price": str(price.decimal) if price is not None else None,
+            "escrow_term": escrow_term,
             "compliance_driven": payload.compliance_driven,
             # Drafted from the issue, every one checkable (#38); the publisher edits
             # and approves them before any money is committed.
@@ -3388,6 +3404,7 @@ class Store:
             publisher_name=publisher.name,
             created_at=rec.created_at,
             deadline=rec.deadline,
+            escrow_term_days=rec.escrow_term.days if rec.escrow_term else None,
             price_usdc=_display_price(rec),
             proposal=proposal_out,
             escrow=rec.escrow,

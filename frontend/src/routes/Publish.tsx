@@ -26,6 +26,7 @@ export default function Publish() {
   const [summary, setSummary] = useState('')
   const [labels, setLabels] = useState('')
   const [price, setPrice] = useState('')
+  const [escrowTerm, setEscrowTerm] = useState('')
   const [compliance, setCompliance] = useState(false)
 
   // What the publisher typed or pasted, read once: the request carries the
@@ -37,6 +38,16 @@ export default function Publish() {
   // at least the platform's minimum.
   const named = parseAmount(price)
   const priced = !Number.isNaN(named) && named >= MINIMUM_PRICE
+  // The escrow term is the publisher's other dial (#172): how long the money sits.
+  // Empty means the 14-day default; anything else must be whole days, 3 to 90.
+  const termDays = escrowTerm.trim() === '' ? null : Number(escrowTerm)
+  const termValid =
+    termDays === null ||
+    (Number.isInteger(termDays) && termDays >= 3 && termDays <= 90)
+  const termDeadline =
+    termDays !== null && termValid
+      ? new Date(Date.now() + termDays * 24 * 60 * 60 * 1000)
+      : null
 
   const account = me.data?.account ?? null
   const ready = account?.role === 'publisher' && Boolean(account.github_login)
@@ -60,6 +71,9 @@ export default function Publish() {
               .filter(Boolean),
             // The publisher's own number, and the amount the escrow commits (#142).
             price: price.trim(),
+            // How long the escrow holds it (#172). Null when unnamed: the API
+            // applies the 14-day default and nothing existing changes.
+            escrow_term_days: termDays,
             // The API publishes as the signed-in publisher whatever this says.
             publisher_id: account?.party_id ?? '',
             compliance_driven: compliance,
@@ -205,6 +219,24 @@ export default function Publish() {
                     : `Any amount from $${MINIMUM_PRICE}. You can change it on the issue's page until someone claims it.`}
                 </span>
               </label>
+              <label className="field">
+                <span>How long the escrow holds the money, in days</span>
+                <input
+                  className="input"
+                  value={escrowTerm}
+                  onChange={(e) => setEscrowTerm(e.target.value)}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="14 (default)"
+                />
+                <span className={termValid ? 'field-note' : 'field-note bad'}>
+                  {termValid
+                    ? termDeadline
+                      ? `The escrow commits until ${termDeadline.toLocaleDateString()} — the contributor sees this deadline before claiming.`
+                      : 'Leave empty for the 14-day default.'
+                    : 'Name a whole number of days from 3 to 90: shorter invites an instant reclaim, longer strands the money.'}
+                </span>
+              </label>
               <label className="check">
                 <input
                   type="checkbox"
@@ -217,7 +249,7 @@ export default function Publish() {
                 <button
                   className="btn primary"
                   type="submit"
-                  disabled={publish.isPending || !link.repo || !title.trim() || !priced}
+                  disabled={publish.isPending || !link.repo || !title.trim() || !priced || !termValid}
                 >
                   {publish.isPending ? 'Publishing…' : 'Publish at this price'}
                 </button>

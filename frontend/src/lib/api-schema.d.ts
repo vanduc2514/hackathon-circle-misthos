@@ -1484,6 +1484,12 @@ export interface components {
             /** Criteria Approved At */
             criteria_approved_at?: string | null;
             /**
+             * Escrow Term Days
+             * @description How long the escrow holds the money, named by the publisher at
+             * publish time. Null means the 14-day default.
+             */
+            escrow_term_days?: number | null;
+            /**
              * Awaiting Approver
              * @default false
              */
@@ -1779,15 +1785,23 @@ export interface components {
             /** Price */
             price?: number | string | null;
             /**
-             * Compliance Driven
-             * @default false
-             */
-            compliance_driven: boolean;
-            /** Signals */
-            signals?: {
-                [key: string]: number;
-            };
-        };
+             /** Compliance Driven
+              * @default false
+              */
+             compliance_driven: boolean;
+             /**
+              * Escrow Term Days
+              * @description How long the escrow holds the money, in whole days, named by
+              * the publisher at publish time. Optional: omitted means the 14-day default.
+              * Validated against the 3-day minimum and 90-day maximum at publish.
+              * @example 30
+              */
+             escrow_term_days?: number | null;
+             /** Signals */
+             signals?: {
+                 [key: string]: number;
+             };
+             };
         /** Publisher */
         Publisher: {
             /** Id */
