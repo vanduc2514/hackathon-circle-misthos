@@ -20,6 +20,11 @@ export type HealthOut = components['schemas']['HealthOut']
 export type Account = components['schemas']['Account']
 export type MeOut = components['schemas']['MeOut']
 export type SessionOut = components['schemas']['SessionOut']
+export type DashboardOut = components['schemas']['DashboardOut']
+export type PublisherDashboardOut = components['schemas']['PublisherDashboardOut']
+export type ContributorDashboardOut = components['schemas']['ContributorDashboardOut']
+export type DashboardIssueItem = components['schemas']['DashboardIssueItem']
+export type DashboardAction = DashboardIssueItem['next_action']
 
 /**
  * A refusal from the API, carrying the reason it gave.
