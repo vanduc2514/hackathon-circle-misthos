@@ -2,7 +2,7 @@
 
 `ClaudeReviewer` reads the diff and is used once `MISTHOS_ANTHROPIC_API_KEY` is set.
 `RuleReviewer` judges only what the file list proves, costs nothing, and is what the
-simulation and the regression corpus run. Either way the verdict follows from the
+regression corpus runs. Either way the verdict follows from the
 judgement by the rules in domain/review.py.
 """
 

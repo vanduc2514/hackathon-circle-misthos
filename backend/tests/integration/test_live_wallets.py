@@ -50,7 +50,6 @@ def sign_in_contributor(client: TestClient, seed: int) -> str:
 
 def live_edge(monkeypatch: pytest.MonkeyPatch, reply: dict, chain_id: int = ARC_TESTNET) -> None:
     """Run the API live on `chain_id`, with an edge that answers `reply` to the core."""
-    monkeypatch.setattr(settings, "simulated", False)
     monkeypatch.setattr(settings, "chain_id", chain_id)
     monkeypatch.setattr(settings, "edge_core_token", "secret")
 
@@ -145,7 +144,6 @@ class TestALiveApi:
 
         assert session.status_code == 200, session.text
         body = session.json()
-        assert body["simulated"] is False
         assert body["wallet"] == {"address": ADDRESS, "chain": chain, "circle_user_id": None}
         assert kept(party_id).address == ADDRESS  # type: ignore[attr-defined]
         link = client.post(f"{API}/wallets/contributor/{party_id}/link")

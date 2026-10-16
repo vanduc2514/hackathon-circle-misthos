@@ -4,13 +4,7 @@ Every delivery is verified against the App's webhook secret before anything is r
 from it: a receiver that skips that is the easiest way to let anyone post a merge,
 and a merge releases money. When a live App is configured a delivery without a
 signature is refused, and so is every delivery while the secret is still the
-development default. Only the simulation accepts unsigned deliveries, so the demo
-can be driven by hand.
-
-Whether a signature is required follows from which gateway is in use, never from
-`MISTHOS_SIMULATED`: that flag describes the chain, and the documented App setup
-leaves it on, so keying the check on it would leave a real App's endpoint accepting
-unsigned deliveries that release escrow.
+development default.
 
 Each delivery is handled once. GitHub's delivery id is recorded first, a redelivery
 is answered without acting again, and a delivery whose handling failed is forgotten
@@ -32,15 +26,13 @@ from fastapi.concurrency import run_in_threadpool
 from misthos.config import settings
 from misthos.repositories import StaleIssue
 from misthos.services.coordination import Busy
-from misthos.services.github import GitHubError, GitHubNotConfigured, SimulatedGitHub
+from misthos.services.github import GitHubError, GitHubNotConfigured
 from misthos.services.github.events import HANDLED_EVENTS, Handled, dispatch
 from misthos.store import store
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 DEV_SECRET = "dev-secret"
-# The only gateway that may accept an unsigned delivery: GitHub never posts to it.
-SIMULATED_GATEWAY = SimulatedGitHub.name
 # An action holds its issue for well under a second, so a delivery that finds the
 # issue busy waits briefly rather than failing back to GitHub.
 BUSY_RETRIES = 5
@@ -51,6 +43,13 @@ def signature_for(body: bytes, secret: str) -> str:
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
+def signatures_are_required() -> bool:
+    """Whether a delivery must carry a signature the App's secret can verify."""
+    return store.github.name == "github-app" or bool(
+        settings.github_app_id and settings.github_app_private_key
+    )
+
+
 @router.get("/github")
 async def describe() -> dict[str, object]:
     return {
@@ -59,9 +58,9 @@ async def describe() -> dict[str, object]:
         "delivery_header": "X-GitHub-Delivery",
         "handled_events": HANDLED_EVENTS,
         "github": store.github.name,
-        "note": "Simulated: no GitHub App is configured."
-        if store.github.name == "simulated"
-        else "Live: deliveries come from the configured GitHub App.",
+        "note": "Deliveries come from the configured GitHub App."
+        if signatures_are_required()
+        else "No GitHub App is configured.",
     }
 
 
@@ -76,16 +75,6 @@ def _handle(event: str, payload: dict[str, Any]) -> Handled:
     raise AssertionError("unreachable")
 
 
-def signatures_are_required() -> bool:
-    """Whether a delivery must carry a signature the App's secret can verify.
-
-    A live App means GitHub is the only legitimate sender, so every delivery is
-    verified. The simulation is the one exception, because nothing signs the
-    hand-driven demo deliveries.
-    """
-    return store.github.name != SIMULATED_GATEWAY
-
-
 def assert_webhook_secret_is_configured() -> None:
     """Refuse to start a live App whose deliveries could never be verified.
 
@@ -95,7 +84,7 @@ def assert_webhook_secret_is_configured() -> None:
     does nothing at all. Said at startup, where the operator can still fix it.
     """
     if not (settings.github_app_id and settings.github_app_private_key):
-        return  # GitHub is simulated: nothing signs deliveries, and none is expected
+        return  # GitHub is unconfigured: nothing signs deliveries, and none is expected
     if settings.github_webhook_secret == DEV_SECRET:
         raise GitHubNotConfigured(
             "a GitHub App is configured but MISTHOS_GITHUB_WEBHOOK_SECRET is still the "
@@ -114,7 +103,7 @@ async def receive(
     body = await request.body()
 
     # Required whenever a real App is configured. A signature that is present is
-    # always checked, so the simulation cannot be used to smuggle one either.
+    # always checked.
     if signatures_are_required():
         if settings.github_webhook_secret == DEV_SECRET:
             raise HTTPException(status_code=503, detail="the webhook secret is not configured")

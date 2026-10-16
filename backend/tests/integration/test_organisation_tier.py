@@ -11,13 +11,14 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState
 from misthos.domain.ledger import MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.main import app
-from misthos.schemas import PublishRequest
+from misthos.schemas import Account, PublishRequest
 from misthos.store import store
 from misthos.workers.sweeper import sweep_once
 
@@ -30,12 +31,28 @@ APPROVER = "dana-globex"  # a GitHub login, which is what a session can prove
 @pytest.fixture(autouse=True)
 def fresh_store():
     store.reset()
+    pub4 = store.get_publisher("PUB-4")
+    assert pub4 is not None
+    store.repo.save_account(
+        Account(
+            address=pub4.wallet.address.lower(),
+            role="publisher",
+            party_id="PUB-4",
+            github_login=APPROVER,
+            created_at=datetime.now(UTC),
+        )
+    )
     yield
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    c = TestClient(app)
+    pub4 = store.get_publisher("PUB-4")
+    assert pub4 is not None
+    token = sessions.issue(pub4.wallet.address)
+    c.headers["Authorization"] = f"Bearer {token}"
+    return c
 
 
 def policy(client: TestClient, **body: object) -> object:
@@ -77,7 +94,19 @@ class TestReleaseThreshold:
         to_acceptance(ISSUE)
         store.advance(ISSUE)
 
-        r = client.post(f"{API}/issues/{ISSUE}/approve-release", json={"approver": "mallory"})
+        mallory_client = TestClient(app)
+        mallory_wallet = "0x" + "ca" * 20
+        store.repo.save_account(
+            Account(
+                address=mallory_wallet,
+                role="publisher",
+                party_id="PUB-4",
+                github_login="mallory",
+                created_at=datetime.now(UTC),
+            )
+        )
+        mallory_client.headers["Authorization"] = f"Bearer {sessions.issue(mallory_wallet)}"
+        r = mallory_client.post(f"{API}/issues/{ISSUE}/approve-release", json={"approver": "mallory"})
         assert r.status_code == 403
         r = client.post(f"{API}/issues/{ISSUE}/approve-release", json={"approver": APPROVER})
         assert r.status_code == 200 and r.json()["state"] == "PAID"
@@ -256,7 +285,19 @@ class TestSpendView:
         assert f"{month:.2f} USDC is committed already" in r.json()["detail"]
 
     def test_an_unknown_publisher_is_404(self, client: TestClient) -> None:
-        assert client.get(f"{API}/publishers/PUB-999/spend").status_code == 404
+        p999_client = TestClient(app)
+        p999_wallet = "0x" + "99" * 20
+        store.repo.save_account(
+            Account(
+                address=p999_wallet,
+                role="publisher",
+                party_id="PUB-999",
+                github_login="p999",
+                created_at=datetime.now(UTC),
+            )
+        )
+        p999_client.headers["Authorization"] = f"Bearer {sessions.issue(p999_wallet)}"
+        assert p999_client.get(f"{API}/publishers/PUB-999/spend").status_code == 404
 
 
 class TestAuditExport:
@@ -297,11 +338,8 @@ class TestAuditExport:
         r = client.get(f"{API}/publishers/{PUBLISHER}/audit", params={"format": "csv"})
         assert r.headers["content-type"].startswith("text/csv")
         lines = r.text.splitlines()
-        # The header is the first line, so a reader that trusts it needs no special
-        # case; the simulation caveat is a last row among the data.
         assert lines[0].startswith("record,")
-        assert lines[-1].startswith("# SIMULATED")
-        rows = list(csv.DictReader(io.StringIO("\n".join(lines[:-1]))))
+        rows = list(csv.DictReader(io.StringIO("\n".join(lines))))
         ours = [row for row in rows if row["issue_id"] == ISSUE]
         assert {row["record"] for row in ours} == {"decision", "money"}
         assert [row["at_utc"] for row in ours] == sorted(row["at_utc"] for row in ours)
@@ -319,7 +357,7 @@ class TestAuditExport:
         store.approve_and_accept(rec.id)
 
         r = client.get(f"{API}/publishers/{PUBLISHER}/audit", params={"format": "csv"})
-        rows = list(csv.DictReader(io.StringIO("\n".join(r.text.splitlines()[:-1]))))
+        rows = list(csv.DictReader(io.StringIO(r.text)))
         ours = [row for row in rows if row["issue_id"] == rec.id]
 
         assert ours and {row["repo"] for row in ours} == {"'" + repo}
@@ -329,11 +367,10 @@ class TestAuditExport:
     def test_it_is_the_organisations_alone(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(settings, "simulated", False)
         # Anonymous outside the simulation: sign in first.
-        assert client.get(f"{API}/publishers/{PUBLISHER}/audit").status_code == 401
-        assert client.get(f"{API}/publishers/{PUBLISHER}/spend").status_code == 401
-        assert policy(client, approvers=[APPROVER]).status_code == 401
+        assert TestClient(app).get(f"{API}/publishers/{PUBLISHER}/audit").status_code == 401
+        assert TestClient(app).get(f"{API}/publishers/{PUBLISHER}/spend").status_code == 401
+        assert policy(TestClient(app), approvers=[APPROVER]).status_code == 401
 
 
 class TestTheLimitIsAtomic:

@@ -12,18 +12,21 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.domain.ledger import EscrowStatus
 from misthos.main import app
 from misthos.observability import logs
 from misthos.observability.logs import ContextFilter, JsonFormatter
 from misthos.observability.metrics import exported, serve
+from misthos.schemas import Account
 from misthos.store import store
 from misthos.workers.sweeper import sweep_once
 
@@ -33,12 +36,24 @@ API = "/api/v1"
 @pytest.fixture(autouse=True)
 def fresh_store():
     store.reset()
+    store.repo.save_account(
+        Account(
+            address="0xAcme00000000000000000000000000000000A1".lower(),
+            role="publisher",
+            party_id="PUB-1",
+            github_login="acme-bot",
+            created_at=datetime.now(UTC),
+        )
+    )
     yield
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    c = TestClient(app)
+    token = sessions.issue("0xAcme00000000000000000000000000000000A1")
+    c.headers["Authorization"] = f"Bearer {token}"
+    return c
 
 
 def sample(name: str, **labels: str) -> float:

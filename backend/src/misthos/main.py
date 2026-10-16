@@ -28,12 +28,10 @@ DESCRIPTION = """
 Marketplace where a company or a maintainer puts a **fixed price** on a GitHub
 issue and pays whoever fixes it, settled in USDC on Arc.
 
-This build is **simulated**. The lifecycle is real code with real state
-transitions, and the prices come from the actual pricing engine, but the money is
-fake: no chain is contacted. GitHub is simulated too until a GitHub App is
-configured, and then pull request events drive the lifecycle. State is in memory
-unless `MISTHOS_DATABASE_URL` points at a database, and a sweeper applies claim
-expiry, deadline refunds and the silent-publisher release on its own.
+Settlement runs on Arc against the deployed MisthosEscrow. GitHub pull request
+events drive the lifecycle. State is in memory unless `MISTHOS_DATABASE_URL` points
+at a database, and a sweeper applies claim expiry, deadline refunds and the
+silent-publisher release on its own.
 
 Everything lives under `/api/v1`.
 """
@@ -67,8 +65,6 @@ async def report_settlement_problems() -> list[str]:
     fee recipient on it (#127). Read here so an operator hears of it before a publisher
     commits money, rather than at the first release; it does not stop the API, which
     still serves everything that moves no money."""
-    if settings.simulated:
-        return []
     problems = await asyncio.to_thread(store.chain.settlement_problems)
     for problem in problems:
         log.error("settlement is not ready: %s", problem, extra={"alert": "settlement"})
@@ -87,7 +83,7 @@ def create_app() -> FastAPI:
     # so the process refuses to start rather than serving with a key an agent can read.
     assert_key_is_not_in_the_environment()
     assert_secrets_are_configured(
-        settings.simulated, settings.attestor_secret_ref, settings.owner_secret_ref
+        settings.attestor_secret_ref, settings.owner_secret_ref
     )
     # A live App whose deliveries could never be verified is a deployment that looks
     # configured and does nothing, so it is refused where it can still be fixed.

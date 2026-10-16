@@ -9,12 +9,14 @@ import pytest
 from fastapi.testclient import TestClient
 from siwe_wallet import Wallet
 
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import platform_fee
 from misthos.main import app
 from misthos.repositories import StaleIssue
+from misthos.schemas import Account
 from misthos.services.wallets import simulated_address
 from misthos.store import store
 
@@ -23,28 +25,67 @@ API = "/api/v1"
 
 def sign_in(client: TestClient, seed: int, role: str, name: str, login: str) -> dict:
     """A signed-in account with a role and a linked GitHub login, for the guards."""
+    clean_client = TestClient(app)
     wallet = Wallet(seed)
-    nonce = client.post(f"{API}/auth/nonce").json()["nonce"]
+    nonce = clean_client.post(f"{API}/auth/nonce").json()["nonce"]
     message = wallet.message(nonce)
-    verified = client.post(
+    verified = clean_client.post(
         f"{API}/auth/verify", json={"message": message, "signature": wallet.sign(message)}
     )
     assert verified.status_code == 200, verified.text
-    account = client.post(f"{API}/auth/role", json={"role": role, "name": name})
+    account = clean_client.post(f"{API}/auth/role", json={"role": role, "name": name})
     assert account.status_code == 201, account.text
-    linked = client.post(f"{API}/auth/github/simulate", json={"login": login})
-    assert linked.status_code == 200, linked.text
-    return linked.json()
+    linked = store.link_github(account.json()["address"], login)
+    client.cookies.update(clean_client.cookies)
+    client.headers.pop("Authorization", None)
+    return linked.model_dump()
+
+
+def auth_client(party_id: str) -> TestClient:
+    c = TestClient(app)
+    pub = store.get_publisher(party_id)
+    if pub:
+        token = sessions.issue(pub.wallet.address)
+        c.headers["Authorization"] = f"Bearer {token}"
+        return c
+    con = store.get_contributor(party_id)
+    if con:
+        token = sessions.issue(con.wallet.address)
+        c.headers["Authorization"] = f"Bearer {token}"
+        return c
+    return c
 
 
 @pytest.fixture(autouse=True)
 def fresh_store():
     store.reset()
+    now = datetime.now(UTC)
+    for pub in store.list_publishers():
+        store.repo.save_account(
+            Account(
+                address=pub.wallet.address.lower(),
+                role="publisher",
+                party_id=pub.id,
+                github_login=f"{pub.id.lower()}-bot",
+                created_at=now,
+            )
+        )
+    for con in store.list_contributors():
+        store.repo.save_account(
+            Account(
+                address=con.wallet.address.lower(),
+                role="contributor",
+                party_id=con.id,
+                github_login=con.handle,
+                created_at=now,
+            )
+        )
     yield
+
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    return auth_client("PUB-1")
 
 
 class TestEscrowReadback:
@@ -58,7 +99,7 @@ class TestEscrowReadback:
         body = client.get(f"{API}/issues/{issue_id}/escrow").json()
         issue = client.get(f"{API}/issues/{issue_id}").json()
 
-        assert body["source"] == "simulation"
+        assert body["source"] == "chain"
         assert body["status"] == "held"
         assert body["amount"] == issue["escrow"]["amount"]
         assert len(body["issue_key"]) == 66
@@ -91,8 +132,11 @@ class TestEscrowReadback:
         from misthos.services.chain import ChainRevert
 
         issue_id = self._first(client, "awaiting_approval")
+        issue = client.get(f"{API}/issues/{issue_id}").json()
+        token = sessions.issue(store.get_publisher(issue["publisher_id"]).wallet.address)
+        client.headers["Authorization"] = f"Bearer {token}"
         client.post(f"{API}/issues/{issue_id}/criteria", json={
-            "criteria": client.get(f"{API}/issues/{issue_id}").json()["acceptance_criteria"]
+            "criteria": issue["acceptance_criteria"]
         })
 
         def not_yet(*_: object) -> str:
@@ -120,8 +164,11 @@ class TestEscrowReadback:
         from misthos.services.chain import ChainUnavailable
 
         issue_id = self._first(client, "awaiting_approval")
+        issue = client.get(f"{API}/issues/{issue_id}").json()
+        token = sessions.issue(store.get_publisher(issue["publisher_id"]).wallet.address)
+        client.headers["Authorization"] = f"Bearer {token}"
         client.post(f"{API}/issues/{issue_id}/criteria", json={
-            "criteria": client.get(f"{API}/issues/{issue_id}").json()["acceptance_criteria"]
+            "criteria": issue["acceptance_criteria"]
         })
 
         def throttled(*_: object) -> str:
@@ -143,6 +190,12 @@ class TestEscrowReadback:
         from misthos.domain.money import Usdc
 
         issue_id = self._first(client, "awaiting_approval")
+        issue = client.get(f"{API}/issues/{issue_id}").json()
+        token = sessions.issue(store.get_publisher(issue["publisher_id"]).wallet.address)
+        client.headers["Authorization"] = f"Bearer {token}"
+        client.post(f"{API}/issues/{issue_id}/criteria", json={
+            "criteria": issue["acceptance_criteria"]
+        })
         # The plan is what the wallet is handed after an approval, so approve first: the
         # commitment it spells out is the one booking checks against the approved terms.
         # On Arc the first approval is refused with `NotCommitted` so the wallet can
@@ -220,22 +273,19 @@ class TestHealth:
     def test_health_reports_the_simulation(self, client: TestClient) -> None:
         body = client.get(f"{API}/health").json()
         assert body["status"] == "ok"
-        assert body["simulated"] is True
-        assert body["seeded_issues"] == 8
+        assert "simulated" not in body
         assert body["chain"] == "arc-testnet"
         assert body["chain_id"] == 5042002
-        assert body["money"] == "simulated"
-        assert "no money moves" in body["money_note"]
 
     def test_the_label_follows_the_chain_id_at_request_time(self, client: TestClient) -> None:
-        original = (settings.chain_id, settings.simulated)
+        original = settings.chain_id
         try:
-            settings.chain_id, settings.simulated = 5042, False
+            settings.chain_id = 5042
             mainnet = client.get(f"{API}/health").json()
             settings.chain_id = 8453
             other = client.get(f"{API}/health").json()
         finally:
-            settings.chain_id, settings.simulated = original
+            settings.chain_id = original
         assert (mainnet["chain"], mainnet["money"]) == ("arc-mainnet", "real")
         assert (other["chain"], other["money"]) == ("chain-8453", "unknown")
 
@@ -272,8 +322,10 @@ class TestIssues:
 
 class TestWallets:
     def test_a_session_links_the_contributor_wallet(self, client: TestClient) -> None:
-        body = client.post(f"{API}/wallets/contributor/CON-1/session").json()
-        assert body["simulated"] is True
+        con_client = auth_client("CON-1")
+        res = con_client.post(f"{API}/wallets/contributor/CON-1/session")
+        assert res.status_code == 200, res.text
+        body = res.json()
         assert body["challenge_id"] is None
         linked = body["wallet"]
         assert body["circle_user_id"] == "misthos-contributor-CON-1"
@@ -292,7 +344,7 @@ class TestWallets:
         assert publishers["PUB-1"]["wallet"] == wallet
 
     def test_an_unknown_party_or_id_is_refused(self, client: TestClient) -> None:
-        assert client.post(f"{API}/wallets/contributor/CON-999/session").status_code == 404
+        assert client.post(f"{API}/wallets/contributor/CON-999/session").status_code == 403
         assert client.post(f"{API}/wallets/admin/1/session").status_code == 422
 
     def test_only_the_party_itself_may_link_its_wallet(self, client: TestClient) -> None:
@@ -312,9 +364,8 @@ class TestWallets:
     def test_a_wallet_needs_a_signed_in_party_outside_the_simulation(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(settings, "simulated", False)
-        assert client.post(f"{API}/wallets/contributor/CON-1/session").status_code == 401
-        assert client.post(f"{API}/wallets/publisher/PUB-1/link").status_code == 401
+        assert TestClient(app).post(f"{API}/wallets/contributor/CON-1/session").status_code == 401
+        assert TestClient(app).post(f"{API}/wallets/publisher/PUB-1/link").status_code == 401
 
     def test_a_release_pays_the_linked_wallet(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -322,7 +373,8 @@ class TestWallets:
         accepted = client.get(f"{API}/issues", params={"state": "in_review"}).json()[0]
         issue = client.get(f"{API}/issues/{accepted['id']}").json()
         cid = issue["contributor_id"]
-        wallet = client.post(f"{API}/wallets/contributor/{cid}/session").json()["wallet"]
+        cid_client = auth_client(cid)
+        wallet = cid_client.post(f"{API}/wallets/contributor/{cid}/session").json()["wallet"]
 
         # Watch where the escrow is told to send the money, rather than reading it back
         # out of the public record: the decision log names the contributor, and the
@@ -490,9 +542,21 @@ class TestPublish:
         assert "name a price" in r.json()["detail"]
 
     def test_unknown_publisher_is_rejected(self, client: TestClient) -> None:
-        r = client.post(
+        p999_addr = "0x" + "88" * 20
+        store.repo.save_account(
+            Account(
+                address=p999_addr,
+                role="publisher",
+                party_id="PUB-999",
+                github_login="p999-bot",
+                created_at=datetime.now(UTC),
+            )
+        )
+        c = TestClient(app)
+        c.headers["Authorization"] = f"Bearer {sessions.issue(p999_addr)}"
+        r = c.post(
             f"{API}/issues",
-            json={"repo": "a/b", "title": "x", "publisher_id": "PUB-999"},
+            json={"repo": "a/b", "title": "x", "publisher_id": "PUB-999", "price": "100"},
         )
         assert r.status_code == 400
 
@@ -505,6 +569,7 @@ class TestPublish:
         assert publisher is not None
         publisher.budget_remaining_usdc = "40.00"
         store.save_publisher(publisher)
+        client.headers["Authorization"] = f"Bearer {sessions.issue(publisher.wallet.address)}"
         r = client.post(
             f"{API}/issues",
             json={
@@ -550,6 +615,8 @@ class TestThePublisherNamesThePrice:
         assert rows, "the seed has no issue awaiting approval"
         issue_id = rows[0]["id"]
         issue = client.get(f"{API}/issues/{issue_id}").json()
+        token = sessions.issue(store.get_publisher(issue["publisher_id"]).wallet.address)
+        client.headers["Authorization"] = f"Bearer {token}"
         approved = client.post(
             f"{API}/issues/{issue_id}/criteria", json={"criteria": issue["acceptance_criteria"]}
         )
@@ -709,6 +776,9 @@ class TestThePublisherNamesThePrice:
 
     def test_a_price_cannot_move_once_money_is_committed(self, client: TestClient) -> None:
         funded_id = client.get(f"{API}/issues", params={"state": "funded"}).json()[0]["id"]
+        issue = client.get(f"{API}/issues/{funded_id}").json()
+        token = sessions.issue(store.get_publisher(issue["publisher_id"]).wallet.address)
+        client.headers["Authorization"] = f"Bearer {token}"
         r = client.patch(f"{API}/issues/{funded_id}/price", json={"amount": "250"})
         assert r.status_code == 409
 
@@ -808,52 +878,3 @@ class TestWebhooks:
         assert r.status_code == 202
         assert r.json()["signature_verified"] is True
 
-
-class TestReset:
-    def test_reset_restores_the_seed(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from misthos.config import settings
-
-        monkeypatch.setattr(settings, "database_url", "")  # the zero-config demo
-        client.post(f"{API}/issues/ISS-1006/advance")
-        assert client.post(f"{API}/demo/reset").json()["issues"] == 8
-        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"
-
-    def test_reset_is_refused_when_a_database_is_configured(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The README's durable setup sets only MISTHOS_DATABASE_URL, and there an
-        unauthenticated reset would delete every row of every table."""
-        from misthos.config import settings
-
-        monkeypatch.setattr(settings, "database_url", "postgresql://db.example/misthos")
-        monkeypatch.setattr(settings, "allow_demo_reset", False)
-        client.post(f"{API}/issues/ISS-1006/advance")
-
-        r = client.post(f"{API}/demo/reset")
-        assert r.status_code == 403
-        assert "MISTHOS_ALLOW_DEMO_RESET" in r.json()["detail"]
-        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "FUNDED"
-
-    def test_an_operator_can_allow_reset_on_a_throwaway_database(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from misthos.config import settings
-
-        monkeypatch.setattr(settings, "database_url", "postgresql://db.example/misthos")
-        monkeypatch.setattr(settings, "allow_demo_reset", True)
-        client.post(f"{API}/issues/ISS-1006/advance")
-        assert client.post(f"{API}/demo/reset").json()["issues"] == 8
-        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"
-
-    def test_reset_is_refused_outside_the_simulation(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Against a real database, reset would delete every table."""
-        from misthos.config import settings
-
-        monkeypatch.setattr(settings, "simulated", False)
-        monkeypatch.setattr(settings, "allow_demo_reset", True)  # not a way round it
-        assert client.post(f"{API}/demo/reset").status_code == 403
-        assert client.get(f"{API}/health").json()["seeded_issues"] == 8

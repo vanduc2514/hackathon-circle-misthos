@@ -66,4 +66,4 @@ class ChainGateway(Protocol):
         operator. Empty when nothing would."""
 
     def reset(self) -> None:
-        """Forget everything. The simulation's reset; a real chain refuses."""
+        """Forget everything; a real chain refuses."""

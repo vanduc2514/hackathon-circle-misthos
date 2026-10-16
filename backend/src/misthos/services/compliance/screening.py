@@ -1,6 +1,6 @@
 """Sanctions screening.
 
-The simulated provider lists whatever it is told to, so a test or a demo can list a
+The test provider lists whatever it is told to, so a test can list a
 contributor after they were verified and watch the next payout stop.
 """
 

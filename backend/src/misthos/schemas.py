@@ -43,7 +43,6 @@ class WalletSessionOut(BaseModel):
     encryption_key: str
     challenge_id: str | None = Field(description="None when the wallet already exists")
     wallet: Wallet | None
-    simulated: bool
 
 
 class Publisher(BaseModel):
@@ -63,8 +62,8 @@ class Publisher(BaseModel):
 
 class PublisherListing(BaseModel):
     """A publisher as anyone may see it. Its budget and spending policy are
-    commercially sensitive, so outside the simulation they are filled in only for
-    the signed-in publisher itself ([PRIVACY.md](../../docs/PRIVACY.md))."""
+    commercially sensitive, so they are filled in only for the signed-in publisher itself
+    ([PRIVACY.md](../../docs/PRIVACY.md))."""
 
     id: str
     name: str
@@ -203,8 +202,8 @@ class EscrowReadback(BaseModel):
     issue_key: str = Field(description="bytes32 the contract stores the issue under")
     contract: str
     chain_id: int
-    source: Literal["chain", "simulation"] = Field(
-        description="chain: read from MisthosEscrow; simulation: the simulated escrow's books"
+    source: Literal["chain"] = Field(
+        description="Read from MisthosEscrow"
     )
     status: Literal["none", "held", "released", "refunded"]
     publisher: str | None
@@ -473,18 +472,12 @@ class AlreadyPublished(BaseModel):
     """The open listing of that GitHub issue."""
 
 
-class SimulatedLink(BaseModel):
-    login: str = Field(min_length=1, max_length=39, pattern=r"^[A-Za-z0-9-]+$")
-
-
 class CriteriaRequest(BaseModel):
     criteria: list[str] = Field(min_length=1, max_length=12)
 
 
 class ClaimRequest(BaseModel):
-    contributor_id: str | None = None
-    """The simulation's only: whom the demo claims as. A signed-in contributor claims
-    as themselves."""
+    pass
 
 
 class SubmitRequest(BaseModel):
@@ -512,14 +505,6 @@ class FinanceOut(BaseModel):
     note: str = ""
 
 
-class DemoPullRequestOut(BaseModel):
-    """A pull request the simulated GitHub opened for the claimant (simulation only)."""
-
-    pr_number: int
-    author: str
-    head_sha: str
-
-
 class PolicyRequest(BaseModel):
     approval_threshold_usdc: str | None = None
     approvers: list[str] = Field(default_factory=list, max_length=20)
@@ -530,9 +515,6 @@ class PolicyRequest(BaseModel):
 
 class ApproveReleaseRequest(BaseModel):
     approver: str | None = Field(default=None, min_length=1, max_length=200)
-    """The simulation's only, for a visitor who is not signed in: the approver the demo
-    acts as. Signed in, the approver is the account's linked GitHub login, and this is
-    ignored."""
 
 
 class SpendCategory(BaseModel):
@@ -615,7 +597,6 @@ class AuditExport(BaseModel):
     publisher_id: str
     name: str
     generated_at: datetime
-    simulated: bool
     issues: list[AuditIssue]
 
 
@@ -669,20 +650,17 @@ class HealthOut(BaseModel):
     chain: str = Field(description="Derived from chain_id: arc-mainnet, arc-testnet or chain-<id>")
     chain_id: int
     network_label: str
-    money: Literal["simulated", "test", "real", "unknown"] = Field(
+    money: Literal["test", "real", "unknown"] = Field(
         description=(
-            "simulated: nothing moves; test: Arc testnet faucet USDC; real: Arc mainnet; "
+            "test: Arc testnet faucet USDC; real: Arc mainnet; "
             "unknown: not an Arc network, so treat its USDC as real"
         )
     )
     money_note: str
-    seeded_issues: int
-    simulated: bool
     github_oauth: bool = Field(
         description=(
             "Whether a real GitHub account can be linked here: both "
-            "MISTHOS_GITHUB_OAUTH_CLIENT_ID and MISTHOS_GITHUB_OAUTH_CLIENT_SECRET are set. "
-            "Without it, the simulation links a typed login and a deployment links none."
+            "MISTHOS_GITHUB_OAUTH_CLIENT_ID and MISTHOS_GITHUB_OAUTH_CLIENT_SECRET are set."
         )
     )
     github_oauth_callback_url: str = Field(
@@ -720,8 +698,6 @@ class AnnualStatement(BaseModel):
     total: dict[str, str | int]
     payouts: int
     generated_at: datetime
-    simulated: bool
-    """True when no chain was contacted. A simulated statement is not a tax record."""
 
 
 # ------------------------------------------------------------------ plans (#53)

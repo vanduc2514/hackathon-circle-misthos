@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from misthos.api.v1.webhooks import assert_webhook_secret_is_configured, signature_for
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.domain.compliance import PAYOUT_RETRY_INTERVAL, PayoutGate
 from misthos.domain.issue import IssueState
@@ -22,6 +23,7 @@ from misthos.domain.review import CHECKS_WAIT, ChangedFile
 from misthos.domain.signals import IssueFacts, TreeCounts
 from misthos.main import app
 from misthos.models.records import IssueRecord
+from misthos.schemas import Account
 from misthos.services.chain import ChainRevert, ChainUnavailable
 from misthos.services.github import GitHubNotConfigured, SimulatedGitHub
 from misthos.services.github.events import closed_issues
@@ -35,12 +37,23 @@ HOOK = f"{API}/webhooks/github"
 @pytest.fixture(autouse=True)
 def fresh_store():
     store.reset()
+    store.repo.save_account(
+        Account(
+            address="0xAcme00000000000000000000000000000000A1".lower(),
+            role="publisher",
+            party_id="PUB-1",
+            github_login="acme-bot",
+            created_at=datetime.now(UTC),
+        )
+    )
     yield
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    c = TestClient(app)
+    c.headers["Authorization"] = f"Bearer {sessions.issue('0xAcme00000000000000000000000000000000A1')}"
+    return c
 
 
 @pytest.fixture
@@ -562,7 +575,6 @@ class TestReceiver:
     ) -> None:
         """The documented App setup leaves MISTHOS_SIMULATED on, and that must not
         disable verification: an unsigned delivery here could release escrow."""
-        assert settings.simulated is True  # the default the README tells operators to keep
         monkeypatch.setattr(settings, "github_webhook_secret", "a-real-secret")
         r = client.post(HOOK, json={"zen": "hi"}, headers={"X-GitHub-Event": "ping"})
         assert r.status_code == 401

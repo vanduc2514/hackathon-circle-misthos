@@ -10,16 +10,18 @@ the issue waits in REWORK for that new commit, which the sweeper then reviews.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
+from misthos.auth import sessions
 from misthos.domain import ledger
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc
 from misthos.main import app
 from misthos.models.records import IssueRecord
+from misthos.schemas import Account
 from misthos.services.github import PullRequest
 from misthos.services.review import ReviewFailed
 from misthos.store import NotTheSubmission, Store, store
@@ -202,29 +204,41 @@ class TestTheStepsInTheIssue:
         reset_review_failures()
 
     def test_the_same_pull_request_again_is_a_409_that_says_to_push(self) -> None:
-        client = TestClient(app)
-        number = client.post(f"{API}/demo/issues/{CLAIMED}/pull-request").json()["pr_number"]
+        con_client = TestClient(app)
+        con_wallet = store.get_contributor("CON-1").wallet.address
+        pub_client = TestClient(app)
+        pub_wallet = store.get_publisher("PUB-4").wallet.address
+
+        now = datetime.now(UTC)
+        store.repo.save_account(Account(address=con_wallet.lower(), role="contributor", party_id="CON-1", github_login=store.get_contributor("CON-1").handle, created_at=now))
+        store.repo.save_account(Account(address=pub_wallet.lower(), role="publisher", party_id="PUB-4", github_login="globex-bot", created_at=now))
+
+        con_client.headers["Authorization"] = f"Bearer {sessions.issue(con_wallet)}"
+        pub_client.headers["Authorization"] = f"Bearer {sessions.issue(pub_wallet)}"
+
+        pr = store.demo_pull_request(CLAIMED)
+        number = pr.number
         submit = {"pr_number": number}
-        assert client.post(f"{API}/issues/{CLAIMED}/submit", json=submit).json()["state"] == (
+        assert con_client.post(f"{API}/issues/{CLAIMED}/submit", json=submit).json()["state"] == (
             "IN_REVIEW"
         )
-        assert client.post(f"{API}/issues/{CLAIMED}/review").json()["state"] == "ACCEPTED"
-        declined = client.post(f"{API}/issues/{CLAIMED}/decline", json={"reason": DECLINED})
+        assert con_client.post(f"{API}/issues/{CLAIMED}/review").json()["state"] == "ACCEPTED"
+        declined = pub_client.post(f"{API}/issues/{CLAIMED}/decline", json={"reason": DECLINED})
         assert declined.json()["state"] == "REWORK"
 
-        again = client.post(f"{API}/issues/{CLAIMED}/submit", json=submit)
+        again = con_client.post(f"{API}/issues/{CLAIMED}/submit", json=submit)
 
         assert again.status_code == 409
         assert "push the requested changes as a new commit" in again.json()["detail"]
-        assert client.get(f"{API}/issues/{CLAIMED}").json()["state"] == "REWORK"
+        assert con_client.get(f"{API}/issues/{CLAIMED}").json()["state"] == "REWORK"
         deadline = get(store, CLAIMED).deadline
         assert deadline is not None
         sweep_once(store, now=deadline + A_MONTH)
         assert stranded(store, deadline + A_MONTH) == []
 
         # "Push a new commit on the simulated GitHub", then submit: the way on.
-        client.post(f"{API}/demo/issues/{CLAIMED}/pull-request")
-        resubmitted = client.post(f"{API}/issues/{CLAIMED}/submit", json=submit)
+        store.demo_pull_request(CLAIMED)
+        resubmitted = con_client.post(f"{API}/issues/{CLAIMED}/submit", json=submit)
         assert resubmitted.status_code == 200, resubmitted.text
         assert resubmitted.json()["state"] == "IN_REVIEW"
-        assert client.post(f"{API}/issues/{CLAIMED}/review").json()["state"] == "ACCEPTED"
+        assert con_client.post(f"{API}/issues/{CLAIMED}/review").json()["state"] == "ACCEPTED"

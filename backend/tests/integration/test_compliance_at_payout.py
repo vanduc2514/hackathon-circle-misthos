@@ -11,6 +11,8 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
+from misthos.auth import sessions
+from misthos.schemas import Account
 from misthos.domain.compliance import (
     PAYOUT_RETRY_INTERVAL,
     RESCREEN_INTERVAL,
@@ -280,9 +282,9 @@ class TestContinuousScreening:
         assert publisher is not None
         store.screening.list_wallet(publisher.wallet.address)  # type: ignore[attr-defined]
 
-        r = client.post(f"{API}/issues/ISS-1006/advance")
+        with pytest.raises(ComplianceRefusal):
+            store.advance("ISS-1006")
 
-        assert r.status_code == 403
         after = get("ISS-1006")
         assert after.state is IssueState.AWAITING_APPROVAL
         assert after.escrow is None
@@ -323,7 +325,6 @@ class TestStatements:
         assert line.counterparty_name == "Northwind Data"
         assert line.tx_hash is not None and line.tx_hash.startswith("0x")
         assert statement.total == line.amount
-        assert statement.simulated is True
 
     def test_a_new_payout_appears_on_the_statement(self) -> None:
         paid = run_to_merge("ISS-1002")
@@ -342,8 +343,7 @@ class TestStatements:
         assert statement is not None
         rows = list(csv.reader(io.StringIO(to_csv(statement))))
 
-        assert rows[0][0].startswith("# SIMULATED")
-        header, line, total = rows[1], rows[2], rows[3]
+        header, line, total = rows[0], rows[1], rows[2]
         assert header[:3] == ["paid_at_utc", "issue_id", "repo"]
         assert line[1] == "ISS-1004" and line[8] == "USDC"
         assert total[0] == "TOTAL" and total[7] == line[7]
@@ -394,6 +394,19 @@ class TestStatements:
 
     def test_the_api_serves_json_and_csv(self, client: TestClient) -> None:
         year = self.paid_year("ISS-1004")
+        con3 = store.get_contributor("CON-3")
+        assert con3 is not None
+        store.repo.save_account(
+            Account(
+                address=con3.wallet.address.lower(),
+                role="contributor",
+                party_id="CON-3",
+                github_login=con3.handle,
+                created_at=datetime.now(UTC),
+            )
+        )
+        token = sessions.issue(con3.wallet.address)
+        client.headers["Authorization"] = f"Bearer {token}"
         body = client.get(f"{API}/contributors/CON-3/statements/{year}").json()
         assert body["payouts"] == 1
 
@@ -403,16 +416,24 @@ class TestStatements:
         assert "ISS-1004" in r.text
 
     def test_an_unknown_contributor_is_404(self, client: TestClient) -> None:
+        nope_addr = "0x" + "9" * 40
+        store.repo.save_account(
+            Account(
+                address=nope_addr,
+                role="contributor",
+                party_id="NOPE",
+                created_at=datetime.now(UTC),
+            )
+        )
+        token = sessions.issue(nope_addr)
+        client.headers["Authorization"] = f"Bearer {token}"
         assert client.get(f"{API}/contributors/NOPE/statements/2026").status_code == 404
 
     def test_statements_are_not_public_outside_the_simulation(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from misthos.config import settings
-
-        monkeypatch.setattr(settings, "simulated", False)
         # Anonymous outside the simulation: sign in first.
-        assert client.get(f"{API}/contributors/CON-3/statements/2026").status_code == 401
+        assert TestClient(app).get(f"{API}/contributors/CON-3/statements/2026").status_code == 401
 
 
 class TestPrivacy:

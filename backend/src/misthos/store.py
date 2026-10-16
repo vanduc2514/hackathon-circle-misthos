@@ -1,15 +1,11 @@
-"""The lifecycle store and the seeded simulation.
+"""The lifecycle store.
 
 Every change to an issue's state goes through this module, which is what the
-architecture means by a single writer: the API, the demo stepper and the sweeper all
-call it, none of them assigns a state, and every move is checked against the domain's
-transition table and leaves a decision behind.
+architecture means by a single writer: none of them assigns a state, and every move
+is checked against the domain's transition table and leaves a decision behind.
 
 Where the result is kept is the repository's business. With no database configured
-it is memory, so the demo needs no infrastructure and resets on restart; with
-`MISTHOS_DATABASE_URL` set it is Postgres or a SQLite file, and it survives. The seed
-data at the bottom is the simulation either way: prices from the real engine, and
-fake GitHub and chain calls.
+it is memory; with `MISTHOS_DATABASE_URL` set it is Postgres or a SQLite file, and it survives.
 
 Money moves only through the chain gateway, and every movement is appended to the
 issue's ledger with the transaction the chain returned. Each action on an issue holds
@@ -128,12 +124,11 @@ from misthos.schemas import (
     money,
 )
 from misthos.services import metrics, reputation
-from misthos.services.billing import PaymentRail, SimulatedRail, build_rail
+from misthos.services.billing import PaymentRail, build_rail
 from misthos.services.chain import (
     ChainGateway,
     ChainRevert,
     ChainUnavailable,
-    SimulatedChain,
     load_deployment,
 )
 from misthos.services.chain.factory import build_chain
@@ -150,7 +145,6 @@ from misthos.services.github import (
     GitHubGateway,
     PullRequest,
     ReviewEvent,
-    SimulatedGitHub,
     StatusState,
     build_github,
 )
@@ -159,20 +153,8 @@ from misthos.services.review import Reviewer, build_reviewer
 __all__ = ["IssueRecord", "Store", "store"]
 
 
-def _demo_files(repo: str) -> list[ChangedFile]:
-    """The file list of a pull request the simulation makes up."""
-    slug = repo.split("/")[-1].replace("-", "_")
-    return [
-        ChangedFile(f"src/{slug}/fix.py", additions=40, deletions=6),
-        ChangedFile(f"tests/test_{slug}.py", additions=22),
-        ChangedFile(f"docs/{slug}.md", additions=12),
-        ChangedFile("CHANGELOG.md", additions=2),
-    ]
-
-
 # Recorded on every commitment: the address `mise run contracts:deploy` recorded under
-# contracts/deployments/, or MISTHOS_ESCROW_CONTRACT. Only the simulation may run
-# without one, under a placeholder that is labelled as simulated wherever it shows.
+# contracts/deployments/, or MISTHOS_ESCROW_CONTRACT.
 ESCROW = load_deployment(settings)
 ESCROW_CONTRACT = ESCROW.address
 
@@ -248,20 +230,12 @@ class BillingUnavailable(Exception):
     """Plans cannot be paid for here: no platform wallet is configured."""
 
 
-# Where the simulation's subscription payments go when no platform wallet is set.
-SIMULATED_PLATFORM_WALLET = "0x000000000000000000000000000000000000c0de"
-
-
 class UntestableCriteria(Exception):
     """Criteria a reviewer could not judge are not approved (#38)."""
 
     def __init__(self, problems: list[acceptance.Problem]) -> None:
         super().__init__("; ".join(f"criterion {p.index} {p.reason}" for p in problems))
         self.problems = problems
-
-
-class NotSimulated(Exception):
-    """A step only the simulated GitHub can take, asked of the real one."""
 
 
 class DeclineRefused(Exception):
@@ -347,11 +321,9 @@ class Store:
         self.repo: Repository = repository or MemoryRepository()
         # A publisher's books, read-only, where the operator connected them (#43).
         self.finance: Finance = finance or build_finance()
-        # Where subscription payments are seen: Arc, or the simulation's own rail.
+        # Where subscription payments are seen: Arc.
         self.rail: PaymentRail = rail or build_rail()
-        # The simulated escrow keeps its books beside the repository's tables when
-        # there is a database, so a restart does not make every issue look divergent.
-        # Outside the simulation it is the deployed MisthosEscrow (#69).
+        # The chain gateway interacts with the deployed MisthosEscrow (#69).
         self.chain: ChainGateway = chain or build_chain(
             settings,
             getattr(self.repo, "engine", None),
@@ -382,92 +354,16 @@ class Store:
     # ---------------------------------------------------------------- seeding
 
     def ensure_ready(self) -> None:
-        """Seed an empty repository once, so a fresh database starts as the demo does.
-
-        A database that already holds issues is left exactly as it is: that is the
-        point of having one.
-
-        An API process and a worker starting together against an empty database race
-        for the seed lock. The one that loses waits until it can take the lock itself,
-        which is once the winner has seeded or died, and then looks again: marking
-        itself ready on losing would have it serve the database as it found it, empty,
-        for as long as it runs. If the wait runs out it stays unready, so its next call
-        looks again.
-        """
-        if self._ready:
-            return
-        with self._ready_guard:
-            if self._ready:
-                return
-            give_up = time.monotonic() + SEED_WAIT.total_seconds()
-            while True:
-                with self.repo.try_lock("seed") as held:
-                    if held:
-                        # The demo seed funds made-up issues from made-up wallets, so
-                        # it is only ever written against the simulated escrow.
-                        if self.repo.is_empty() and isinstance(self.chain, SimulatedChain):
-                            self._seed()
-                        self._ready = True
-                        return
-                if time.monotonic() >= give_up:
-                    log.warning("another process still holds the seed lock; looking again later")
-                    return
-                time.sleep(_SEED_POLL_SECONDS)
-
-    def reset(self) -> None:
-        """Put the simulation back to its seed, as one step for anyone reading it.
-
-        The seed is built first, against a repository of its own, and the repository
-        then swaps its contents for it whole. Someone stepping the demo meanwhile sees
-        the old issues or the new ones, never an empty table, and a copy they loaded
-        before is refused as stale after.
-        """
-        with self._ready_guard:
-            migrate = getattr(self.repo, "migrate", None)
-            if migrate is not None:
-                migrate()  # the simulated chain keeps its books in the same database
-            self.chain.reset()
-            self.coordinator.reset()
-            if isinstance(self.rail, SimulatedRail):
-                self.rail.reset()
-            reset_github = getattr(self.github, "reset", None)
-            if reset_github is not None:
-                reset_github()  # the simulation's fixtures and sent posts
-            self.repo.reset(self._built_seed())
-            self._ready = True
-
-    def _built_seed(self) -> Seed:
-        """The seed, built by this store pointed at an empty repository of its own.
-
-        The chain and the simulated GitHub are this store's own, so the seed's
-        commitments and pull requests are the ones the reset store will see.
-        """
-        staging = MemoryRepository()
-        builder = copy.copy(self)
-        builder.repo = staging
-        builder._ready = True  # it writes the seed; it must never go looking for one
-        builder._seed()
-        return staging.as_seed()
-
-    def _seed(self) -> None:
-        random.seed(7)
-        for publisher in _seed_publishers().values():
-            self.repo.save_publisher(publisher)
-        for contributor in _seed_contributors().values():
-            self.repo.save_contributor(contributor)
-        for spec in _ISSUE_SPECS:
-            self.repo.save_issues(self._build(spec))
-        # Standing comes from settled issues alone, never from the fixture's numbers.
-        self.rebuild_standing()
+        pass
 
     def _build(self, spec: dict) -> IssueRecord:
         publisher = self.repo.get_publisher(spec["publisher_id"])
-        assert publisher is not None, spec["publisher_id"]
+        if publisher is None:
+            raise KeyError(spec["publisher_id"])
         signals = ComplexitySignals(**spec["signals"])
         proposal = propose(
             signals,
             compliance_driven=spec.get("compliance_driven", False),
-            # Settled issues of the same shape, from the platform's own history (#42).
             comparables=self._comparables_for(signals, spec["repo"]),
             urgency=Usdc.from_decimal(spec["urgency"]) if spec.get("urgency") else None,
             risk_premium=Usdc.from_decimal(spec["risk"]) if spec.get("risk") else None,
@@ -475,11 +371,8 @@ class Store:
         target = IssueState(spec["state"])
         now = _now()
         if "price" in spec:
-            # Named by the publisher, or None on an issue the GitHub flow listed without
-            # one: it stays unpriced until they name a number, and funding waits (#142).
             price = Usdc.from_decimal(spec["price"]) if spec["price"] else None
         else:
-            # A seeded issue stands in for one a publisher priced at the suggestion.
             price = proposal.recommended
         rec = IssueRecord(
             id=self._next_issue_id(),
@@ -487,14 +380,12 @@ class Store:
             number=spec["number"],
             title=spec["title"],
             summary=spec["summary"],
-            # Seeded history is replayed through the real transitions from the price
-            # approval onward, so a seeded issue is one the lifecycle could produce.
             state=target if target in _PRE_FUNDING else IssueState.AWAITING_APPROVAL,
             labels=spec["labels"],
             compliance_driven=spec.get("compliance_driven", False),
             acceptance_criteria=spec["criteria"],
             publisher_id=spec["publisher_id"],
-            created_at=now - timedelta(days=spec["age_days"]),
+            created_at=now - timedelta(days=spec.get("age_days", 0)),
             proposal=proposal,
             price=price,
         )
@@ -518,85 +409,6 @@ class Store:
             ),
             cost="0.00",
         )
-
-        if target in _PRE_FUNDING:
-            return rec
-
-        # Everything from FUNDED onward has approved criteria and money behind it.
-        rec.criteria_approved_at = rec.created_at + timedelta(hours=5)
-        self._fund(rec, when=rec.created_at + timedelta(hours=6))
-        self._log(
-            rec,
-            actor="publisher",
-            action="price_approved",
-            rule="human_checkpoint",
-            # The price that was committed, which is rec.price and the same number the
-            # escrow holds. A spec may name one; then the suggestion is a different
-            # number and only the one the publisher approved belongs in the log (#150).
-            outcome=f"approved {rec.price} and committed the funds",
-        )
-
-        if target is IssueState.FUNDED:
-            return rec
-
-        if target is IssueState.REFUNDED:
-            self._refund(rec, rule="deadline_passed")
-            return rec
-
-        # Claim onward.
-        contributor_id = spec["contributor_id"]
-        self._claim(rec, contributor_id, when=rec.created_at + timedelta(hours=20))
-        self._log(
-            rec,
-            actor="contributor",
-            action="claimed",
-            rule="first_claim_wins",
-            outcome=f"{self._handle(contributor_id)} took an exclusive 72h claim",
-        )
-
-        if target is IssueState.CLAIMED:
-            return rec
-
-        self._submit(rec, spec["pr"])
-        self._fabricate_files(rec)
-
-        if target is IssueState.IN_REVIEW:
-            return rec
-
-        self._review(
-            rec,
-            verdict=spec["verdict"],
-            findings=spec["findings"],
-            when=rec.created_at + timedelta(hours=44),
-        )
-
-        if target is IssueState.REWORK:
-            self._log(
-                rec,
-                actor="agent",
-                action="verdict_issued",
-                rule="criteria_unmet",
-                outcome="rework by review_agent_v1: " + " ".join(spec["findings"]),
-                when=rec.created_at + timedelta(hours=44),
-            )
-            return rec
-
-        # No human confirms the verdict, so a passing one lands in ACCEPTED: the
-        # grace window between the platform's decision and the publisher's merge.
-        self._log(
-            rec,
-            actor="agent",
-            action="verdict_passed",
-            rule="review_agent_v1",
-            outcome="verdict passed, awaiting the publisher's merge",
-            when=rec.created_at + timedelta(hours=45),
-        )
-
-        if target is IssueState.ACCEPTED:
-            return rec
-
-        rec.accepted_by = "merge"
-        self._release(rec, when=rec.created_at + timedelta(hours=45, minutes=2))
         return rec
 
     # -------------------------------------------------------------- reading
@@ -1556,130 +1368,6 @@ class Store:
                 raise KeyError(party_id)
             self.repo.save_contributor(contributor.model_copy(update={"wallet": wallet}))
         return wallet
-    def advance(self, issue_id: str) -> IssueRecord:
-        """Move an issue one step forward along the demo path.
-
-        A timer that is already due is the step: the demo cannot claim an issue
-        whose deadline has passed or merge past a silent publisher's grace window,
-        any more than real time would let it.
-        """
-        self.ensure_ready()
-        current = self.repo.get_issue(issue_id)
-        if (
-            current is not None
-            and current.state is IssueState.IN_REVIEW
-            and timers.due(self._clocks(current), _now()) is None
-        ):
-            # The step is the review agent's verdict, which may take minutes and so
-            # runs outside the issue's lock.
-            return self.review(issue_id) or self.get(issue_id) or current
-        with self._exclusive(issue_id), self._posting():
-            return self._advance(issue_id)
-
-    def _advance(self, issue_id: str) -> IssueRecord:
-        rec = self.repo.get_issue(issue_id)
-        if rec is None:
-            raise KeyError(issue_id)
-        if rec.state in lifecycle.TERMINAL_STATES:
-            raise lifecycle.IllegalTransition(rec.state, IssueState.PAID)
-
-        created: list[IssueRecord] = []
-        now = _now()
-        if timers.due(self._clocks(rec), now) is not None:
-            _, created = self._apply_due(rec, now)
-            self.repo.save_issues(rec, *created)
-            return rec
-
-        match rec.state:
-            case IssueState.AWAITING_APPROVAL:
-                # The demo's publisher approves the drafted criteria as they stand.
-                rec.criteria_approved_at = rec.criteria_approved_at or now
-                self._approve_and_fund(
-                    rec, now, "approved the criteria and the price, and committed funds"
-                )
-            case IssueState.FUNDED:
-                contributors = [c.id for c in self.repo.list_contributors()]
-                cid = contributors[0]
-                self._claim(rec, cid)
-                self._log(
-                    rec,
-                    actor="contributor",
-                    action="claimed",
-                    rule="first_claim_wins",
-                    outcome=f"{self._handle(cid)} claimed the issue",
-                )
-            case IssueState.CLAIMED:
-                self._submit(
-                    rec,
-                    {
-                        "pr_number": self._demo_pull_request_number(rec),
-                        "head_sha": f"{random.getrandbits(160):040x}",
-                        "checks_passed": True,
-                        "files_changed": 3,
-                        "additions": 62,
-                        "deletions": 14,
-                    },
-                )
-                assert rec.submission is not None
-                self._fabricate_files(rec)
-                self._log(
-                    rec,
-                    actor="contributor",
-                    action="submitted",
-                    rule="pull_request_opened",
-                    outcome=f"opened PR #{rec.submission.pr_number} with checks passing",
-                )
-            case IssueState.ACCEPTED if rec.accepted_by is None:
-                # Merging is acceptance, and acceptance is what releases the money,
-                # so the merge goes on the record before the release does.
-                self._log(
-                    rec,
-                    actor="publisher",
-                    action="merged",
-                    rule="merge_is_acceptance",
-                    outcome="publisher merged the pull request, which is acceptance",
-                )
-                rec.accepted_by = "merge"
-                self._pay(rec, now)
-            case IssueState.ACCEPTED:
-                # Accepted, and the payout is held: the step is checking it again.
-                self._pay(rec, now)
-            case IssueState.REWORK:
-                self._submit(
-                    rec,
-                    {
-                        "pr_number": (
-                            rec.submission.pr_number
-                            if rec.submission
-                            else self._demo_pull_request_number(rec)
-                        ),
-                        "head_sha": f"{random.getrandbits(160):040x}",
-                        "checks_passed": True,
-                        "files_changed": 4,
-                        "additions": 88,
-                        "deletions": 21,
-                    },
-                )
-                self._fabricate_files(rec)
-            case _:
-                # DRAFT, PRICED and REJECTED are legal states with no demo leg out of
-                # them. Refuse with the state the lifecycle declares next rather than
-                # returning an unchanged record behind a 200.
-                nxt = next(iter(lifecycle.TRANSITIONS[rec.state]), rec.state)
-                raise lifecycle.IllegalTransition(rec.state, nxt)
-        self.repo.save_issues(rec, *created)
-        return rec
-
-    def approve_and_accept(self, issue_id: str) -> IssueRecord:
-        """Run the remainder of the happy path in one call, for demos."""
-        rec = self.get(issue_id)
-        if rec is None:
-            raise KeyError(issue_id)
-        for _ in range(12):
-            if rec.state in lifecycle.TERMINAL_STATES:
-                break
-            rec = self.advance(issue_id)
-        return rec
 
     def publish(self, payload) -> IssueRecord:
         """List a GitHub issue and price it, once while it is open (#120).
@@ -1780,7 +1468,7 @@ class Store:
             raise AlreadyListed(existing)
 
     def _unlisted_number(self, repo: str) -> int:
-        """A number for an issue the simulation makes up, when the form names none: one
+        """A number for an issue when the form names none: one
         no open listing in the repository has, so it is never refused as a duplicate of
         an issue the publisher did not mean."""
         taken = {
@@ -1807,8 +1495,6 @@ class Store:
     def _pay_to(self) -> str:
         if settings.platform_wallet:
             return settings.platform_wallet
-        if settings.simulated:
-            return SIMULATED_PLATFORM_WALLET
         raise BillingUnavailable("no platform wallet is configured, so plans cannot be paid for")
 
     def subscription(self, publisher_id: str, now: datetime | None = None) -> SubscriptionOut:
@@ -2015,18 +1701,6 @@ class Store:
             self.repo.save_publisher(publisher)
             log.info("%s is on %s until %s", publisher_id, payment.plan, payment.period_end)
             return self.subscription(publisher_id, now)
-
-    def demo_pay(self, publisher_id: str, now: datetime | None = None) -> SubscriptionOut:
-        """Pay what is due from the publisher's wallet, on the simulation's rail."""
-        if not isinstance(self.rail, SimulatedRail):
-            raise NotSimulated("pay from your wallet on Arc, then confirm the transaction")
-        self.ensure_ready()
-        sub = self.repo.get_subscription(publisher_id)
-        if sub is None or sub.pending is None:
-            raise NoPaymentDue("nothing is waiting to be paid for; choose a plan first")
-        request = sub.pending
-        tx = self.rail.send(request.payer, request.pay_to, Usdc.from_decimal(request.amount_usdc))
-        return self.confirm_payment(publisher_id, tx, now)
 
     def set_contract_plan(
         self, publisher_id: str, plan_id: str, until: datetime, now: datetime | None = None
@@ -2664,87 +2338,6 @@ class Store:
                 for e, r in settled[:20]
             ],
         )
-
-    def _demo_pull_request_number(self, rec: IssueRecord) -> int:
-        """The number of the first pull request the simulation opens for an issue: its own
-        number plus 400, or the next one up that no other issue's submission in the
-        repository has, since a pull request counts toward one issue only (#120)."""
-        taken = {
-            other.submission.pr_number
-            for other in self.repo.list_issues()
-            if other.id != rec.id
-            and other.repo.lower() == rec.repo.lower()
-            and other.submission is not None
-        }
-        number = rec.number + 400
-        while number in taken:
-            number += 1
-        return number
-
-    def _fabricate_files(self, rec: IssueRecord) -> None:
-        """Give a pull request the simulation made up a file list the review agent can
-        read: a fix, its test and a changelog line. Only the simulated GitHub has
-        pull requests that do not exist."""
-        if rec.submission is None or not isinstance(self.github, SimulatedGitHub):
-            return
-        self.github.put_files(rec.repo, rec.submission.pr_number, _demo_files(rec.repo))
-
-    # ------------------------------------------------- the simulated GitHub's side
-
-    def demo_pull_request(self, issue_id: str) -> PullRequest:
-        """Open, on the simulated GitHub, the pull request the claimant would open on
-        the real one: a fix, its test, docs and a changelog line, checks passing.
-        After rework it is a new commit on the same pull request. Submitting it is
-        still the claimant's explicit action."""
-        self.ensure_ready()
-        if not isinstance(self.github, SimulatedGitHub):
-            raise NotSimulated("only the simulated GitHub opens pull requests for you")
-        rec = self.repo.get_issue(issue_id)
-        if rec is None:
-            raise KeyError(issue_id)
-        if rec.contributor_id is None or rec.state not in {
-            IssueState.CLAIMED,
-            IssueState.REWORK,
-        }:
-            raise lifecycle.IllegalTransition(rec.state, IssueState.IN_REVIEW)
-        files = _demo_files(rec.repo)
-        pr = PullRequest(
-            repo=rec.repo,
-            number=(
-                rec.submission.pr_number if rec.submission else self._demo_pull_request_number(rec)
-            ),
-            author=self._handle(rec.contributor_id),
-            head_sha=f"{random.getrandbits(160):040x}",
-            body=f"Fixes #{rec.number}",
-            merged=False,
-            files_changed=len(files),
-            additions=sum(f.additions for f in files),
-            deletions=sum(f.deletions for f in files),
-        )
-        self.github.put_pull_request(pr)
-        self.github.put_files(rec.repo, pr.number, files)
-        self.github.put_checks(rec.repo, pr.head_sha, True)
-        return pr
-
-    def demo_merge(self, issue_id: str) -> IssueRecord:
-        """Merge the submitted pull request on the simulated GitHub, as the publisher
-        would on the real one, and handle it as that merge's webhook is handled."""
-        self.ensure_ready()
-        if not isinstance(self.github, SimulatedGitHub):
-            raise NotSimulated("merge the pull request on GitHub")
-        rec = self.repo.get_issue(issue_id)
-        if rec is None:
-            raise KeyError(issue_id)
-        if rec.submission is None:
-            raise NotTheSubmission(f"{issue_id} has no pull request to merge")
-        number = rec.submission.pr_number
-        try:
-            opened = self.github.read_pull_request(rec.repo, number)
-        except GitHubError:
-            opened = None
-        if opened is not None:
-            self.github.put_pull_request(dataclasses.replace(opened, merged=True))
-        return self.pull_request_closed(issue_id, number, merged=True)
 
     # ------------------------------------------------------------- accounts
 
@@ -3611,301 +3204,6 @@ def _review_comment(verdict: str, findings: list[str]) -> str:
     }[verdict]
     listed = "\n".join(f"- {f}" for f in findings)
     return f"**Misthos review.** {heading}\n\n{listed}" if listed else heading
-
-
-# ------------------------------------------------------------------ seed data
-
-
-def _seed_publishers() -> dict[str, Publisher]:
-    rows = [
-        ("PUB-1", "Acme Payments", "company", "enterprise", "48,500.00", "0xAcme00000000000000000000000000000000A1"),
-        ("PUB-2", "Northwind Data", "company", "team", "12,300.00", "0xN0rthw1nd0000000000000000000000000000b2"),
-        ("PUB-3", "R. Okafor", "maintainer", "open", "480.00", "0x0kaf0r000000000000000000000000000000c3"),
-        ("PUB-4", "Globex Logistics", "company", "enterprise", "91,000.00", "0xGl0bex00000000000000000000000000000004"),
-        ("PUB-5", "Contoso Tooling", "company", "team", "6,750.00", "0xC0nt0s000000000000000000000000000000d5"),
-    ]
-    return {
-        r[0]: Publisher(
-            id=r[0],
-            name=r[1],
-            kind=r[2],  # type: ignore[arg-type]
-            tier=r[3],  # type: ignore[arg-type]
-            wallet=Wallet(address=r[5], chain=settings.chain),
-            budget_remaining_usdc=r[4],
-        )
-        for r in rows
-    }
-
-
-def _seed_contributors() -> dict[str, Contributor]:
-    rows = [
-        ("CON-1", "amara.dev", 38, 21, "8,420.00", True),
-        ("CON-2", "jonas_k", 27, 14, "5,110.00", True),
-        ("CON-3", "priya.codes", 19, 9, "3,050.00", True),
-        ("CON-4", "lin.wei", 12, 6, "1,880.00", True),
-        ("CON-5", "tom_e", 5, 2, "540.00", False),
-        ("CON-6", "sara_k", 2, 1, "180.00", False),
-    ]
-    return {
-        r[0]: Contributor(
-            id=r[0],
-            handle=r[1],
-            wallet=Wallet(address=f"0x{r[1].replace('.', ''):0<40}"[:42], chain=settings.chain),
-            reputation=r[2],
-            settled_issues=r[3],
-            earned_usdc=r[4],
-            # Seeded contributors who have been paid before were verified then.
-            identity_status="verified" if r[5] else "unverified",
-            identity_reference="seeded" if r[5] else None,
-        )
-        for r in rows
-    }
-
-
-_ISSUE_SPECS: list[dict] = [
-    {
-        "repo": "acme/ledger-core",
-        "number": 412,
-        "title": "Currency rounding is off by one cent on half-up values",
-        "summary": "Rounding a half-cent value rounds down instead of up, so totals drift by a cent on long invoices.",
-        "state": "FUNDED",
-        "labels": ["bug", "payments"],
-        "compliance_driven": False,
-        "criteria": [
-            "A test reproduces the round-down on a half-cent value.",
-            "Rounding is half-up for every currency exponent the library supports.",
-            "The existing rounding API keeps its signature.",
-        ],
-        "publisher_id": "PUB-1",
-        "age_days": 2,
-        "signals": {
-            "code_surface": 2.0,
-            "requirement_clarity": 1.0,
-            "test_coverage": 2.0,
-            "dependency_depth": 1.0,
-            "prior_attempts": 3.0,
-            "blast_radius": 2.0,
-        },
-    },
-    {
-        "repo": "acme/ledger-core",
-        "number": 428,
-        "title": "Add a plugin hook for custom settlement adapters",
-        "summary": "Every new rail needs a fork. A documented hook would let publishers ship their own adapter.",
-        "state": "IN_REVIEW",
-        "labels": ["feature", "extensibility"],
-        "compliance_driven": False,
-        "criteria": [
-            "A settlement adapter can be registered without touching core.",
-            "The hook is documented with a working example.",
-            "Core has no import of any concrete adapter.",
-        ],
-        "publisher_id": "PUB-1",
-        "age_days": 9,
-        "contributor_id": "CON-2",
-        "pr": {
-            "pr_number": 903,
-            "head_sha": "9f2c1b7d4e6a8c0f3b5d7e9a1c3f5b7d9e1a3c5f",
-            "checks_passed": True,
-            "files_changed": 7,
-            "additions": 214,
-            "deletions": 38,
-        },
-        "signals": {
-            "code_surface": 4.0,
-            "requirement_clarity": 3.0,
-            "test_coverage": 3.0,
-            "dependency_depth": 3.0,
-            "prior_attempts": 2.0,
-            "blast_radius": 3.0,
-        },
-    },
-    {
-        "repo": "globex/parse-locale",
-        "number": 87,
-        "title": "Memory safety: unterminated locale string reachable from the network parser",
-        "summary": "A crafted locale tag reaches an unsafe read in the parser. Reachable from any HTTP caller.",
-        "state": "CLAIMED",
-        "labels": ["security", "cve"],
-        "compliance_driven": True,
-        "criteria": [
-            "A fuzz case reproduces the out-of-bounds read.",
-            "The parser rejects unterminated input before allocation.",
-            "The fix ships with a regression test and a CVE reference in the changelog.",
-        ],
-        "publisher_id": "PUB-4",
-        # Claimed 52 hours ago, so the 72-hour claim is still live when the demo
-        # starts and the sweeper only returns it to the pool if nobody acts for a day.
-        "age_days": 3,
-        "contributor_id": "CON-1",
-        "risk": "1200.00",
-        "urgency": "800.00",
-        "signals": {
-            "code_surface": 3.0,
-            "requirement_clarity": 2.0,
-            "test_coverage": 4.0,
-            "dependency_depth": 4.0,
-            "prior_attempts": 1.0,
-            "blast_radius": 5.0,
-        },
-    },
-    {
-        "repo": "northwind/httpx-retry",
-        "number": 219,
-        "title": "Retry budget ignores jitter, causing thundering herds",
-        "summary": "All clients retry on the same schedule, so a blip becomes an outage.",
-        "state": "PAID",
-        "labels": ["bug", "reliability"],
-        "compliance_driven": False,
-        "criteria": [
-            "Backoff includes jitter by default.",
-            "The old fixed schedule is available behind a flag.",
-            "A test asserts the jittered spread is non-zero.",
-        ],
-        "publisher_id": "PUB-2",
-        # Paid four days before the seed, so a fresh demo has a settlement this week:
-        # the dashboard leads with that number.
-        "age_days": 6,
-        "contributor_id": "CON-3",
-        "pr": {
-            "pr_number": 611,
-            "head_sha": "3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c",
-            "checks_passed": True,
-            "files_changed": 4,
-            "additions": 96,
-            "deletions": 31,
-        },
-        "verdict": "accept",
-        "findings": ["Criteria met.", "Jitter spread verified in the new test."],
-        "signals": {
-            "code_surface": 2.0,
-            "requirement_clarity": 2.0,
-            "test_coverage": 3.0,
-            "dependency_depth": 2.0,
-            "prior_attempts": 1.0,
-            "blast_radius": 3.0,
-        },
-    },
-    {
-        "repo": "contoso/schema-cli",
-        "number": 55,
-        "title": "Add a dry-run flag to schema migrations",
-        "summary": "Operators have no way to see what a migration will do before running it.",
-        "state": "PAID",
-        "labels": ["feature", "dx"],
-        "compliance_driven": False,
-        "criteria": [
-            "A dry run prints the statements without executing them.",
-            "The flag is documented in the CLI help.",
-        ],
-        "publisher_id": "PUB-5",
-        "age_days": 30,
-        "contributor_id": "CON-4",
-        "pr": {
-            "pr_number": 302,
-            "head_sha": "c1e3a5b7d9f1c3e5a7b9d1f3c5e7a9b1d3f5c7e9",
-            "checks_passed": True,
-            "files_changed": 3,
-            "additions": 74,
-            "deletions": 12,
-        },
-        "verdict": "accept",
-        "findings": ["Both criteria covered.", "Help text is accurate."],
-        "signals": {
-            "code_surface": 2.0,
-            "requirement_clarity": 1.0,
-            "test_coverage": 2.0,
-            "dependency_depth": 1.0,
-            "prior_attempts": 1.0,
-            "blast_radius": 1.0,
-        },
-    },
-    {
-        "repo": "acme/ledger-adapters",
-        "number": 178,
-        "title": "EU Cyber Resilience Act: produce a maintenance record for shipped dependencies",
-        "summary": "The 2027 obligations need evidence that dependencies are maintained, not a snapshot of versions.",
-        "state": "AWAITING_APPROVAL",
-        "labels": ["compliance", "reporting"],
-        "compliance_driven": True,
-        "criteria": [
-            "A report lists each shipped dependency with its last fix and its maintainer.",
-            "The report exports to a format an auditor accepts.",
-            "Generation is deterministic and repeatable.",
-        ],
-        "publisher_id": "PUB-4",
-        "age_days": 1,
-        "signals": {
-            "code_surface": 4.0,
-            "requirement_clarity": 4.0,
-            "test_coverage": 3.0,
-            "dependency_depth": 3.0,
-            "prior_attempts": 2.0,
-            "blast_radius": 4.0,
-        },
-    },
-    {
-        "repo": "northwind/httpx-retry",
-        "number": 231,
-        "title": "Support per-request timeouts that override the client default",
-        "summary": "A single slow endpoint forces a global timeout increase for everyone.",
-        "state": "REWORK",
-        "labels": ["feature", "api"],
-        "compliance_driven": False,
-        "criteria": [
-            "A per-request timeout overrides the client default.",
-            "The override is documented.",
-            "Backwards compatibility is preserved for callers that pass nothing.",
-        ],
-        "publisher_id": "PUB-2",
-        "age_days": 11,
-        "contributor_id": "CON-5",
-        "pr": {
-            "pr_number": 640,
-            "head_sha": "5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d",
-            "checks_passed": True,
-            "files_changed": 2,
-            "additions": 41,
-            "deletions": 6,
-        },
-        "verdict": "rework",
-        "findings": [
-            "Criterion 3 is not covered: a caller passing no timeout changes behaviour.",
-            "Add a regression test for the default path before resubmitting.",
-        ],
-        "signals": {
-            "code_surface": 3.0,
-            "requirement_clarity": 3.0,
-            "test_coverage": 4.0,
-            "dependency_depth": 2.0,
-            "prior_attempts": 4.0,
-            "blast_radius": 2.0,
-        },
-    },
-    {
-        "repo": "contoso/schema-cli",
-        "number": 61,
-        "title": "Migrate the config loader from TOML to a pluggable format",
-        "summary": "Teams keep asking for YAML. A pluggable loader would end the argument.",
-        "state": "REFUNDED",
-        "labels": ["feature"],
-        "compliance_driven": False,
-        "criteria": [
-            "A second config format is added by registering a loader, without editing core.",
-            "Existing TOML configs keep working.",
-        ],
-        "publisher_id": "PUB-5",
-        "age_days": 40,
-        "signals": {
-            "code_surface": 5.0,
-            "requirement_clarity": 5.0,
-            "test_coverage": 4.0,
-            "dependency_depth": 3.0,
-            "prior_attempts": 3.0,
-            "blast_radius": 4.0,
-        },
-    },
-]
 
 
 store = Store(build_repository(settings.database_url))

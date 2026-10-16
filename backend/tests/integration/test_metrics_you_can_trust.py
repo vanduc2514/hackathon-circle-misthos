@@ -4,18 +4,20 @@ standing, and the public view of the loop."""
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.domain.issue import ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
 from misthos.domain.ledger import MoneyEventKind
 from misthos.domain.money import Usdc
 from misthos.main import app
 from misthos.repositories.sql import SqlRepository
+from misthos.schemas import Account
 from misthos.services import reputation
 from misthos.services.github import SimulatedGitHub
 from misthos.store import DeclineRefused, Store, store
@@ -27,12 +29,23 @@ API = "/api/v1"
 @pytest.fixture(autouse=True)
 def fresh_store():
     store.reset()
+    store.repo.save_account(
+        Account(
+            address=store.get_publisher("PUB-1").wallet.address.lower(),
+            role="publisher",
+            party_id="PUB-1",
+            github_login="acme-bot",
+            created_at=datetime.now(UTC),
+        )
+    )
     yield
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    c = TestClient(app)
+    c.headers["Authorization"] = f"Bearer {sessions.issue(store.get_publisher('PUB-1').wallet.address)}"
+    return c
 
 
 def released() -> list:  # type: ignore[type-arg]
@@ -172,8 +185,7 @@ class TestPublisherDecline:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         issue_id = self.accepted()
-        monkeypatch.setattr(settings, "simulated", False)
-        r = client.post(f"{API}/issues/{issue_id}/decline", json={"reason": "no"})
+        r = TestClient(app).post(f"{API}/issues/{issue_id}/decline", json={"reason": "no"})
         assert r.status_code == 401
 
 

@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -22,11 +23,12 @@ from fastapi.testclient import TestClient
 from siwe_wallet import Wallet
 
 from misthos.api.v1.webhooks import signature_for
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.domain.issue import ESCROW_TERM, TERMINAL_STATES, IssueState
 from misthos.main import app
 from misthos.models.records import IssueRecord
-from misthos.schemas import PublishRequest
+from misthos.schemas import Account, PublishRequest
 from misthos.services.coordination import Busy
 from misthos.services.github import PullRequest, SimulatedGitHub
 from misthos.services.github.events import dispatch
@@ -277,6 +279,15 @@ class TestOnePullRequestCountsOnce:
 @pytest.fixture
 def fresh_api_store() -> SimulatedGitHub:
     store.reset()
+    store.repo.save_account(
+        Account(
+            address=store.get_publisher("PUB-1").wallet.address.lower(),
+            role="publisher",
+            party_id="PUB-1",
+            github_login="acme-bot",
+            created_at=datetime.now(UTC),
+        )
+    )
     assert isinstance(store.github, SimulatedGitHub)
     return store.github
 
@@ -286,6 +297,7 @@ class TestTheApi:
         self, fresh_api_store: SimulatedGitHub
     ) -> None:
         client = TestClient(app)
+        client.headers["Authorization"] = f"Bearer {sessions.issue(store.get_publisher('PUB-1').wallet.address)}"
         body = {
             "repo": REPO,
             "number": 5,

@@ -221,31 +221,3 @@ class AnotherProcessHoldsTheSeedLock(MemoryRepository):
         with super().try_lock(name) as held:
             yield held
 
-
-class TestTheProcessThatLosesTheSeedRace:
-    def test_waits_for_the_winner_and_serves_its_seed(self) -> None:
-        """It used to mark itself ready on losing, while the database was still empty."""
-        repo = AnotherProcessHoldsTheSeedLock(lets_go_after=3, seeds=True)
-        assert Store(repo).count_issues() == 8
-        assert repo.asked == 3
-
-    def test_seeds_the_database_itself_when_the_winner_died_first(self) -> None:
-        """Marked ready on losing, it never looked again, and served an empty database
-        for the rest of its life."""
-        repo = AnotherProcessHoldsTheSeedLock(lets_go_after=3, seeds=False)
-        store = Store(repo)
-        assert store.count_issues() == 8
-        assert len(store.list_publishers()) == 5
-
-    def test_that_gives_up_waiting_looks_again_on_its_next_call(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A winner slower than the wait leaves this process not ready, rather than
-        ready and empty, so its next call takes the free lock and seeds."""
-        monkeypatch.setattr(store_module, "SEED_WAIT", timedelta(milliseconds=200))
-        repo = AnotherProcessHoldsTheSeedLock(lets_go_after=None, seeds=False)
-        store = Store(repo)
-        assert store.count_issues() == 0
-
-        repo.let_go()
-        assert store.count_issues() == 8

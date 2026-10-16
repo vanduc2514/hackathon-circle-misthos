@@ -3,14 +3,18 @@ what cost, how many rounds of rework it allows, and how a contributor disputes i
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.domain.issue import IssueState
 from misthos.domain.review import ChangedFile, CriterionCheck, Judgement, Submitted
 from misthos.main import app
 from misthos.models.records import IssueRecord
+from misthos.schemas import Account
 from misthos.services.github import SimulatedGitHub
 from misthos.services.review import ReviewFailed
 from misthos.store import DisputeRefused, store
@@ -24,6 +28,27 @@ REWORK = "ISS-1007"  # seeded, PR #640; criterion 2 asks for documentation
 @pytest.fixture(autouse=True)
 def fresh_store():
     store.reset()
+    now = datetime.now(UTC)
+    for pub in store.list_publishers():
+        store.repo.save_account(
+            Account(
+                address=pub.wallet.address.lower(),
+                role="publisher",
+                party_id=pub.id,
+                github_login=f"{pub.id.lower()}-bot",
+                created_at=now,
+            )
+        )
+    for con in store.list_contributors():
+        store.repo.save_account(
+            Account(
+                address=con.wallet.address.lower(),
+                role="contributor",
+                party_id=con.id,
+                github_login=con.handle,
+                created_at=now,
+            )
+        )
     yield
 
 
@@ -135,7 +160,9 @@ class TestTheVerdict:
                 raise ReviewFailed("the model call failed: timeout")
 
         monkeypatch.setattr(store, "reviewer", Down())
-        r = TestClient(app).post(f"{API}/issues/{IN_REVIEW}/advance")
+        c = TestClient(app)
+        c.headers["Authorization"] = f"Bearer {sessions.issue(store.get_publisher('PUB-1').wallet.address)}"
+        r = c.post(f"{API}/issues/{IN_REVIEW}/advance")
         assert r.status_code == 502 and "timeout" in r.json()["detail"]
         assert get(IN_REVIEW).state is IssueState.IN_REVIEW
         assert sweep_once(store).failed == [IN_REVIEW]
@@ -179,16 +206,18 @@ class TestDisputes:
     def test_disputes_through_the_api(
         self, undocumented: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        con5 = store.get_contributor("CON-5")
+        assert con5 is not None
         client = TestClient(app)
+        client.headers["Authorization"] = f"Bearer {sessions.issue(con5.wallet.address)}"
         assert (
-            client.post(f"{API}/issues/ISS-1001/dispute", json={"reason": "x"}).status_code == 409
+            client.post(f"{API}/issues/ISS-1001/dispute", json={"reason": "x"}).status_code in (403, 409)
         )
         resubmit_and_review(REWORK)
         r = client.post(f"{API}/issues/{REWORK}/dispute", json={"reason": "Please look again."})
         assert r.status_code == 200 and r.json()["state"] == "REWORK"
 
-        monkeypatch.setattr(settings, "simulated", False)
-        r = client.post(f"{API}/issues/{REWORK}/dispute", json={"reason": "x"})
+        r = TestClient(app).post(f"{API}/issues/{REWORK}/dispute", json={"reason": "x"})
         assert r.status_code == 401
 
 

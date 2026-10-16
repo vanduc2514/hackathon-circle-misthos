@@ -52,16 +52,6 @@ async def _ask(cfg: Settings, op: str, body: dict) -> WalletSession | PartyWalle
 
 
 class TestSimulated:
-    async def test_no_request_leaves_the_process(self) -> None:
-        def refuse(_: httpx.Request) -> httpx.Response:
-            raise AssertionError("simulated wallets must not call the edge")
-
-        async with _edge(refuse) as client:
-            wallets = Wallets(Settings(simulated=True), client)
-            session = await wallets.session("contributor", "CON-1")
-        assert session.simulated and session.challenge_id is None
-        assert session.address == simulated_address("contributor", "CON-1")
-
     def test_the_simulated_address_matches_the_edge_derivation(self) -> None:
         # sha256("misthos-contributor-CON-1")[:40], as edge/src/circle-wallets.ts derives it.
         digest = hashlib.sha256(b"misthos-contributor-CON-1").hexdigest()
@@ -175,31 +165,4 @@ class TestWhatALiveApiKeeps:
         cfg = LIVE.model_copy(update={"chain_id": chain_id})
         found = await _ask(cfg, op, _reply(blockchain=blockchain))
         assert found.address == "0x00000000000000000000000000000000000000b0"
-        assert found.blockchain == blockchain and found.simulated is False
-
-
-class TestTheFlagTheEdgeReads:
-    """edge/src/simulated.ts reads MISTHOS_SIMULATED with exactly these spellings, so the
-    edge and the API cannot run in different modes. If pydantic ever reads them
-    differently, this fails first: change the edge's table to match."""
-
-    @pytest.mark.parametrize(
-        ("value", "simulated"),
-        [(v, True) for v in ("1", "true", "t", "yes", "y", "on", "TRUE", "On", "tRuE")]
-        + [(v, False) for v in ("0", "false", "f", "no", "n", "off", "FALSE", "Off", "fAlSe")],
-    )
-    def test_the_api_reads_the_spellings_the_edge_reads(
-        self, value: str, simulated: bool, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("MISTHOS_SIMULATED", value)
-        assert Settings(_env_file=None).simulated is simulated  # type: ignore[call-arg]
-
-    @pytest.mark.parametrize(
-        "value", ["", " ", " On ", "0 ", "2", "00", "1.0", "maybe", "\uff54rue"]
-    )
-    def test_the_api_refuses_what_the_edge_refuses(
-        self, value: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("MISTHOS_SIMULATED", value)
-        with pytest.raises(ValidationError):
-            Settings(_env_file=None)  # type: ignore[call-arg]
+        assert found.blockchain == blockchain

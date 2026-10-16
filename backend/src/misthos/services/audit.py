@@ -7,8 +7,7 @@ money event with its amount, counterparty and the transfer that carried it,
 unedited, as JSON or as one CSV an auditor can sort and filter. The one thing left
 out is the transfer reference of each release, which would link a contributor's
 wallet to their handle; it is on the contributor's own statement (docs/PRIVACY.md).
-It is the organisation's own record, so it is served to them alone (in the
-simulation until sign-in exists) and exported by an operator:
+It is the organisation's own record, so it is served to them alone and exported by an operator:
 
     python -m misthos.services.audit PUB-1 --csv
 """
@@ -45,19 +44,8 @@ CSV_COLUMNS = [
     "decision_id",
 ]
 
-# A last row rather than a first one, so the header stays the header. Written into the
-# `record` column, which is where a reader looks for what kind of row it is.
-SIMULATED_NOTE = ["# SIMULATED: no chain was contacted; not an audit record"]
-
 
 def _price_of(rec: IssueRecord) -> Usdc | None:
-    """The price to export: the publisher's, or the engine's reading for an issue
-    published before a publisher could name one (#142).
-
-    The order matters. Exporting the suggestion for a re-priced issue would put a number
-    in an audit record that the publisher never approved and the escrow never held, and
-    the money events beside it would disagree (#150).
-    """
     if rec.price is not None:
         return check_price(rec.price)
     return rec.proposal.recommended if rec.proposal else None
@@ -75,7 +63,6 @@ def export(store: Store, publisher_id: str) -> AuditExport | None:
         publisher_id=publisher.id,
         name=publisher.name,
         generated_at=datetime.now(UTC),
-        simulated=settings.simulated,
         issues=[
             AuditIssue(
                 id=r.id,
@@ -109,9 +96,7 @@ def to_csv(audit: AuditExport) -> str:
     """One row per decision and per money event, in time order within each issue.
 
     The header is the first line, so `csv.DictReader` and a spreadsheet agree on what
-    the columns are. The simulation caveat goes in the last row instead: a reader that
-    takes the first line for the header would otherwise misalign every column, and a
-    comment before it is what the round trip cannot survive.
+    the columns are.
 
     Repositories, reasons and logins are other people's words, so every cell is
     written as text a spreadsheet will not run (services/spreadsheet.py).
@@ -141,11 +126,6 @@ def to_csv(audit: AuditExport) -> str:
             )  # fmt: skip
         for _, row in sorted(rows, key=lambda pair: pair[0]):
             writer.writerow(row)
-    if audit.simulated:
-        # A data row, not a comment, so every column stays where the header put it.
-        writer.writerow(
-            SIMULATED_NOTE + [""] * (len(CSV_COLUMNS) - len(SIMULATED_NOTE))
-        )
     return out.getvalue()
 
 

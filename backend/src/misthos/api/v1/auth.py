@@ -23,7 +23,6 @@ from misthos.schemas import (
     RoleRequest,
     SessionOut,
     SignInRequest,
-    SimulatedLink,
 )
 from misthos.services.github import GitHubError
 from misthos.services.github.oauth import GitHubOAuth
@@ -240,18 +239,3 @@ async def github_callback(
     except AccountConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return RedirectResponse(f"{settings.public_url.rstrip('/')}/account?linked=github", 303)
-
-
-@router.post("/github/simulate", response_model=Account)
-async def simulate_github_link(
-    payload: SimulatedLink, account: Account | None = SIGNED_IN
-) -> Account:
-    """Link a GitHub login without OAuth, for the simulation's demo only."""
-    if not settings.simulated:
-        raise HTTPException(status_code=403, detail="link through GitHub")
-    if account is None:
-        raise HTTPException(status_code=401, detail="sign in and choose a role first")
-    try:
-        return await run_in_threadpool(store.link_github, account.address, payload.login)
-    except AccountConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc

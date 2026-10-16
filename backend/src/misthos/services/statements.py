@@ -92,7 +92,6 @@ def annual_statement(store: Store, contributor_id: str, year: int) -> AnnualStat
         total=money(total),
         payouts=len(lines),
         generated_at=datetime.now(UTC),
-        simulated=settings.simulated,
     )
 
 
@@ -102,9 +101,6 @@ def to_csv(statement: AnnualStatement) -> str:
     written as text a spreadsheet will not run (services/spreadsheet.py)."""
     out = io.StringIO()
     writer = spreadsheet.Writer(out)
-    if statement.simulated:
-        # A simulated statement must never be mistaken for a tax record.
-        writer.writerow(["# SIMULATED: no chain was contacted; not a tax record"])
     writer.writerow(CSV_COLUMNS)
     for line in statement.lines:
         writer.writerow(

@@ -4,16 +4,18 @@ own books (#43), and neither leaks what the publisher would rather keep."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.domain.money import Usdc
 from misthos.main import app
+from misthos.schemas import Account
 from misthos.services.finance import Beancount, FinanceContext, FinanceError, FireflyIII
 from misthos.store import store
 
@@ -33,13 +35,25 @@ SETTLED_SHAPE = {
 @pytest.fixture(autouse=True)
 def fresh_store():
     store.reset()
+    store.repo.save_account(
+        Account(
+            address="0xAcme00000000000000000000000000000000A1".lower(),
+            role="publisher",
+            party_id="PUB-1",
+            github_login="acme-bot",
+            created_at=datetime.now(UTC),
+        )
+    )
     yield
     store.finance = lambda _publisher_id: None
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    c = TestClient(app)
+    token = sessions.issue("0xAcme00000000000000000000000000000000A1")
+    c.headers["Authorization"] = f"Bearer {token}"
+    return c
 
 
 def publish(client: TestClient, signals: dict[str, float], repo: str = "northwind/httpx-retry"):
@@ -173,5 +187,4 @@ class TestTheFinanceView:
     def test_outside_the_simulation_the_books_are_the_publishers_alone(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(settings, "simulated", False)
-        assert client.get(f"{API}/publishers/PUB-1/finance").status_code == 401
+        assert TestClient(app).get(f"{API}/publishers/PUB-1/finance").status_code == 401

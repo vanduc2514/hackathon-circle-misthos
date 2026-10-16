@@ -6,7 +6,7 @@ rows follow the schema's rules. Proposals, submissions, verdicts and decisions a
 only ever inserted, the commitment mirror and the claim are updated in place, and an
 issue's current proposal, claim, submission and verdict are its newest rows.
 
-The simulation's reset swaps every row for the seed inside one transaction too, so a
+A reset swaps every row for the seed inside one transaction too, so a
 reader sees the old data or the seed and never the empty tables between. The version
 column carries on climbing across it rather than starting again at 1, so a copy loaded
 before the reset is still refused after it.

@@ -1,4 +1,4 @@
-"""The simulation's rail: transfers it was asked to make, and nothing else."""
+"""The test simulation rail: transfers it was asked to make, and nothing else."""
 
 from __future__ import annotations
 

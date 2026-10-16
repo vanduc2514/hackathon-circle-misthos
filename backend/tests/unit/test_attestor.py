@@ -8,6 +8,7 @@ nowhere else, and rotating it is a contract call rather than a redeploy.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,8 @@ class TestReadingTheKey:
             load_attestor_key(LocalSecretStore(tmp_path), KEY)
 
     def test_a_second_reader_of_the_secret_file_is_refused(self, tmp_path: Path) -> None:
+        if os.name == "nt":
+            pytest.skip("POSIX file permission bits not supported on Windows")
         _mounted_secret(tmp_path).chmod(0o644)
 
         with pytest.raises(AttestorKeyError, match="readable by another user"):
@@ -82,7 +85,12 @@ class TestReadingTheKey:
         was checked would not be the file that was read."""
         outside = tmp_path / "elsewhere"
         outside.mkdir()
-        (tmp_path / REFERENCE).symlink_to(_mounted_secret(outside, value=KEY))
+        try:
+            (tmp_path / REFERENCE).symlink_to(_mounted_secret(outside, value=KEY))
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                pytest.skip("Symlinks require admin privileges on Windows")
+            raise
 
         with pytest.raises(AttestorKeyError, match="cannot be read"):
             load_attestor_key(LocalSecretStore(tmp_path), REFERENCE)
@@ -163,26 +171,20 @@ class TestRotationIsARunbookStep:
 
 
 class TestARealDeploymentMustNameItsSecret:
-    def test_the_simulation_needs_no_reference(self) -> None:
-        assert_secrets_are_configured(simulated=True, reference="")
-
-    def test_a_live_deployment_without_a_reference_is_refused(self) -> None:
+    def test_a_deployment_without_a_reference_is_refused(self) -> None:
         """Discovering the missing reference at the first release is too late."""
         with pytest.raises(AttestorKeyError, match="MISTHOS_ATTESTOR_SECRET_REF"):
-            assert_secrets_are_configured(simulated=False, reference="")
+            assert_secrets_are_configured(reference="")
 
-    def test_a_live_deployment_with_a_reference_passes(self) -> None:
-        assert_secrets_are_configured(simulated=False, reference=REFERENCE)
+    def test_a_deployment_with_a_reference_passes(self) -> None:
+        assert_secrets_are_configured(reference=REFERENCE)
 
-    def test_a_live_deployment_without_the_owner_key_is_refused(self) -> None:
+    def test_a_deployment_without_the_owner_key_is_refused(self) -> None:
         """Without it no approved price becomes a ceiling, so nothing can be funded."""
         with pytest.raises(AttestorKeyError, match="MISTHOS_OWNER_SECRET_REF"):
-            assert_secrets_are_configured(
-                simulated=False, reference=REFERENCE, owner_reference=""
-            )
-        assert_secrets_are_configured(
-            simulated=False, reference=REFERENCE, owner_reference="owner-2026-10"
-        )
+            assert_secrets_are_configured(reference=REFERENCE, owner_reference="")
+        assert_secrets_are_configured(reference=REFERENCE, owner_reference="owner-2026-10")
+
 
     def test_the_api_checks_it_on_construction(self) -> None:
         main = REPO_ROOT / "backend" / "src" / "misthos" / "main.py"

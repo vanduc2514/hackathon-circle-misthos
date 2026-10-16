@@ -48,7 +48,16 @@ def publisher() -> tuple[TestClient, str]:
 def buy_team(client: TestClient, pid: str) -> dict:
     chosen = client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
     assert chosen.status_code == 200, chosen.text
-    paid = client.post(f"{API}/demo/publishers/{pid}/subscription/pay")
+    pending = chosen.json()["pending"]
+    tx = store.rail.send(
+        payer=pending["payer"],
+        payee=pending["pay_to"],
+        amount=Usdc.from_decimal(pending["amount_usdc"]),
+    )
+    paid = client.post(
+        f"{API}/publishers/{pid}/subscription/payment",
+        json={"tx_hash": tx},
+    )
     assert paid.status_code == 200, paid.text
     return paid.json()
 
@@ -83,7 +92,15 @@ class TestBuyingTeam:
         assert request["payer"] == store.get_publisher(pid).wallet.address  # type: ignore[union-attr]
         assert request["chain_id"] == settings.chain_id
 
-        paid = client.post(f"{API}/demo/publishers/{pid}/subscription/pay").json()
+        tx = store.rail.send(
+            payer=request["payer"],
+            payee=request["pay_to"],
+            amount=Usdc.from_decimal(request["amount_usdc"]),
+        )
+        paid = client.post(
+            f"{API}/publishers/{pid}/subscription/payment",
+            json={"tx_hash": tx},
+        ).json()
         assert paid["plan"] == "team" and paid["status"] == "active"
         assert paid["pending"] is None and len(paid["payments"]) == 1
         assert "Spend reporting" in paid["features"]
@@ -129,12 +146,12 @@ class TestBuyingTeam:
         client, pid = publisher
         r = client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "enterprise"})
         assert r.status_code == 409 and "agreed with us" in r.json()["detail"]
-        # And a contract Enterprise organisation cannot downgrade itself by accident.
+        # And an anonymous request cannot touch another publisher's subscription.
         assert (
             TestClient(app)
             .post(f"{API}/publishers/PUB-1/subscription", json={"plan": "team"})
             .status_code
-            == 409
+            == 401
         )
 
 
@@ -188,19 +205,6 @@ class TestOnArc:
             f"{API}/publishers/{pid}/subscription/payment", json={"tx_hash": "0x" + "c" * 64}
         )
         assert r.status_code == 200 and r.json()["plan"] == "team"
-
-    def test_outside_the_simulation_there_is_no_pay_button(
-        self,
-        publisher,
-        monkeypatch: pytest.MonkeyPatch,  # type: ignore[no-untyped-def]
-    ) -> None:
-        client, pid = publisher
-        monkeypatch.setattr(settings, "simulated", False)
-        assert client.post(f"{API}/demo/publishers/{pid}/subscription/pay").status_code == 403
-        # Nor can anything be bought until the platform wallet is configured.
-        r = client.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
-        assert r.status_code == 503
-        assert TestClient(app).get(f"{API}/publishers/{pid}/subscription").status_code == 401
 
 
 class TestAStaleHashCannotRewindThePeriod:

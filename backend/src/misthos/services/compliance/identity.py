@@ -1,9 +1,8 @@
 """Identity verification at first payout.
 
 The provider holds the documents; the platform keeps a reference and an outcome. The
-simulated provider approves a session the moment it is opened, so the demo shows a
-first payout verifying its contributor in passing, and it can be told to hold or
-fail one contributor so the tests can see both of those paths too.
+test provider approves a session the moment it is opened, and it can be told to hold or
+fail one contributor so tests can see both of those paths too.
 """
 
 from __future__ import annotations

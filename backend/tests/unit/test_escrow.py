@@ -110,13 +110,9 @@ class TestDeployment:
             load_deployment(cfg)
 
     def test_real_settlement_without_a_deployment_is_refused(self, tmp_path: Path) -> None:
-        cfg = Settings(simulated=False, escrow_deployment_file=str(tmp_path / "none.json"))
+        cfg = Settings(escrow_deployment_file=str(tmp_path / "none.json"))
         with pytest.raises(EscrowNotDeployed):
             load_deployment(cfg)
-
-    def test_the_simulation_labels_its_placeholder(self, tmp_path: Path) -> None:
-        cfg = Settings(simulated=True, escrow_deployment_file=str(tmp_path / "none.json"))
-        assert load_deployment(cfg).source == "simulation"
 
     def test_the_default_record_lives_with_the_contracts(self) -> None:
         assert DEPLOYMENTS_DIR.parts[-2:] == ("contracts", "deployments")

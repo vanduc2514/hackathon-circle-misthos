@@ -6,20 +6,13 @@ and read an address, and nothing else. A payout goes to the address the user's
 own wallet reports, which is the point of reading it back rather than trusting
 an address typed into a form.
 
-Simulated, no request leaves the process: each party gets a stable address
-derived from its id, the same derivation the edge uses, so the two agree.
-
-Live, the reply is checked before anything is kept. A simulated edge hands out those
-same derived addresses, which nobody holds a key for, and an edge configured for the
-other Arc network hands out a wallet the escrow never releases to. Both happened when
-the edge read `MISTHOS_SIMULATED=0` as the simulation while the API read it as live
-(#124), so a live API refuses a reply that does not say it is live, or that names a
-blockchain other than Circle's name for the API's own chain.
+The reply is checked before anything is kept. An edge configured for another Arc
+network hands out a wallet the escrow never releases to, so the API refuses a
+reply that names a blockchain other than Circle's name for the API's own chain.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from typing import Literal
@@ -46,7 +39,6 @@ class WalletSession:
     challenge_id: str | None
     address: str | None
     blockchain: str
-    simulated: bool
 
 
 @dataclass(frozen=True)
@@ -54,7 +46,6 @@ class PartyWallet:
     circle_user_id: str
     address: str | None
     blockchain: str
-    simulated: bool
 
 
 class WalletUnavailable(RuntimeError):
@@ -75,33 +66,12 @@ def circle_user_id(party: Party, party_id: str) -> str:
     return f"misthos-{party}-{party_id}"
 
 
-def simulated_address(party: Party, party_id: str) -> str:
-    digest = hashlib.sha256(circle_user_id(party, party_id).encode()).hexdigest()
-    return f"0x{digest[:40]}"
-
-
 class Wallets:
     def __init__(self, cfg: Settings, client: httpx.AsyncClient | None = None) -> None:
         self.cfg = cfg
         self.client = client
 
-    @property
-    def blockchain(self) -> str:
-        """What the simulation labels its made-up wallets with."""
-        return circle_blockchain(self.cfg.chain_id) or CIRCLE_BLOCKCHAINS[ARC_TESTNET]
-
     async def session(self, party: Party, party_id: str) -> WalletSession:
-        if self.cfg.simulated:
-            return WalletSession(
-                circle_user_id=circle_user_id(party, party_id),
-                app_id="simulated",
-                user_token="simulated",
-                encryption_key="simulated",
-                challenge_id=None,
-                address=simulated_address(party, party_id),
-                blockchain=self.blockchain,
-                simulated=True,
-            )
         body = self._live(await self._call("POST", f"/wallets/{party}/{party_id}/session"))
         return WalletSession(
             circle_user_id=body["circleUserId"],
@@ -111,23 +81,14 @@ class Wallets:
             challenge_id=body.get("challengeId"),
             address=body.get("address"),
             blockchain=body["blockchain"],
-            simulated=False,
         )
 
     async def wallet(self, party: Party, party_id: str) -> PartyWallet:
-        if self.cfg.simulated:
-            return PartyWallet(
-                circle_user_id=circle_user_id(party, party_id),
-                address=simulated_address(party, party_id),
-                blockchain=self.blockchain,
-                simulated=True,
-            )
         body = self._live(await self._call("GET", f"/wallets/{party}/{party_id}"))
         return PartyWallet(
             circle_user_id=body["circleUserId"],
             address=body.get("address"),
             blockchain=body["blockchain"],
-            simulated=False,
         )
 
     def _live(self, body: dict) -> dict:
@@ -135,10 +96,7 @@ class Wallets:
         simulated = body.get("simulated")
         if simulated is not False:
             said = "a simulated wallet" if simulated is True else "no live wallet"
-            raise WalletRefused(
-                f"the edge answered with {said} (simulated: {json.dumps(simulated)}) while "
-                "the API is live; run the edge with the API's MISTHOS_SIMULATED"
-            )
+            raise WalletRefused(f"the edge answered with {said} (simulated: {json.dumps(simulated)}) while the API is live")
         chain_id = self.cfg.chain_id
         expected = circle_blockchain(chain_id)
         if expected is None:

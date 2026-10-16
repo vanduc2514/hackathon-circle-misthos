@@ -48,7 +48,7 @@ class PaymentAlreadyUsed(Exception):
 
 @dataclass(frozen=True)
 class Seed:
-    """What the simulation's reset starts the repository from.
+    """What a test reset starts the repository from.
 
     It is built in a repository of its own and handed over whole, so the one being
     reset goes from its old contents to these in one step. The issues' versions are
@@ -68,7 +68,7 @@ class Repository(Protocol):
         A reader sees the old contents or the new ones, never the empty repository in
         between. A copy of an issue loaded before the reset is stale after it, even
         though the seed brings back an issue with the same id: versions never repeat.
-        The simulation's reset; never wired to production.
+        The test reset; never wired to production.
         """
 
     def is_empty(self) -> bool: ...

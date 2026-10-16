@@ -277,8 +277,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.settled:
         observations = load_settled()
-        if settings.simulated and not settings.database_url:
-            print("Warning: these are the simulation's seeded settlements, not evidence.")
     else:
         observations = load_corpus(args.corpus)
     report = calibrate(observations)

@@ -1,9 +1,8 @@
 """An organisation's own controls and records: its spending policy, its spend, its
 audit export (epic #13), and its money as the pricing engine sees it (#43).
 
-These are the organisation's alone: a signed-in publisher sees and sets its own,
-and the simulation lets the demo see any. An operator exports the audit record with
-`python -m misthos.services.audit`.
+These are the organisation's alone: a signed-in publisher sees and sets its own.
+An operator exports the audit record with `python -m misthos.services.audit`.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.concurrency import run_in_threadpool
 
-from misthos.api.session import SIGNED_IN, require_owner_or_simulation
+from misthos.api.session import SIGNED_IN, require_owner
 from misthos.config import settings
 from misthos.domain import plans
 from misthos.domain.policy import PolicyRefusal
@@ -51,7 +50,7 @@ async def set_policy(
 ) -> Publisher:
     """Replace the organisation's spending policy: a release threshold with its named
     approvers, and monthly limits per issue label."""
-    require_owner_or_simulation(account, publisher_id, "set this spending policy")
+    require_owner(account, publisher_id, "set this spending policy")
     await require_plan(publisher_id, plans.Feature.POLICY)
     try:
         return await run_in_threadpool(
@@ -76,7 +75,7 @@ async def spend(
 ) -> SpendOut:
     """What was budgeted, committed, released and refunded in a year, by category,
     and the settled fixes to file for a security review."""
-    require_owner_or_simulation(account, publisher_id, "see this spend")
+    require_owner(account, publisher_id, "see this spend")
     await require_plan(publisher_id, plans.Feature.SPEND)
     try:
         return await run_in_threadpool(store.spend, publisher_id, year)
@@ -96,7 +95,7 @@ async def audit(
 ) -> AuditExport | Response:
     """The decision record and the money events for every issue the organisation
     funded, unedited, as JSON or one sortable CSV."""
-    require_owner_or_simulation(account, publisher_id, "export this audit record")
+    require_owner(account, publisher_id, "export this audit record")
     await require_plan(publisher_id, plans.Feature.AUDIT)
     found = await run_in_threadpool(export, store, publisher_id)
     if found is None:
@@ -119,7 +118,7 @@ async def finance(publisher_id: str, account: Account | None = SIGNED_IN) -> Fin
     Read-only, and informational: it no longer caps or refuses a price (#142), so a
     publisher whose budget is small can still fund whatever they think the work is
     worth. Cash and budgets are commercially sensitive, so only the publisher sees it."""
-    require_owner_or_simulation(account, publisher_id, "see these books")
+    require_owner(account, publisher_id, "see these books")
     try:
         publisher, read, problem = await run_in_threadpool(store.finance_context, publisher_id)
     except KeyError as exc:
@@ -149,7 +148,7 @@ async def finance(publisher_id: str, account: Account | None = SIGNED_IN) -> Fin
 async def repositories(publisher_id: str, account: Account | None = SIGNED_IN) -> RepositoriesOut:
     """The repositories this publisher installed the GitHub App on (#6). An issue there
     given the label is priced without opening the web app."""
-    require_owner_or_simulation(account, publisher_id, "see these repositories")
+    require_owner(account, publisher_id, "see these repositories")
     if await run_in_threadpool(store.get_publisher, publisher_id) is None:
         raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}")
     slug = settings.github_app_slug

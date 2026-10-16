@@ -18,6 +18,8 @@ import pytest
 from fastapi.testclient import TestClient
 from siwe_wallet import Wallet
 
+from misthos.auth import sessions
+
 from misthos.api.v1.webhooks import signature_for
 from misthos.config import settings
 from misthos.domain.issue import IssueState
@@ -443,7 +445,9 @@ class TestThePublishersView:
         monkeypatch.setattr(settings, "github_app_slug", "misthos-dev")
         publisher = onboard(88, "publisher", "acme-maint")
         installed("acme-maint", [REPO, "acme/gears"])
-        body = TestClient(app).get(f"{API}/publishers/{publisher}/repositories").json()
+        client = TestClient(app)
+        client.headers["Authorization"] = f"Bearer {sessions.issue(Wallet(88).address)}"
+        body = client.get(f"{API}/publishers/{publisher}/repositories").json()
         assert [r["repo"] for r in body["repositories"]] == ["acme/gears", REPO]
         assert body["label"] == "misthos"
         assert body["install_url"] == "https://github.com/apps/misthos-dev/installations/new"
@@ -463,7 +467,9 @@ class TestThePublishersView:
         monkeypatch.setattr(settings, "github_app_slug", "misthos-dev")
         publisher = onboard(90, "publisher", "acme-maint")
         installed("acme-maint", [REPO])
-        body = TestClient(app).get(f"{API}/publishers/{publisher}/repositories").json()
+        client = TestClient(app)
+        client.headers["Authorization"] = f"Bearer {sessions.issue(Wallet(90).address)}"
+        body = client.get(f"{API}/publishers/{publisher}/repositories").json()
 
         assert [r["repo"] for r in body["repositories"]] == [REPO]
         assert body["settings_url"] == "https://github.com/settings/installations/42"

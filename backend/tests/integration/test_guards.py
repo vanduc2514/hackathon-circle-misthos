@@ -6,16 +6,18 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from misthos.api import guards
+from misthos.auth import sessions
 from misthos.config import settings
 from misthos.domain.issue import IssueState
 from misthos.domain.ledger import MoneyEventKind
 from misthos.main import app
+from misthos.schemas import Account
 from misthos.services.coordination import Busy
 from misthos.store import store
 
@@ -31,12 +33,24 @@ PUBLISH = {
 @pytest.fixture(autouse=True)
 def fresh_store():
     store.reset()
+    store.repo.save_account(
+        Account(
+            address="0xAcme00000000000000000000000000000000A1".lower(),
+            role="publisher",
+            party_id="PUB-1",
+            github_login="acme-bot",
+            created_at=datetime.now(UTC),
+        )
+    )
     yield
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    c = TestClient(app)
+    token = sessions.issue("0xAcme00000000000000000000000000000000A1")
+    c.headers["Authorization"] = f"Bearer {token}"
+    return c
 
 
 def key(value: str) -> dict[str, str]:
