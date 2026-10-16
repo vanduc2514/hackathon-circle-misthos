@@ -582,11 +582,8 @@ def held_release(
     a contributor, and run one issue of theirs to the merge, where the payout waits."""
     account = onboard(publisher, Wallet(seed), "publisher", "Acme", f"acme-{seed}")
     onboard(contributor, Wallet(seed + 1), "contributor", "hal", f"hal-{seed}")
-    # Approval thresholds are in the Team plan, bought here without a conversation.
+    # Approval thresholds are ungated, so the publisher sets its policy directly.
     pid = account["party_id"]
-    assert publisher.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
-    paid = publisher.post(f"{API}/demo/publishers/{pid}/subscription/pay").json()
-    assert paid["plan"] == "team"
     policy = publisher.put(
         f"{API}/publishers/{pid}/policy",
         json={"approval_threshold_usdc": "1", "approvers": approvers},

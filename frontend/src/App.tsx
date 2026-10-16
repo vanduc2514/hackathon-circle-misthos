@@ -8,10 +8,7 @@ import Dashboard from './routes/Dashboard'
 import Issues from './routes/Issues'
 import IssueDetail from './routes/IssueDetail'
 import Landing from './routes/Landing'
-import Loop from './routes/Loop'
-import Plans from './routes/Plans'
 import Publish from './routes/Publish'
-import Spend from './routes/Spend'
 
 // Signing carries the curve arithmetic, so it loads only where someone signs in.
 const AccountPage = lazy(() => import('./routes/Account'))
@@ -42,20 +39,11 @@ function Layout() {
           <span>misthos</span>
         </Link>
         <div className="nav-links">
-          <NavLink to="/overview" className={({ isActive }) => (isActive ? 'active' : '')}>
-            Overview
-          </NavLink>
           <NavLink to="/issues" className={({ isActive }) => (isActive ? 'active' : '')}>
             Issues
           </NavLink>
-          <NavLink to="/loop" className={({ isActive }) => (isActive ? 'active' : '')}>
-            Loop
-          </NavLink>
-          <NavLink to="/spend" className={({ isActive }) => (isActive ? 'active' : '')}>
-            Spend
-          </NavLink>
-          <NavLink to="/plans" className={({ isActive }) => (isActive ? 'active' : '')}>
-            Plans
+          <NavLink to="/overview" className={({ isActive }) => (isActive ? 'active' : '')}>
+            Dashboard
           </NavLink>
           {account?.role === 'publisher' && (
             <NavLink to="/publish" className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -133,12 +121,10 @@ export default function App() {
       <Route index element={<Landing />} />
       <Route element={<Layout />}>
         <Route path="/overview" element={<Dashboard />} />
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/issues" element={<Issues />} />
         <Route path="/issues/:issueId" element={<IssueDetail />} />
-        <Route path="/loop" element={<Loop />} />
-        <Route path="/spend" element={<Spend />} />
         <Route path="/publish" element={<Publish />} />
-        <Route path="/plans" element={<Plans />} />
         <Route
           path="/account"
           element={

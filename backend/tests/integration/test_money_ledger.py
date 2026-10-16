@@ -79,12 +79,6 @@ class TestBooking:
         rate = rec.escrow.fee_bps
         fee = rec.platform_fee
 
-        # Put the publisher on a different tier after the money is in.
-        publisher = store.get_publisher(rec.publisher_id)
-        assert publisher is not None
-        other = "enterprise" if publisher.tier != "enterprise" else "open"
-        store.set_contract_plan(rec.publisher_id, other, _now() + timedelta(days=30))
-
         again = get(rec.id)
         assert again.escrow is not None
         assert again.escrow.fee_bps == rate

@@ -29,13 +29,12 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    Timestamp = sa.DateTime(timezone=True)
     op.add_column("issues", sa.Column("terms_amount_base_units", sa.BigInteger(), nullable=True))
     op.add_column("issues", sa.Column("terms_fee_bps", sa.Integer(), nullable=True))
     op.add_column("issues", sa.Column("terms_wallet", sa.String(length=64), nullable=True))
-    op.add_column("issues", sa.Column("terms_deadline", sa.TIMESTAMP(timezone=True), nullable=True))
-    op.add_column(
-        "issues", sa.Column("terms_approved_at", sa.TIMESTAMP(timezone=True), nullable=True)
-    )
+    op.add_column("issues", sa.Column("terms_deadline", Timestamp, nullable=True))
+    op.add_column("issues", sa.Column("terms_approved_at", Timestamp, nullable=True))
 
 
 def downgrade() -> None:

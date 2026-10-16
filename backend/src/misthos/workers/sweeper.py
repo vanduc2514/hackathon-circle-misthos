@@ -24,8 +24,7 @@ screening records past their published retention period; reconciles the money
 ledger against the chain, raising an alert for any divergence; and records the
 connections GitHub's installations imply for any repository whose `installation`
 delivery never landed (#180), so a label is never refused over a delivery GitHub
-does not send twice. It also ends plans whose paid period is over: past due for a
-grace period, then back on Open (#53).
+does not send twice.
 """
 
 from __future__ import annotations
@@ -108,8 +107,6 @@ class SweepReport:
     connections_added: tuple[str, ...] = ()
     """Repositories the App is installed on that had no connection recorded, now
     recorded (#180)."""
-    plans_changed: list[str] = field(default_factory=list)
-    """Publishers whose plan went past due, was cancelled or lapsed this pass."""
 
 
 def sweep_once(store: Store, now: datetime | None = None) -> SweepReport:
@@ -182,11 +179,6 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
             # A GitHub outage must not stop the refunds and the reviews that follow.
             log.exception("sweeper: connections could not be reconciled, retrying next pass")
             connections_added = ()
-        try:
-            plans_changed = store.sweep_subscriptions(now)
-        except Exception:
-            log.exception("sweeper: plans failed, retrying next pass")
-            plans_changed = []
         SWEEP_FAILURES.inc(len(failed))
         return SweepReport(
             ran=True,
@@ -199,7 +191,6 @@ def _sweep(store: Store, now: datetime) -> SweepReport:
             purged=purged,
             divergences=len(divergences),
             connections_added=connections_added,
-            plans_changed=plans_changed,
         )
 
 

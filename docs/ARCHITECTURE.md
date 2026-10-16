@@ -545,7 +545,7 @@ Every key is prefixed `misthos:`. The sweeper's single-runner lock is a Postgres
 
 A `released` money event is written with the transfer the chain returned, and the transaction hash is unique. A retry that tries to write the same hash fails on the constraint rather than paying twice, which is the failure the market research warns about: an agent that retries after a timeout can pay an invoice twice and the books will still balance. The idempotency key stops the retry before it reaches the chain, and the contract's `NotHeld` check stops a second release if one somehow did.
 
-## The organisation tier
+## Spending controls and audit export
 
 An organisation sets its own spending policy, and the store enforces it at the two moments money moves, out of the agent's reach (`domain/policy.py`, #51):
 
@@ -553,18 +553,11 @@ An organisation sets its own spending policy, and the store enforces it at the t
 - **A release threshold with named approvers.** A payout above it is held as `await_approver` until one of them approves, whether the merge or the grace period triggered it. The approval is required, not requested.
 - **Approvers are GitHub logins, and the approval is the session's.** A login is what a session proves: the wallet signs in, and GitHub's OAuth links the login to it. So `POST /issues/{id}/approve-release` takes the approver from the signed-in account's linked login, never from the request, and the organisation must have named it. Holding the organisation's wallet confers nothing: its own account approves only if its own login is named. The contributor being paid never approves their own payout. A policy naming something that cannot be a login, such as an e-mail address, is refused, because no session could ever satisfy it. Only the simulation, for a visitor who is not signed in, accepts a name in the request, as it does for a claim.
 
-`/publishers/{id}/spend` reports what was budgeted, committed, released and refunded in the year, by category, and beside each limit what was committed this calendar month, counted by the same function funding checks the limit with (#50). It also lists the settled compliance and security fixes a security review can file. `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are the organisation's alone: a signed-in publisher sees and sets its own, and only the simulation serves any.
+`/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). Both spending policy controls and audit export are ungated and available to every publisher without requiring a subscription plan or tier.
 
 Every CSV the platform serves, the audit export and a contributor's statement alike, carries other people's words: issue titles, repository and organisation names, reasons. A cell a spreadsheet would run as a formula, one starting with `=`, `+`, `-`, `@`, a tab or a carriage return, is written as text with a leading apostrophe. A plain number keeps its sign (`services/spreadsheet.py`).
 
-**Plans** (`domain/plans.py`, `api/v1/plans.py`, #53) follow the tier table in 06. Open costs nothing. Team costs $249 a month, and adds budget rules, approval thresholds and spend reporting. Enterprise starts at $2,000 a month, and adds the audit export, SSO and a support commitment. The take rate and the minimum price are the same on every plan, and a plan changes neither: the platform keeps a flat 10 percent (`PLATFORM_FEE_BPS`), and $5 is the lowest price any plan may publish. A subscription buys controls, reporting and support, not a different rate.
-
-- **What a plan unlocks.** Each of those routes answers 402, naming the plan that includes it. Enforcement of a policy already set never stops, even when a plan lapses, because a limit that protects an organisation's money is not a feature to switch off for non-payment.
-- **Buying Team.** Team is bought from the web app without a conversation. The publisher chooses it and is told what to send: USDC on Arc, from its own wallet, to `MISTHOS_PLATFORM_WALLET`. It confirms the transaction, and the server reads the USDC `Transfer` log from the receipt over JSON-RPC (`services/billing/arc.py`) before switching the plan on. We never hold a key that moves a publisher's money, and one transaction pays for one period.
-- **When a period ends.** The sweeper marks a period that ended unpaid as past due, gives it seven days' grace, and then moves the organisation back to Open. A cancelled plan ends at its period end.
-- **Enterprise** is agreed in a contract and recorded by an operator (`python -m misthos.services.contracts`).
-- **The simulation** has its own rail, so the demo can buy Team with a button.
-- **Not built yet:** SSO, which needs organisation membership beyond one wallet per party.
+**Pricing** is flat across all publishers: a 1.5% take rate (`PLATFORM_FEE_BPS = 150`) with a $5 floor (`MINIMUM_PRICE = 5 USDC`). There are no subscription tiers, paid plans, or monthly fees.
 
 ## Trust boundaries
 

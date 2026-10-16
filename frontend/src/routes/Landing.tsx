@@ -229,7 +229,6 @@ export default function Landing() {
           <nav className="main-nav" aria-label="Main navigation">
             <a href="#how-it-works">How it works</a>
             <a href="#why-misthos">Why Misthos</a>
-            <Link to="/plans">Plans</Link>
             <a href="#current-issues">Current issues</a>
           </nav>
           <HeaderAction />

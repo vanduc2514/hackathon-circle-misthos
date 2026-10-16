@@ -16,7 +16,7 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **Fixed price.** The only pricing model the platform uses. The publisher names one number before publication, commits the funds, and the issue is taken at that number or left alone. There is no bidding, no auction and no negotiation.
 
-**Take rate.** The platform's commission on matched work: a flat 10 percent, the same for every publisher on every plan. It is carved out of the committed amount, so the publisher pays the price and nothing else and the contributor receives the rest, and the escrow contract will not accept a rate above 15 percent. It funds the review.
+**Take rate.** The platform's commission on matched work: a flat 1.5%, the same for every publisher. It is carved out of the committed amount, so the publisher pays the price and nothing else and the contributor receives the rest, and the escrow contract will not accept a rate above 15 percent. It funds the review.
 
 **Settled issue.** The unit the business counts. An issue where a pull request merged and the payment released. This is the North Star metric.
 

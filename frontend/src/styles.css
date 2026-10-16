@@ -933,24 +933,15 @@ a.chip:hover {
 
 .footer-note {
   flex: 1 1 320px;
-  line-height: 1.6;
-}
+    line-height: 1.6;
+  }
 
-/* ----------------------------------------------------------------- plans */
+  /* Sentences, not hashes: wrap between words. */
+  .kv.prose dd {
+    word-break: normal;
+  }
 
-/* Sentences, not hashes: wrap between words. */
-.kv.prose dd {
-  word-break: normal;
-}
-
-.plan-from,
-.plan-per {
-  font-family: var(--sans);
-  font-size: 13px;
-  letter-spacing: 0;
-}
-
-/* ----------------------------------------------------------- comparables */
+  /* ----------------------------------------------------------- comparables */
 
 .comparables {
   list-style: none;

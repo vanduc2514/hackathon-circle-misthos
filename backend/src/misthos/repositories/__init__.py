@@ -12,7 +12,6 @@ from __future__ import annotations
 from misthos.repositories.base import (
     AccountConflict,
     AppendOnlyViolation,
-    PaymentAlreadyUsed,
     Repository,
     Seed,
     StaleIssue,
@@ -34,7 +33,6 @@ __all__ = [
     "AccountConflict",
     "AppendOnlyViolation",
     "MemoryRepository",
-    "PaymentAlreadyUsed",
     "Repository",
     "Seed",
     "StaleIssue",

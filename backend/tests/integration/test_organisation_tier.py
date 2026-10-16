@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -182,83 +182,6 @@ class TestCategoryLimits:
             )
 
 
-class TestSpendView:
-    def test_budgeted_committed_released_and_fileable(self, client: TestClient) -> None:
-        policy(client, category_limits={"compliance": "10000"})
-        paid = store.approve_and_accept(ISSUE)
-        amount = paid.money_events[-1].amount
-
-        spend = client.get(f"{API}/publishers/{PUBLISHER}/spend").json()
-
-        released = sum(
-            e.amount.base_units
-            for r in store.list_issues()
-            if r.publisher_id == PUBLISHER
-            for e in r.money_events
-            if e.kind is MoneyEventKind.RELEASED and e.occurred_at.year == spend["year"]
-        )
-        assert spend["released"]["base_units"] == released
-        compliance = next(c for c in spend["by_category"] if c["label"] == "compliance")
-        assert compliance["released"]["base_units"] == amount.base_units
-        assert compliance["limit"]["usdc"] == "10000.00"
-        filed = next(f for f in spend["fileable"] if f["issue_id"] == ISSUE)
-        assert filed["acceptance_criteria"] == paid.acceptance_criteria
-
-    def test_each_category_shows_this_months_commitments_beside_its_monthly_limit(
-        self, client: TestClient
-    ) -> None:
-        """The limit is per calendar month, so the figure beside it is the month's,
-        and the year's stays the year's."""
-        policy(client, category_limits={"compliance": "10000"})
-        committed = store.advance(ISSUE).money_events[-1]
-        assert committed.kind is MoneyEventKind.COMMITTED
-
-        spend = client.get(f"{API}/publishers/{PUBLISHER}/spend").json()
-        now = datetime.now(UTC)
-        assert spend["month"] == f"{now:%Y-%m}"
-        compliance = next(c for c in spend["by_category"] if c["label"] == "compliance")
-        assert compliance["committed_this_month"]["base_units"] == committed.amount.base_units
-
-        # A month on, the month starts again from nothing; the year has not.
-        first = committed.occurred_at.replace(day=1)
-        next_month = (first + timedelta(days=32)).replace(day=1)
-        later = store.spend(PUBLISHER, year=committed.occurred_at.year, now=next_month)
-        assert later.month == f"{next_month:%Y-%m}"
-        [moved] = [c for c in later.by_category if c.label == "compliance"]
-        assert moved.committed_this_month["base_units"] == 0
-        assert moved.committed["base_units"] == committed.amount.base_units
-
-    def test_the_month_shown_is_the_month_the_limit_is_checked_against(
-        self, client: TestClient
-    ) -> None:
-        policy(client, category_limits={"compliance": "10000"})
-        store.advance(ISSUE)
-        spend = client.get(f"{API}/publishers/{PUBLISHER}/spend").json()
-        shown = next(c for c in spend["by_category"] if c["label"] == "compliance")
-        month = Decimal(shown["committed_this_month"]["usdc"])
-
-        # One dollar of room left this month, by the panel's own figure.
-        policy(client, category_limits={"compliance": str(month + 1)})
-        second = store.publish(
-            PublishRequest(
-                # A price it would commit, two dollars past the room left, so the limit is
-                # what refuses it. The publisher's number is what counts against the limit
-                # now, so an issue published without one cannot reach this check at all:
-                # funding it is refused for the missing price (#142, #150).
-                repo="acme/ledger", title="Compliance: reconcile the monthly export",
-                labels=["compliance"], publisher_id=PUBLISHER, signals={"blast_radius": 2},
-                price=month + 2,
-            )
-        )  # fmt: skip
-        r = client.post(f"{API}/issues/{second.id}/advance")
-
-        assert r.status_code == 403
-        assert f"{month:.2f} USDC is committed already" in r.json()["detail"]
-
-    def test_an_unknown_publisher_is_404(self, client: TestClient) -> None:
-        assert client.get(f"{API}/publishers/PUB-999/spend").status_code == 404
-
-
 class TestAuditExport:
     def test_the_export_is_the_record_unedited(self, client: TestClient) -> None:
         store.approve_and_accept(ISSUE)
@@ -332,7 +255,6 @@ class TestAuditExport:
         monkeypatch.setattr(settings, "simulated", False)
         # Anonymous outside the simulation: sign in first.
         assert client.get(f"{API}/publishers/{PUBLISHER}/audit").status_code == 401
-        assert client.get(f"{API}/publishers/{PUBLISHER}/spend").status_code == 401
         assert policy(client, approvers=[APPROVER]).status_code == 401
 
 

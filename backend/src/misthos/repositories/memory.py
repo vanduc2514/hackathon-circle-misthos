@@ -19,7 +19,6 @@ from misthos.models.records import IssueRecord
 from misthos.repositories.base import (
     AccountConflict,
     AppendOnlyViolation,
-    PaymentAlreadyUsed,
     Seed,
     StaleIssue,
 )
@@ -29,8 +28,6 @@ from misthos.schemas import (
     Decision,
     Publisher,
     RepoConnection,
-    Subscription,
-    SubscriptionPayment,
 )
 
 
@@ -59,9 +56,7 @@ class MemoryRepository:
             self._screenings: list[Screening] = []
             self._deliveries: dict[str, tuple[str, datetime]] = {}
             self._accounts: dict[str, Account] = {}
-            self._subscriptions: dict[str, Subscription] = {}
             self._connections: dict[str, RepoConnection] = {}
-            self._subscription_payments: list[SubscriptionPayment] = []
             if seed is None:
                 return
             for publisher in seed.publishers:
@@ -83,9 +78,7 @@ class MemoryRepository:
                 self._screenings
                 or self._deliveries
                 or self._accounts
-                or self._subscriptions
                 or self._connections
-                or self._subscription_payments
             ), "a seed holds publishers, contributors, issues and counters only"
             return Seed(
                 publishers=tuple(p.model_copy(deep=True) for p in self._publishers.values()),
@@ -193,36 +186,7 @@ class MemoryRepository:
         with self._guard:
             return [c.model_copy(deep=True) for c in self._connections.values()]
 
-    # ------------------------------------------------------------ plans
-
-    def get_subscription(self, publisher_id: str) -> Subscription | None:
-        with self._guard:
-            found = self._subscriptions.get(publisher_id)
-            return found.model_copy(deep=True) if found else None
-
-    def save_subscription(self, subscription: Subscription) -> None:
-        with self._guard:
-            self._subscriptions[subscription.publisher_id] = subscription.model_copy(deep=True)
-
-    def list_subscriptions(self) -> list[Subscription]:
-        with self._guard:
-            return [s.model_copy(deep=True) for s in self._subscriptions.values()]
-
-    def add_subscription_payment(self, payment: SubscriptionPayment) -> None:
-        with self._guard:
-            if any(
-                p.tx_hash.lower() == payment.tx_hash.lower() for p in self._subscription_payments
-            ):
-                raise PaymentAlreadyUsed(payment.tx_hash)
-            self._subscription_payments.append(payment.model_copy(deep=True))
-
-    def list_subscription_payments(self, publisher_id: str) -> list[SubscriptionPayment]:
-        with self._guard:
-            return [
-                p.model_copy(deep=True)
-                for p in self._subscription_payments
-                if p.publisher_id == publisher_id
-            ]
+    # ------------------------------------------------------------ accounts
 
     def save_account(self, account: Account) -> None:
         with self._guard:

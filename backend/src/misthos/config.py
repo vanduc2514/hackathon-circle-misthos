@@ -46,16 +46,6 @@ class Settings(BaseSettings):
     public_url: str = "http://localhost:5173"
     session_secret: str = ""
 
-    # A publisher's books, read-only, for the affordability ceiling (#43). JSON from
-    # publisher id to a connection; see services/finance. Empty uses the declared
-    # budget alone.
-    finance_connections: str = ""
-
-    # Plans (#53). Where subscription payments are sent: the platform's own wallet on
-    # Arc. The simulation uses a made-up one when this is empty; anywhere else plans
-    # cannot be bought until it is set.
-    platform_wallet: str = ""
-
     # GitHub, driven from the repository (#6): an issue given this label, in a repository
     # a publisher installed the App on, is priced without opening the web app.
     github_label: str = "misthos"

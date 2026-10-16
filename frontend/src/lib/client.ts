@@ -15,9 +15,6 @@ export type TimelineEntry = components['schemas']['TimelineEntry']
 export type Decision = components['schemas']['Decision']
 // Anyone sees every publisher; its budget and policy only it, or the simulation.
 export type Publisher = components['schemas']['PublisherListing']
-export type LoopOut = components['schemas']['LoopOut']
-export type SpendOut = components['schemas']['SpendOut']
-export type FinanceOut = components['schemas']['FinanceOut']
 
 export type HealthOut = components['schemas']['HealthOut']
 export type Account = components['schemas']['Account']

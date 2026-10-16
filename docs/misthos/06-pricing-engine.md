@@ -24,13 +24,9 @@ number on the issue. The escrow carves the fee out on acceptance
 the fee in the same call, so the rate is a transfer rather than a reporting-layer number.
 The contract bounds it at 15 percent (`MAX_FEE_BPS`).
 
-**One rate for everyone.** It used to be 12 percent at the free tier, 10 at Team and 8 at
-Enterprise. That is a second price for the same service, and it had a second effect nobody
-wanted: because the published price floor was derived from the take rate, the plan a
-publisher bought decided the lowest price they were allowed to pay. The fee does not get
-cheaper because a company bought a subscription, so it no longer moves with one. Plans
-still exist and still gate what they always gated: budget rules, approval thresholds, spend
-reporting, the audit export, SSO and support.
+**One rate for everyone.** The take rate is a flat 1.5% (`PLATFORM_FEE_BPS = 150`) with
+a $5 minimum price (`MINIMUM_PRICE = 5 USDC`). There are no tiers, subscription plans,
+or per-tier minimums. Every publisher pays the same flat rate.
 
 ### What a settled issue earns, and where it does not
 

@@ -110,14 +110,9 @@ export default function AccountPage() {
               </dl>
               <div className="btn-row" style={{ marginTop: 14 }}>
                 {account?.role === 'publisher' && account.github_login && (
-                  <>
-                    <Link className="btn primary" to="/publish">
-                      Publish an issue
-                    </Link>
-                    <Link className="btn" to={`/spend?publisher=${account.party_id}`}>
-                      Your spend
-                    </Link>
-                  </>
+                  <Link className="btn primary" to="/publish">
+                    Publish an issue
+                  </Link>
                 )}
                 {account?.role === 'contributor' && account.github_login && (
                   <Link className="btn primary" to="/issues?state=FUNDED">

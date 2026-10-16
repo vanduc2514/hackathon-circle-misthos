@@ -7,6 +7,15 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **Cut Loop, Spend, Plans and subscriptions** (#183).
+  - Routes `/loop`, `/spend`, and `/plans` removed.
+  - Endpoints `/api/v1/loop`, `/api/v1/publishers/{id}/spend`, `/api/v1/publishers/{id}/finance`, and `/api/v1/plans` removed.
+  - Subscription billing (`services/billing/`), finance book integrations (`services/finance/`), and plan tiers (`domain/plans.py`) removed.
+  - Platform pricing is a flat 1.5% take rate with a $5 minimum across all publishers.
+  - Audit export (`/publishers/{id}/audit`) and spending policy (`/publishers/{id}/policy`) are kept and ungated for all publishers.
+  - `MISTHOS_PLATFORM_WALLET` and `MISTHOS_FINANCE_CONNECTIONS` removed from configuration.
+  - Sweeper no longer sweeps subscriptions.
+  - Database migration 0016 drops `subscriptions`, `subscription_payments`, and publisher `tier`.
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:
   white pages, black ink and buttons, Georgia headings and figures, and Arial text. The
   dark, mono, orange theme is gone.

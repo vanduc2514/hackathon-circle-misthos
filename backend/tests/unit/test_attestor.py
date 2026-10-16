@@ -8,6 +8,7 @@ nowhere else, and rotating it is a contract call rather than a redeploy.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,7 @@ class TestReadingTheKey:
         with pytest.raises(AttestorKeyError, match="name the secret"):
             load_attestor_key(LocalSecretStore(tmp_path), KEY)
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file permissions not supported on Windows")
     def test_a_second_reader_of_the_secret_file_is_refused(self, tmp_path: Path) -> None:
         _mounted_secret(tmp_path).chmod(0o644)
 
@@ -76,6 +78,7 @@ class TestReadingTheKey:
         with pytest.raises(AttestorKeyError, match="not a secret reference"):
             load_attestor_key(LocalSecretStore(tmp_path), "../outside")
 
+    @pytest.mark.skipif(os.name == "nt", reason="Windows symlinks require elevated privileges")
     def test_a_symlinked_reference_is_refused(self, tmp_path: Path) -> None:
         """A bare reference cannot be refused by name, so the file itself must not be
         a link: checking a path and then reading it is two lookups, and the mode that

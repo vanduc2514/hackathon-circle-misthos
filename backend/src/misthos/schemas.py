@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field, model_validator
 from misthos.domain.money import Usdc
 from misthos.domain.repo import parse_repo_link
 
-Tier = Literal["open", "team", "enterprise"]
 Actor = Literal["agent", "publisher", "contributor", "system"]
 
 
@@ -50,7 +49,6 @@ class Publisher(BaseModel):
     id: str
     name: str
     kind: Literal["company", "maintainer"]
-    tier: Tier
     wallet: Wallet
     budget_remaining_usdc: str
     # The organisation's own spending policy (domain/policy.py).
@@ -69,7 +67,6 @@ class PublisherListing(BaseModel):
     id: str
     name: str
     kind: Literal["company", "maintainer"]
-    tier: Tier
     wallet: Wallet
     budget_remaining_usdc: str | None = None
     approval_threshold_usdc: str | None = None
@@ -491,27 +488,6 @@ class SubmitRequest(BaseModel):
     pr_number: int = Field(gt=0)
 
 
-class FinanceOut(BaseModel):
-    """A publisher's money as the pricing engine sees it, for that publisher alone (#43)."""
-
-    publisher_id: str
-    declared_budget_usdc: str
-    connected: bool
-    """Whether the operator connected this publisher's books."""
-    source: str | None = None
-    budget_remaining_usdc: str | None = None
-    """What the books say remains of the budget this work comes out of."""
-    cash_usdc: str | None = None
-    as_of: datetime | None = None
-    spendable_usdc: str
-    """The lower of the declared budget and what the books say remains.
-
-    Informational only since #142. It used to cap every price the publisher was
-    offered, which made their own money a one-way constraint on their own decision;
-    it now tells them what they have to spend and nothing else."""
-    note: str = ""
-
-
 class DemoPullRequestOut(BaseModel):
     """A pull request the simulated GitHub opened for the claimant (simulation only)."""
 
@@ -533,54 +509,6 @@ class ApproveReleaseRequest(BaseModel):
     """The simulation's only, for a visitor who is not signed in: the approver the demo
     acts as. Signed in, the approver is the account's linked GitHub login, and this is
     ignored."""
-
-
-class SpendCategory(BaseModel):
-    label: str
-    committed: dict[str, str | int]
-    """Committed during the year."""
-    released: dict[str, str | int]
-    """Released during the year."""
-    committed_this_month: dict[str, str | int]
-    """Committed since this calendar month began: what the monthly limit is checked
-    against when the next commitment is funded."""
-    limit: dict[str, str | int] | None = None
-    """The most that may be committed under the label in one calendar month."""
-
-
-class FileableItem(BaseModel):
-    """One settled fix, with what a security review needs to file it."""
-
-    issue_id: str
-    repo: str
-    number: int
-    title: str
-    labels: list[str]
-    compliance_driven: bool
-    acceptance_criteria: list[str]
-    amount: dict[str, str | int]
-    settled_at: datetime
-    github_url: str
-
-
-class SpendOut(BaseModel):
-    """What an organisation budgeted, committed, released and can file (#50)."""
-
-    publisher_id: str
-    name: str
-    year: int
-    month: str
-    """The calendar month the `committed_this_month` figures count, as YYYY-MM (UTC)."""
-    budget_remaining: dict[str, str | int]
-    committed_held: dict[str, str | int]
-    """In escrow now, across every open issue."""
-    committed: dict[str, str | int]
-    """Committed during the year."""
-    released: dict[str, str | int]
-    refunded: dict[str, str | int]
-    by_category: list[SpendCategory]
-    fileable: list[FileableItem]
-    """Settled fixes that were compliance-driven or security-labelled."""
 
 
 class AuditMoneyEvent(BaseModel):
@@ -632,30 +560,6 @@ class ReputationEventOut(BaseModel):
     amount: dict[str, str | int]
     points: int
     settled_at: datetime
-
-
-class LoopSettlement(BaseModel):
-    issue_id: str
-    repo: str
-    number: int
-    title: str
-    amount: dict[str, str | int]
-    contributor: str
-    """The contributor's GitHub handle, which the settlement comment already shows."""
-    settled_at: datetime
-    github_url: str
-
-
-class LoopOut(BaseModel):
-    """The loop in public: what was funded, settled and paid, for one repository or
-    all of them. No wallet and no transfer appears here."""
-
-    repo: str | None
-    funded_open: int
-    settled_issues: int
-    settled_issues_7d: int
-    matched_volume_usdc: str
-    recent: list[LoopSettlement]
 
 
 class DisputeRequest(BaseModel):
@@ -722,81 +626,6 @@ class AnnualStatement(BaseModel):
     generated_at: datetime
     simulated: bool
     """True when no chain was contacted. A simulated statement is not a tax record."""
-
-
-# ------------------------------------------------------------------ plans (#53)
-
-
-class PlanOut(BaseModel):
-    id: Tier
-    name: str
-    audience: str
-    monthly_usdc: str
-    price_from: bool
-    """True when the price is where a negotiated one starts (Enterprise)."""
-    self_serve: bool
-    """Bought from the web app without a conversation."""
-    take_rate_percent: float
-    minimum_fix_usdc: str
-    features: list[str]
-    support: str
-
-
-class PaymentRequest(BaseModel):
-    """What to send to start or renew a plan: USDC on Arc, from the publisher's wallet."""
-
-    plan: Tier
-    amount_usdc: str
-    pay_to: str
-    payer: str
-    chain: str
-    chain_id: int
-    usdc_address: str
-    expires_at: datetime
-
-
-class Subscription(BaseModel):
-    publisher_id: str
-    plan: Tier
-    status: Literal["pending", "active", "past_due", "lapsed", "cancelled"]
-    """`pending` is chosen and not yet paid for."""
-    period_start: datetime | None = None
-    period_end: datetime | None = None
-    cancel_at_period_end: bool = False
-    pending: PaymentRequest | None = None
-    updated_at: datetime
-
-
-class SubscriptionPayment(BaseModel):
-    publisher_id: str
-    plan: Tier
-    amount_usdc: str
-    tx_hash: str
-    period_start: datetime
-    period_end: datetime
-    paid_at: datetime
-
-
-class SubscriptionOut(BaseModel):
-    publisher_id: str
-    plan: Tier
-    """The plan in force now, which is the publisher's tier."""
-    status: Literal["none", "pending", "active", "past_due", "lapsed", "cancelled", "contract"]
-    """`none` is Open with nothing bought; `contract` is a plan agreed with us."""
-    period_end: datetime | None = None
-    grace_ends: datetime | None = None
-    cancel_at_period_end: bool = False
-    pending: PaymentRequest | None = None
-    payments: list[SubscriptionPayment] = Field(default_factory=list)
-    features: list[str] = Field(default_factory=list)
-
-
-class SubscribeRequest(BaseModel):
-    plan: Tier
-
-
-class PaymentConfirmation(BaseModel):
-    tx_hash: str = Field(pattern=r"^0x[0-9a-fA-F]{64}$")
 
 
 # ------------------------------------------------------- GitHub connections (#6)
