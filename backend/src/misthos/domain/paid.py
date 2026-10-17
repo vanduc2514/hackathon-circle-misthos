@@ -16,8 +16,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from misthos.domain.money import Usdc
 
@@ -39,8 +40,29 @@ class PaidCall:
     transaction: str
     """Gateway's reference for the settlement."""
     ref: str | None
-    """What the call produced, when it is worth naming: an async job's id."""
+    """What the call was about or produced, when it is worth naming: an issue, a
+    contributor, an async job."""
     settled_at: datetime
+
+
+@dataclass(frozen=True)
+class PriceQuote:
+    """One price the paid API quoted, with what it was asked (#203).
+
+    Kept for audit and for calibrating the engine: an agent's question is a sample of
+    the market the engine prices. `request_digest` is the edge's digest of the request,
+    the same one its settlement carries, so a quote joins the payment that bought it.
+    A quote whose payment was never settled has no paid call beside it.
+    """
+
+    id: str
+    route: str
+    request_digest: str | None
+    payer: str | None
+    free_caller: str | None
+    inputs: dict[str, Any] = field(default_factory=dict)
+    output: dict[str, Any] = field(default_factory=dict)
+    quoted_at: datetime | None = None
 
 
 @dataclass(frozen=True)

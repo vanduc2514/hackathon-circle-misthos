@@ -363,7 +363,13 @@ export function paidRouter(opts: PaidRouterOptions): Router {
     }
     return core.call(call, {
       body: route.method === 'POST' ? req.body : undefined,
-      headers: { 'X-Misthos-Paid-Route': route.id, ...extra },
+      headers: {
+        'X-Misthos-Paid-Route': route.id,
+        // The digest the settlement will carry, so what the core keeps of a call
+        // (a price quote) joins the payment that bought it.
+        'X-Misthos-Request-Digest': requestDigest(route, req),
+        ...extra,
+      },
     })
   }
 

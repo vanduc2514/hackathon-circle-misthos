@@ -130,6 +130,8 @@ route; tests in both services walk every route and check.
 | `GET /paid/decisions` | `decisions` | $0.02 a page | anyone signed in | #202 |
 | `GET /paid/reputation/{contributor_id}` | `reputation` | $0.05 | that contributor | #202 |
 | `GET /paid/escrow/{issue_id}/attestation` | `escrow-attestation` | $0.02 | that issue's publisher | #202 |
+| `POST /paid/price` | `price` | $0.25 | any publisher | #203 |
+| `GET /paid/comparables` | `comparables` | $0.10 | any publisher | #203 |
 
 `/paid/pricing-report`, which charged $0.25 for the free `/api/v1/metrics`, is gone, and
 no market report replaces it: the metrics stay free.
@@ -198,6 +200,52 @@ is the text that was signed.
 The certificate key is a third key, kept in the secret store by
 `MISTHOS_CERTIFICATE_SECRET_REF` like the escrow's two. The escrow does not know it, so
 nothing it signs can move money. Without it the attestation is `503` and not charged.
+
+### Pricing and the history behind it (#203)
+
+**`POST /paid/price`**: what the engine suggests for an issue the caller describes. It
+runs exactly what the issue page runs (`Store.price_advice`: read the signals, find the
+comparables, propose), on the caller's description, and lists nothing.
+
+```json
+{
+  "title": "Retry webhook deliveries that time out",
+  "body": "Deliveries that time out are dropped. Expected: retried with backoff.",
+  "repo": "acme/hooks",
+  "labels": ["bug"],
+  "signals": { "blast_radius": 4 },
+  "compliance_driven": false,
+  "prior_attempts": 0
+}
+```
+
+`title` and `repo` (`owner/name`, or a `github.com` link) are required. `signals` sets
+any of the six (`code_surface`, `requirement_clarity`, `test_coverage`,
+`dependency_depth`, `prior_attempts`, `blast_radius`, each 1 to 5) over what the
+engine reads from the text; anything else in the body, an unknown signal, or one out
+of range is `400`. The repository is not fetched, so a signal that would be judged
+from its file tree is judged from the text alone; set it if you know better.
+
+The answer: `recommended`, `band.low` and `band.high`, `confidence` (`low`, `medium`,
+`high`) and `confidence_reason`, which says plainly when the history is thin or
+missing, `complexity_score`, `estimated_hours`, each signal with its score, whether it
+was read or given, and why, `comparables_used` and up to 25 `comparables` (each with
+its price, settled date, repo, distance and the price it implies), and the
+`justification`. It is advice: on Misthos the publisher names the price, and nothing
+here bounds it. No publisher's budget, policy or wallet is in it.
+
+Every quote is kept with what was asked (`price_quotes`, migration `0020`), for audit
+and for calibrating the engine. It carries the edge's request digest
+(`X-Misthos-Request-Digest`), the same one its settlement carries, so a quote joins the
+payment that bought it.
+
+**`GET /paid/comparables`**: the settled history the engine compares against.
+Filters: `repo`, `labels` (comma separated; a settlement must carry them all), and the
+six signals, all of them or none. With signals, the list is the engine's own
+comparables for work of that shape (settled within a year, close enough to count,
+closest first with same-repository work ahead), each with its distance and implied
+price. Without, it is every settlement, newest first. `limit` is 1 to **100**, 20 by
+default; follow `next`. An unknown filter, or some signals but not all, is `400`.
 
 ## The core's side
 

@@ -63,6 +63,7 @@ from misthos.domain.policy import (
 from misthos.domain.pricing import (
     WEIGHTS,
     ComplexitySignals,
+    PriceProposal,
     PriceRefused,
     check_price,
     effort,
@@ -76,6 +77,7 @@ from misthos.domain.review import (
     decide,
     ready_for_review,
 )
+from misthos.domain.signals import IssueFacts, Reading
 from misthos.domain.signals import read as read_signals
 from misthos.domain.timers import TimedAction
 from misthos.models.records import IssueRecord
@@ -1457,6 +1459,27 @@ class Store:
             repo=repo,
             exclude=exclude,
         )
+
+    def settled_history(self) -> list[SettledWork]:
+        """The settled work the engine compares against, for the paid comparables."""
+        return self._settled_history()
+
+    def price_advice(
+        self,
+        facts: IssueFacts,
+        *,
+        signals: dict[str, float] | None = None,
+        compliance_driven: bool = False,
+    ) -> tuple[Reading, ComplexitySignals, PriceProposal, list[Comparable]]:
+        """What the engine would suggest for an issue described by `facts`, without
+        listing it (#203): the signals read from it, any the caller set over them, the
+        proposal, and every comparable that moved it. Reads, and writes nothing."""
+        reading = read_signals(facts)
+        chosen = ComplexitySignals(**{**reading.signals.as_dict(), **(signals or {})})
+        chosen.validate()
+        found = self._comparables_for(chosen, facts.repo)
+        proposal = propose(chosen, compliance_driven=compliance_driven, comparables=found)
+        return reading, chosen, proposal, found
 
     # ------------------------------------------------------------- review
 

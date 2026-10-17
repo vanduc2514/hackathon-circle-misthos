@@ -275,6 +275,21 @@ paid_calls = Table(
     Index("ix_paid_calls_settled", "settled_at"),
 )
 
+# Every price the paid API quoted, with what it was asked (#203): for audit and for
+# calibrating the engine. Joined to its payment by the edge's request digest.
+price_quotes = Table(
+    "price_quotes",
+    metadata,
+    Column("id", Id, primary_key=True),
+    Column("route", String(64), nullable=False),
+    Column("request_digest", String(64), index=True),
+    Column("payer", String(64)),
+    Column("free_caller", String(64)),
+    Column("inputs", Json, nullable=False),
+    Column("output", Json, nullable=False),
+    Column("quoted_at", Timestamp, nullable=False),
+)
+
 # A signed-in wallet and the role it chose (#70). One role per wallet.
 accounts = Table(
     "accounts",

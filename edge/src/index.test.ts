@@ -153,14 +153,23 @@ describe('the running edge', () => {
     assert.equal(body.certificate_signer, SIGNER)
     assert.deepEqual(
       body.routes.map((r) => r.id),
-      ['decisions', 'reputation', 'escrow-attestation'],
+      ['decisions', 'reputation', 'escrow-attestation', 'price', 'comparables'],
     )
     assert.ok(!text.includes(coreAt))
   })
 
   it('asks for payment on every listed route', async () => {
-    for (const path of ['/paid/decisions', '/paid/reputation/CON-1', '/paid/escrow/ISS-1001/attestation']) {
-      const res = await fetch(`${base}${path}`)
+    for (const [method, path] of [
+      ['GET', '/paid/decisions'],
+      ['GET', '/paid/reputation/CON-1'],
+      ['GET', '/paid/escrow/ISS-1001/attestation'],
+      ['POST', '/paid/price'],
+      ['GET', '/paid/comparables'],
+    ]) {
+      const res = await fetch(`${base}${path}`, {
+        method,
+        ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}),
+      })
       assert.equal(res.status, 402, path)
       const required = JSON.parse(Buffer.from(res.headers.get('payment-required') ?? '', 'base64').toString())
       assert.equal(required.accepts[0].network, 'eip155:5042002', path)

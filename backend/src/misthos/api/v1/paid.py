@@ -5,8 +5,9 @@ core here to do the work, and settles only if the core answered. These routes ar
 therefore internal: every request must carry the edge's `X-Misthos-Core-Token`, and one
 that does not is answered 404, as if nothing were here. They are not in the API schema.
 
-Every route here reads; none moves money, changes an issue, or touches a session,
-wallet, statement or policy. The edge's catalog is the allowlist of what is sold, and
+Nothing here moves money, changes an issue, or touches a session, wallet, statement or
+policy. The only writes are the paid API's own books: settlements, and the quotes it
+gave. The edge's catalog is the allowlist of what is sold, and
 each entry names one route under this prefix.
 
 - `POST /access` says whether a signed-in caller may use a paid route free.
@@ -14,9 +15,10 @@ each entry names one route under this prefix.
 - `GET /calls` reads the books of paid calls back, to reconcile with Circle Gateway.
 - `GET /signer` names the address certificates are signed by.
 
-The views an agent buys (#202) are below those: the decision log, a reputation, an
-escrow attestation. Each answers an error the edge does not charge for when it
-cannot answer: a missing record, an unknown filter, a chain it cannot read.
+The views an agent buys are below those: the decision log, a reputation, an escrow
+attestation (#202); a price and its comparables (#203). Each answers an error the edge
+does not charge for when it cannot answer: a missing record, an unknown filter, a chain
+it cannot read.
 """
 
 from __future__ import annotations
@@ -42,7 +44,7 @@ from misthos.schemas import (
     PaidRouteTotal,
     money,
 )
-from misthos.services import certificates, paid_views
+from misthos.services import certificates, paid_pricing, paid_views
 from misthos.services.paid import PaidCaller, is_free, who
 from misthos.services.paid_views import Unanswerable
 from misthos.store import store
@@ -224,3 +226,31 @@ async def escrow_attestation(request: Request, issue_id: str) -> JSONResponse:
     except Unanswerable as exc:
         return refused(exc)
     return JSONResponse(found)
+
+
+@router.post("/price")
+async def price(request: Request, caller: PaidCaller = PAID_CALLER) -> JSONResponse:
+    """What the engine would suggest for an issue the caller describes (#203)."""
+    try:
+        only(request)
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            raise Unanswerable(400, "bad_request", "the body is not JSON") from exc
+        asked = paid_pricing.parse_price_asked(body)
+        digest = request.headers.get("x-misthos-request-digest") or None
+        report = await run_in_threadpool(paid_pricing.price, store, asked, caller, digest)
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(report)
+
+
+@router.get("/comparables")
+async def comparables(request: Request) -> JSONResponse:
+    """The settled history the engine compares against, filtered, a page at a time."""
+    try:
+        query = dict(request.query_params)
+        page = await run_in_threadpool(paid_pricing.comparables_page, store, query)
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(page)

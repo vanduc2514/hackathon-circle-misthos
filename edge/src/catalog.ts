@@ -62,4 +62,44 @@ const VIEWS: PaidRoute[] = [
   },
 ]
 
-export const CATALOG: PaidRoute[] = [...VIEWS]
+/** #203: the pricing engine and the settled history behind it. */
+const PRICING: PaidRoute[] = [
+  {
+    id: 'price',
+    method: 'POST',
+    path: '/paid/price',
+    price: '0.25',
+    description:
+      'What the Misthos pricing engine suggests for an issue you describe: the ' +
+      'recommendation, its range, how confident it is and why, the signals it read, ' +
+      'every settled comparable that moved it, and the justification. Body: title, ' +
+      'body, repo, labels, and optionally signals (any of the six, 1 to 5), ' +
+      'compliance_driven, prior_attempts. Advice: it never bounds a price.',
+    core: (req) => ({ method: 'POST', path: `${CORE_PAID_PREFIX}price${queryOf(req)}` }),
+    freeTier: true,
+    example: {
+      body: {
+        title: 'Retry webhook deliveries that time out',
+        body: 'Deliveries that time out are dropped. Expected: retried with backoff.',
+        repo: 'acme/hooks',
+        labels: ['bug'],
+      },
+    },
+  },
+  {
+    id: 'comparables',
+    method: 'GET',
+    path: '/paid/comparables',
+    price: '0.10',
+    description:
+      'Settled issues the engine compares against, with price, settled date, repo, ' +
+      'distance and the price each implies. Filters: repo, labels (comma separated), ' +
+      'and all six signals or none (code_surface, requirement_clarity, test_coverage, ' +
+      'dependency_depth, prior_attempts, blast_radius). limit 1 to 100; follow `next`.',
+    core: (req) => ({ method: 'GET', path: `${CORE_PAID_PREFIX}comparables${queryOf(req)}` }),
+    freeTier: true,
+    example: { query: { repo: 'acme/hooks', labels: 'bug', limit: '20' } },
+  },
+]
+
+export const CATALOG: PaidRoute[] = [...VIEWS, ...PRICING]

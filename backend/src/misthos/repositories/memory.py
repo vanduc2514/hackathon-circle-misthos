@@ -15,7 +15,7 @@ from datetime import datetime
 
 from misthos.domain.compliance import PartyKind, Screening
 from misthos.domain.issue import IssueState
-from misthos.domain.paid import PaidCall
+from misthos.domain.paid import PaidCall, PriceQuote
 from misthos.models.records import IssueRecord
 from misthos.repositories.base import (
     AccountConflict,
@@ -46,6 +46,7 @@ class MemoryRepository:
         self._pending_logins: dict[str, tuple[str, datetime]] = {}
         self._connections: dict[str, RepoConnection] = {}
         self._paid_calls: list[PaidCall] = []
+        self._price_quotes: list[PriceQuote] = []
 
     def next_value(self, counter: str, start: int) -> int:
         with self._guard:
@@ -279,6 +280,16 @@ class MemoryRepository:
                 if (since is None or c.settled_at >= since) and (route is None or c.route == route)
             ]
         rows.sort(key=lambda c: (c.settled_at, c.id), reverse=True)
+        return rows[:limit]
+
+    def record_price_quote(self, quote: PriceQuote) -> None:
+        with self._guard:
+            self._price_quotes.append(copy.deepcopy(quote))
+
+    def list_price_quotes(self, limit: int = 500) -> list[PriceQuote]:
+        with self._guard:
+            rows = [copy.deepcopy(q) for q in self._price_quotes]
+        rows.sort(key=lambda q: (q.quoted_at, q.id), reverse=True)
         return rows[:limit]
 
     @contextmanager

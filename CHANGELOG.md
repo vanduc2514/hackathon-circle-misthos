@@ -42,6 +42,13 @@ Notable changes to Misthos, newest first. The format follows
     new certificate key (`MISTHOS_CERTIFICATE_SECRET_REF`) the escrow does not know. A
     divergence is not certified. The signer is published at `GET /paid`.
   - An unknown filter is refused with 400 rather than ignored and charged for.
+- **Paid pricing** (#203), free to a signed-in publisher:
+  - `POST /paid/price`, $0.25: the engine's suggestion for an issue the caller
+    describes, exactly what the issue page would say for the same inputs, with every
+    comparable that moved it and a plain reason when the history is thin. No budget or
+    policy in it. Each quote is kept against its payment (migration `0020`).
+  - `GET /paid/comparables`, $0.10: the settled history, filtered by repository,
+    labels and signals, a page at a time.
 
 ### Removed
 

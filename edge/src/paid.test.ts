@@ -168,6 +168,7 @@ describe('a paid call', () => {
     assert.equal(app.calls.settled.length, 1)
     assert.equal(app.logged.length, 1)
     assert.equal(app.logged[0].route, 'lookup')
+    assert.equal(hits[0].headers['X-Misthos-Request-Digest'], app.logged[0].request, 'the core can join the payment')
     assert.deepEqual(app.logged[0].settlement, {
       payer: BUYER,
       network: ARC_TESTNET,
@@ -431,11 +432,13 @@ describe('the allowlist', () => {
     assert.equal(new Set(CATALOG.map((r) => r.id)).size, CATALOG.length, 'route ids are unique')
   })
 
-  it('sells the #202 views at prices inside the ranges #200 set', () => {
+  it('sells every route at a price inside the range #200 set', () => {
     const ranges: Record<string, [number, number]> = {
       decisions: [0.01, 0.05],
       reputation: [0.02, 0.1],
       'escrow-attestation': [0.01, 0.05],
+      price: [0.1, 0.5],
+      comparables: [0.05, 0.25],
     }
     for (const [id, [low, high]] of Object.entries(ranges)) {
       const route = CATALOG.find((r) => r.id === id)

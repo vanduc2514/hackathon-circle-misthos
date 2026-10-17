@@ -49,7 +49,7 @@ from misthos.domain.compliance import (
 from misthos.domain.issue import FundingTerms, IssueState
 from misthos.domain.ledger import MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc, format_usdc
-from misthos.domain.paid import PaidCall
+from misthos.domain.paid import PaidCall, PriceQuote
 from misthos.domain.pricing import PriceProposal
 from misthos.models import tables as t
 from misthos.models.records import IssueRecord
@@ -455,6 +455,41 @@ class SqlRepository:
         query = query.order_by(*newest).limit(limit)
         with self.engine.connect() as conn:
             return [_paid_call(r) for r in conn.execute(query).mappings()]
+
+    def record_price_quote(self, quote: PriceQuote) -> None:
+        self.migrate()
+        with self.engine.begin() as conn:
+            conn.execute(
+                insert(t.price_quotes).values(
+                    id=quote.id,
+                    route=quote.route,
+                    request_digest=quote.request_digest,
+                    payer=quote.payer,
+                    free_caller=quote.free_caller,
+                    inputs=quote.inputs,
+                    output=quote.output,
+                    quoted_at=quote.quoted_at,
+                )
+            )
+
+    def list_price_quotes(self, limit: int = 500) -> list[PriceQuote]:
+        self.migrate()
+        q = t.price_quotes.c
+        query = select(t.price_quotes).order_by(q.quoted_at.desc(), q.id.desc()).limit(limit)
+        with self.engine.connect() as conn:
+            return [
+                PriceQuote(
+                    id=r["id"],
+                    route=r["route"],
+                    request_digest=r["request_digest"],
+                    payer=r["payer"],
+                    free_caller=r["free_caller"],
+                    inputs=dict(r["inputs"]),
+                    output=dict(r["output"]),
+                    quoted_at=_utc(r["quoted_at"]),
+                )
+                for r in conn.execute(query).mappings()
+            ]
 
     def page_decisions(
         self,
