@@ -18,7 +18,7 @@ from misthos.api.v1.auth import callback_url, circle_sign_in_configured, oauth_c
 from misthos.config import settings
 from misthos.domain.compliance import ComplianceRefusal
 from misthos.domain.escrow import approve_call, commit_call, issue_key
-from misthos.domain.issue import IllegalTransition, IssueState
+from misthos.domain.issue import EscrowTermRefused, IllegalTransition, IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.policy import PolicyRefusal
 from misthos.domain.pricing import PriceRefused
@@ -34,6 +34,7 @@ from misthos.schemas import (
     DeclineRequest,
     DisputeRequest,
     EscrowReadback,
+    EscrowTermRequest,
     FundRequest,
     HealthOut,
     IssueOut,
@@ -258,9 +259,9 @@ async def _act(
         raise _conflict(exc) from exc
     except (ComplianceRefusal, PolicyRefusal) as exc:
         raise _refused(exc) from exc
-    except PriceRefused as exc:
-        # The request named a price; it is the value in it that cannot be used, which is
-        # what 422 says, rather than the party being refused.
+    except (PriceRefused, EscrowTermRefused) as exc:
+        # The request named a price or escrow term; it is the value in it that cannot be
+        # used, which is what 422 says, rather than the party being refused.
         raise HTTPException(status_code=422, detail=exc.justification) from exc
     except UntestableCriteria as exc:
         # Shaped like a validation error, so a client shows each reason by its criterion.
@@ -436,6 +437,35 @@ async def set_price(
     )
 
 
+@router.put(
+    "/issues/{issue_id}/escrow-term",
+    response_model=IssueOut,
+    dependencies=[limit_actions],
+    responses={409: {"description": "An issue past the point where its term can move"}},
+)
+async def set_escrow_term(
+    issue_id: str,
+    payload: EscrowTermRequest,
+    request: Request,
+    idempotency_key: str | None = IDEMPOTENCY_KEY,
+    account: Account | None = SIGNED_IN,
+) -> Any:
+    """The publisher names a new escrow term, before funding (#172).
+
+    Fixed once the escrow holds a commitment.
+    """
+    rec = await _require(issue_id)
+    require_owner_or_simulation(account, rec.publisher_id, "change the escrow term of this issue")
+    if account is not None:
+        require_github(account, "change the escrow term of an issue")
+    by = _who(account, "the publisher")
+    return await idempotent(
+        request,
+        idempotency_key,
+        lambda: _act(store.set_escrow_term, issue_id, payload.days, by),
+    )
+
+
 def _amount(text: str) -> Usdc:
     """A price the publisher typed, as USDC.
 
@@ -587,9 +617,9 @@ async def publish(
     async def run() -> IssueOut:
         try:
             rec = await run_in_threadpool(store.publish, payload)
-        except PriceRefused as exc:
-            # Well formed, but outside the bounds a price may be published at. This is
-            # the only thing that refuses a price (#142).
+        except (PriceRefused, EscrowTermRefused) as exc:
+            # Well formed, but outside the bounds a price or escrow term may be
+            # published at (#142, #172).
             raise HTTPException(status_code=422, detail=exc.justification) from exc
         except UnreadableIssue as exc:
             # The App is not installed there, or the issue does not exist.

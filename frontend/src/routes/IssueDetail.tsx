@@ -183,6 +183,10 @@ export default function IssueDetail() {
                     <span className="dim">Misthos keeps (10%)</span>
                     <span className="mono-num">${platformFee(price).toFixed(2)}</span>
                   </div>
+                  <div className="price-total">
+                    <span className="dim">Escrow term</span>
+                    <span className="mono-num">{issue.escrow_term ? `${issue.escrow_term} days` : '14 days'}</span>
+                  </div>
                   {issue.escrow && (
                     <div className="price-total">
                       <span className="dim">Committed</span>
@@ -272,6 +276,8 @@ export default function IssueDetail() {
                 <dd className="muted">{shortHash(issue.escrow.contract)}</dd>
                 <dt>Tx</dt>
                 <dd className="muted">{shortHash(issue.escrow.tx_hash)}</dd>
+                <dt>Escrow term</dt>
+                <dd>{issue.escrow_term ? `${issue.escrow_term} days` : '14 days'}</dd>
                 <dt>Deadline</dt>
                 <dd>{issue.deadline ? relativeTime(issue.deadline) : '—'}</dd>
                 <dt>Status</dt>
@@ -347,6 +353,8 @@ export default function IssueDetail() {
               <dd>{issue.publisher_name}</dd>
               <dt>Contributor</dt>
               <dd>{issue.contributor_id ?? '— not claimed'}</dd>
+              <dt>Escrow term</dt>
+              <dd>{issue.escrow_term ? `${issue.escrow_term} days` : '14 days'}</dd>
               <dt>Opened</dt>
               <dd className="muted">{shortTime(issue.created_at)}</dd>
             </dl>
