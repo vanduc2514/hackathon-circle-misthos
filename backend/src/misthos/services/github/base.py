@@ -58,6 +58,8 @@ class PullRequest:
     additions: int
     deletions: int
     draft: bool = False
+    private: bool = False
+    """The repository is private. Read by the App's installation token all the same."""
 
 
 class ReviewEvent(StrEnum):

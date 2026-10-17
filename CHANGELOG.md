@@ -67,6 +67,18 @@ Notable changes to Misthos, newest first. The format follows
     receipt only.
   - `POST /paid/screen`: off until the provider's terms and a legal review clear it,
     and until then a 503 before any price.
+- **The paid API, hardened after review** (#200).
+  - A payment is known by its payer and nonce, so the same authorisation spelled another
+    way buys one answer, not one per spelling.
+  - A settlement that goes unheard keeps the answer back and is retried with the same
+    payment, without running the work again.
+  - A review is settled when it finishes, polled or not, its result stays readable with
+    its receipt until the job expires, and one wallet holds at most three unsettled
+    jobs. A core outage while polling no longer drops a job.
+  - An empty or non-JSON answer from the core is not settled.
+  - The free tier needs a linked GitHub login, not just a wallet.
+  - The paid review reads public pull requests only, and answers a private one as a
+    missing one.
 - **Distribution for the paid API** (#205).
   - `mcp/`, a new runtime folder: an MCP server with one tool per paid route, priced
     from the seller's catalog, that pays each 402 from the agent's own Gateway balance

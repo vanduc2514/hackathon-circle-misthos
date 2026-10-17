@@ -29,9 +29,17 @@ export const LIVE: GateConfig = {
  * A facilitator that behaves like Gateway's: it lists the batched kinds it supports,
  * accepts a payload signed "good" for at least the amount asked, and settles it once.
  */
-export function fakeFacilitator(opts: { settleFails?: string } = {}) {
+export function fakeFacilitator(
+  opts: {
+    settleFails?: string
+    /** The next settles throw, as a timeout would. `taken` says whether Gateway had
+     * already settled them when the answer was lost. */
+    unheard?: { times: number; taken: boolean }
+  } = {},
+) {
   const calls = { supported: 0, verified: [] as Requirements[], settled: [] as Requirements[] }
   const spent = new Set<string>()
+  let unheard = opts.unheard?.times ?? 0
   const facilitator: Facilitator = {
     async getSupported() {
       calls.supported += 1
@@ -63,6 +71,11 @@ export function fakeFacilitator(opts: { settleFails?: string } = {}) {
     async settle(payload: PaymentPayload, requirements: Requirements) {
       calls.settled.push(requirements)
       const nonce = String(payload.payload.nonce)
+      if (unheard > 0) {
+        unheard -= 1
+        if (opts.unheard?.taken) spent.add(nonce)
+        throw new Error('socket hang up')
+      }
       if (opts.settleFails) {
         return { success: false, errorReason: opts.settleFails, transaction: '', network: requirements.network }
       }
@@ -77,13 +90,21 @@ export function fakeFacilitator(opts: { settleFails?: string } = {}) {
 }
 
 /** What a buyer's client sends: the accepted requirements and a signed authorisation. */
-export function signed(amount: string, opts: { nonce?: string; signature?: string; network?: string } = {}): string {
+export function signed(
+  amount: string,
+  opts: { nonce?: string; signature?: string; network?: string; indent?: number } = {},
+): string {
+  const nonce = opts.nonce ?? 'n-1'
   const payload: PaymentPayload = {
     x402Version: 2,
     accepted: { scheme: 'exact', network: opts.network ?? ARC_TESTNET, amount, payTo: SELLER, asset: ARC_USDC },
-    payload: { signature: opts.signature ?? 'good', nonce: opts.nonce ?? 'n-1' },
+    payload: {
+      signature: opts.signature ?? 'good',
+      nonce,
+      authorization: { from: BUYER, to: SELLER, value: amount, nonce },
+    },
   }
-  return Buffer.from(JSON.stringify(payload)).toString('base64')
+  return Buffer.from(JSON.stringify(payload, null, opts.indent)).toString('base64')
 }
 
 /** One call the fake core received. */

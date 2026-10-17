@@ -386,3 +386,20 @@ def test_the_app_is_required(pem: str) -> None:
         build_github("", "", "https://api.github.com")
     escaped = pem.replace("\n", "\\n")
     assert isinstance(build_github("1", escaped, "https://api.github.com"), GitHubApp)
+
+
+def test_a_pull_request_says_whether_its_repository_is_private() -> None:
+    """The paid review reads public pull requests only (#204), so the reader has to say."""
+    from misthos.services.github.app import pull_request_from
+
+    pr = {
+        "number": 3,
+        "user": {"login": "someone"},
+        "head": {"sha": "a" * 40},
+        "base": {"repo": {"private": True}},
+    }
+    assert pull_request_from("acme/secret", pr).private is True
+    public = {**pr, "base": {"repo": {"private": False}}}
+    unnamed = {k: v for k, v in pr.items() if k != "base"}
+    assert pull_request_from("acme/open", public).private is False
+    assert pull_request_from("acme/open", unnamed).private is False

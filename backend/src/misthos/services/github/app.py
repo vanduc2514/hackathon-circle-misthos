@@ -362,6 +362,7 @@ def pull_request_from(repo: str, pr: dict[str, Any]) -> PullRequest:
         additions=int(pr.get("additions", 0)),
         deletions=int(pr.get("deletions", 0)),
         draft=bool(pr.get("draft")),
+        private=bool(((pr.get("base") or {}).get("repo") or {}).get("private")),
     )
 
 

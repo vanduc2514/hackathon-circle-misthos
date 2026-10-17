@@ -66,12 +66,21 @@ sequenceDiagram
 3. **A paid answer carries `PAYMENT-RESPONSE`**: base64 JSON with the transaction, the
    network and the payer.
 
-4. **The same signature twice gets the first answer.** Within 15 minutes the edge
-   answers a repeated `PAYMENT-SIGNATURE` from memory, marked `X-Misthos-Replayed:
-   true`: the work does not run again and the payment is not taken again. Two copies
-   arriving at once run once. A signature that already bought a different request is
-   refused, `409 payment_already_used`. After 15 minutes Gateway itself refuses a spent
-   authorisation.
+4. **The same payment twice gets the first answer.** A payment is its payer and its
+   EIP-3009 nonce, not the header's text, so the same authorisation spelled another way
+   is the same payment. Within 15 minutes the edge answers it again from memory, marked
+   `X-Misthos-Replayed: true`: the work does not run again and the payment is not taken
+   again. Two copies arriving at once run once. A payment that already bought a
+   different request is refused, `409 payment_already_used`. After 15 minutes Gateway
+   itself refuses a spent authorisation.
+
+   **A settlement that goes unheard is retried, not repeated.** If the facilitator
+   cannot be heard when the edge settles (a timeout, a reset), Gateway may or may not
+   have taken the payment. The answer is kept back, `502 settlement_unconfirmed` with
+   `charged: "unknown"`, and the same `PAYMENT-SIGNATURE` sent again settles it again
+   without running the work again. If Gateway then says the authorisation was already
+   settled, it was: it pays only this seller and only this request holds it, so the
+   answer is delivered.
 
 5. **Every settlement is written down.** The edge logs one JSON line,
    `{"event":"x402.settled", route, request, payer, network, amount, asset,
@@ -81,12 +90,19 @@ sequenceDiagram
 ### Long work
 
 A route marked async (the pre-flight review, #204) verifies the payment, queues the
-job, and answers `202` with `job_id`, a `receipt` and `poll`. Polling
-`GET {route}/jobs/{job_id}` with `Authorization: Receipt <receipt>` is free. It answers
-`202` while the job runs, and when it is done it settles the payment and returns the
-result with `PAYMENT-RESPONSE`, once; after that the job answers `410`. A job that
-fails is never settled. The edge holds the verified payment in memory for 24 hours,
-well inside Gateway's seven-day window, so a restart loses the payment rather than
+job, and answers `202` with `job_id`, a `receipt` and `poll`. The payment is settled
+when the job finishes: the edge checks its unfinished jobs every few seconds, so a
+finished review is paid for whether or not its buyer comes back. Polling
+`GET {route}/jobs/{job_id}` with `Authorization: Receipt <receipt>` is free: `202`
+while the job runs, then `200` with the result and `PAYMENT-RESPONSE`. The result stays
+readable with the receipt until the job expires (marked `X-Misthos-Replayed` after the
+first read), so a lost answer is not a lost purchase; it is settled once however often
+it is read. A job that fails is never settled, and a core that cannot answer a poll
+(`503`) does not lose the job.
+
+One wallet may hold three unsettled jobs at once; a fourth is `429 too_many_jobs`, not
+charged, before any work runs. The edge holds verified payments in memory for 24 hours,
+well inside Gateway's seven-day window, so a restart loses a payment rather than
 charging for a result nobody can collect.
 
 ## What the rail cannot do
@@ -107,7 +123,9 @@ A route marked free-tier is free, with no payment, to:
 - a signed-in session (`Authorization: Bearer <session>`) the core says may use that
   route free. The edge asks the core (`POST /api/v1/internal/paid/access`), which looks
   the session up and applies the route's rule in `services/paid.py`. A route without a
-  rule is never free to a session.
+  rule is never free to a session, and no session is free without a linked GitHub
+  login: every buyer already has a wallet, and signing in with one costs nothing, so a
+  wallet alone would make the free tier free to everyone.
 
 Everyone else pays.
 
@@ -272,13 +290,15 @@ and the signed-in, per-issue review is unchanged.
 
 `criteria` is 1 to 20, each up to 500 characters. Send a unified diff (`git diff` or
 plain, up to 200,000 characters and 300 files) or `pull_request: {repo, number}`, which
-the core reads through the GitHub App, with the checks on its head commit; a pull
-request it cannot read is `404` and no job is made.
+the core reads through the GitHub App, with the checks on its head commit. Only a public
+repository's pull request is read: a private one is answered exactly as a missing one,
+`404 pull_request_unreadable`, so the App's access to it is neither used nor revealed,
+and no job is made.
 
-The review is a job. Paid, the answer is `202` with `job_id`, `receipt` and `poll`.
-Poll `GET /paid/review/jobs/{job_id}` with `Authorization: Receipt <receipt>`, free:
-`202` while it is queued or running, then `200` with the result and `PAYMENT-RESPONSE`
-once, when the payment settles, and `410` after that. The result: `verdict` (`accept`,
+The review is a job ([long work](#long-work)). Paid, the answer is `202` with `job_id`,
+`receipt` and `poll`. Poll `GET /paid/review/jobs/{job_id}` with
+`Authorization: Receipt <receipt>`, free: `202` while it is queued or running, then
+`200` with the result and `PAYMENT-RESPONSE`, settled once when it finished. The result: `verdict` (`accept`,
 `rework`, `reject`), the `rule` that produced it, `findings`, and for each criterion
 `met` (`true`, `false`, or `null` when it was not judged) with its `evidence`, the
 reviewer's `summary`, and how long it took. A review that fails, or does not finish
@@ -317,9 +337,11 @@ commitment transaction, signed like an attestation with the certificate key.
 The release transfer names the contributor's wallet on chain, so `settlement_tx` is in
 the contributor's own receipt only, read free with their session. Everyone else's
 receipt, the publisher's included, carries `null` there: next to an issue whose
-contributor is public, the transfer would link a wallet to a person. A refund's
-transfer goes to the publisher's wallet, which the escrow already shows, so a refund's
-receipt carries it.
+contributor is public, the transfer would link a wallet to a person. The chain is
+public, so a reader with the escrow's events and this receipt's issue key could still
+find the release there; the receipt does not hand it over. A refund's transfer goes to
+the publisher's wallet, which the escrow already shows, so a refund's receipt carries
+it.
 
 **`POST /paid/screen`**: a sanctions-list check of one wallet, `{"address": "0x…"}` to
 `clear` or `hit` and the list. **Off.** Reselling a screening provider's answers needs

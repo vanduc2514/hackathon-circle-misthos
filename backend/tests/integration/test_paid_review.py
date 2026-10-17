@@ -157,6 +157,33 @@ class TestAReview:
         assert kept is not None and kept.title == "Retry timed-out deliveries"
         assert kept.repo == "acme/hooks"
 
+    def test_a_private_pull_request_is_as_unreadable_as_a_missing_one(self, client):
+        """The App can read a private repository it is installed on. An anonymous buyer
+        must get neither its code nor the fact that it exists."""
+        github = store.github
+        github.pulls[("acme/secret", 3)] = PullRequest(
+            repo="acme/secret",
+            number=3,
+            author="someone",
+            head_sha="a" * 40,
+            body="Private work",
+            merged=False,
+            files_changed=1,
+            additions=1,
+            deletions=0,
+            private=True,
+        )
+        github.files[("acme/secret", 3)] = [ChangedFile("src/secret.py", 1, 0, "+key = 1")]
+        private = post(
+            client, {"criteria": CRITERIA, "pull_request": {"repo": "acme/secret", "number": 3}}
+        )
+        missing = post(
+            client, {"criteria": CRITERIA, "pull_request": {"repo": "acme/secret", "number": 4}}
+        )
+        assert private.status_code == missing.status_code == 404
+        assert private.json()["error"] == missing.json()["error"] == "pull_request_unreadable"
+        assert "secret.py" not in private.text
+
     def test_a_pull_request_it_cannot_read_is_refused_before_any_job(self, client):
         res = post(
             client, {"criteria": CRITERIA, "pull_request": {"repo": "acme/none", "number": 1}}

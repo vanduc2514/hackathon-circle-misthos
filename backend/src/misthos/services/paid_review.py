@@ -4,9 +4,11 @@ submitted.
 An agent pays to hear what the review agent would say about a diff against a set of
 acceptance criteria. It is the same reviewer and the same rules the lifecycle review
 uses (`store.reviewer`, then `domain.review.decide`), so a diff that passes here passes
-there on the same criteria. It is not that review: nothing here reads or writes an
-issue, publishes a verdict or moves money. The lifecycle review stays the signed-in,
-per-issue action it was.
+there on the same criteria. A pull request it names is read only from a public
+repository: the App's token reaches private ones, and an anonymous buyer must not.
+
+It is not that review: nothing here reads or writes an issue, publishes a verdict or
+moves money. The lifecycle review stays the signed-in, per-issue action it was.
 
 A review can take minutes with a model, so it runs as a job. The edge verifies the
 payment and posts the review; the core answers 202 with a job id and runs it in the
@@ -179,15 +181,21 @@ def submit(
         if not repo:
             raise Unanswerable(400, "bad_repo", "pull_request.repo is owner/name")
         pr_number = asked.pull_request.number
+        unreadable = Unanswerable(
+            404, "pull_request_unreadable", f"{repo}#{pr_number} could not be read"
+        )
         try:
             pr = store.github.read_pull_request(repo, pr_number)
+            # The App can read a private repository it is installed on; an anonymous
+            # buyer must not, and must not learn that it exists: the same answer as
+            # a pull request that is not there.
+            if pr.private:
+                raise unreadable
             files = store.github.read_files(repo, pr_number)
             if checks_passed is None:
                 checks_passed = store.github.checks_passed(repo, pr.head_sha)
         except (GitHubError, KeyError, LookupError) as exc:
-            raise Unanswerable(
-                404, "pull_request_unreadable", f"{repo}#{pr_number} could not be read"
-            ) from exc
+            raise unreadable from exc
         head_sha = pr.head_sha
         title = title or (pr.body.strip().splitlines() or [f"pull request #{pr_number}"])[0]
     else:

@@ -125,7 +125,7 @@ describe('the rail', () => {
     })
     const checked = await rail.verify(signed('10000'), '0.01')
     assert.ok(checked.ok)
-    assert.deepEqual(await rail.settle(checked.verified), { ok: false, reason: 'gateway down' })
+    assert.deepEqual(await rail.settle(checked.verified), { ok: false, reason: 'gateway down', ambiguous: true })
   })
 })
 

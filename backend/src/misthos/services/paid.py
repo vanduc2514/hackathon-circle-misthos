@@ -6,8 +6,9 @@ receipt. Those callers should not pay. The edge cannot tell, because it holds no
 sessions, so it asks the core, which decides per route with the rules below.
 
 A rule takes the signed-in account and the route's parameters and says whether this
-call is free. A route without a rule is never free to a session; the edge's API keys
-are the only other way past the price.
+call is free. A route without a rule is never free to a session, and no rule makes a
+call free to an account without a linked GitHub login; the edge's API keys are the
+only other way past the price.
 """
 
 from __future__ import annotations
@@ -35,8 +36,17 @@ def free_tier(route: str) -> Callable[[FreeRule], FreeRule]:
 
 
 def is_free(route: str, account: Account | None, params: Mapping[str, str]) -> bool:
+    """Free only to an account with a linked GitHub login, and only where the route's
+    rule says so. A wallet alone is not enough: every x402 buyer already has one, and
+    signing in with it costs nothing, so a free tier keyed on a wallet would be free to
+    every buyer (#201)."""
     rule = FREE_TIER.get(route)
-    return account is not None and rule is not None and rule(account, params)
+    return (
+        account is not None
+        and bool(account.github_login)
+        and rule is not None
+        and rule(account, params)
+    )
 
 
 def who(account: Account) -> str:

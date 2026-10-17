@@ -158,6 +158,21 @@ class TestTheFreeTier:
         )
         assert res.json() == {"free": False, "who": None}
 
+    def test_a_wallet_without_a_linked_github_login_is_not_free(self, client, free_lookup):
+        """Every buyer has a wallet, and signing in with one costs nothing, so a free
+        tier keyed on a wallet alone would be free to every buyer."""
+        account = account_for("PUB-1").model_copy(update={"github_login": None})
+        store.repo.save_account(account)
+        res = client.post(
+            "/api/v1/internal/paid/access",
+            json={"route": "lookup", "params": {"publisher_id": "PUB-1"}},
+            headers={
+                **EDGE,
+                "X-Misthos-Caller-Authorization": f"Bearer {sessions.issue(account.address)}",
+            },
+        )
+        assert res.json() == {"free": False, "who": None}
+
     def test_a_session_for_a_wallet_with_no_account_is_not_free(self, client, free_lookup):
         token = sessions.issue("0x" + "9" * 40)
         res = client.post(

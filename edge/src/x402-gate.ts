@@ -124,7 +124,10 @@ export type VerifyOutcome =
   | { ok: true; verified: Verified }
   | { ok: false; status: 400 | 402; reason: string }
 
-export type SettleOutcome = { ok: true; settlement: Settlement } | { ok: false; reason: string }
+export type SettleOutcome =
+  | { ok: true; settlement: Settlement }
+  /** `ambiguous` when the facilitator could not be heard: it may have settled. */
+  | { ok: false; reason: string; ambiguous?: boolean }
 
 export interface Rail {
   config: GateConfig
@@ -240,7 +243,8 @@ export function createRail(
           },
         }
       } catch (err) {
-        return { ok: false, reason: (err as Error).message }
+        // A timeout or a reset says nothing about whether Gateway took the payment.
+        return { ok: false, reason: (err as Error).message, ambiguous: true }
       }
     },
   }

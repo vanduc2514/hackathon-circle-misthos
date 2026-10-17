@@ -109,11 +109,16 @@ export function coreClient(baseUrl: string, token: string, timeoutMs = 60_000): 
           signal: AbortSignal.timeout(timeoutMs),
         })
         const text = await res.text()
-        let body: unknown = {}
+        let body: unknown
         try {
-          body = text ? JSON.parse(text) : {}
+          body = text ? JSON.parse(text) : undefined
         } catch {
-          body = { error: 'core_answered_non_json' }
+          body = undefined
+        }
+        if (body === undefined) {
+          // An empty or HTML answer, from a proxy or a maintenance page, is not the
+          // work: nothing is settled for it.
+          return { status: res.ok ? 502 : res.status, body: { error: 'core_answered_non_json' } }
         }
         return { status: res.status, body }
       } catch {
@@ -162,16 +167,43 @@ function sameSecret(a: string, b: string): boolean {
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
+/**
+ * What identifies a payment: its payer and its EIP-3009 nonce, not the header's text.
+ * The same authorisation encoded twice (other whitespace, other key order) is the same
+ * payment, and must buy one answer. A header that is not a payment keys on its hash,
+ * and fails verification anyway.
+ */
+export function paymentKey(signature: string): string {
+  try {
+    const payment = JSON.parse(Buffer.from(signature, 'base64').toString('utf-8')) as {
+      payload?: { authorization?: { from?: unknown; nonce?: unknown } }
+    }
+    const auth = payment?.payload?.authorization
+    if (typeof auth?.from === 'string' && typeof auth.nonce === 'string') {
+      return `auth:${auth.from.toLowerCase()}:${auth.nonce.toLowerCase()}`
+    }
+  } catch {
+    // Not base64 JSON: fall through to the header's own hash.
+  }
+  return `sig:${sha256(signature)}`
+}
+
+/** A settlement Gateway refused because the authorisation was already settled. */
+const ALREADY_SETTLED = /nonce|already|used|duplicate|settled/i
+
 /** What a retried payment is answered with: the first answer, exactly. */
 interface Bought {
   request: string
   status: number
   body: unknown
   paymentResponse?: string
+  /** The work is done and the settlement could not be confirmed: retried with the
+   * same payment, never re-run, and the answer held back until it settles. */
+  pending?: Verified
   at: number
 }
 
-/** A short-lived memory of answered payments, keyed by the signature's hash. */
+/** A short-lived memory of answered payments, keyed by the payment (`paymentKey`). */
 export class ReplayCache {
   private readonly done = new Map<string, Bought>()
   private readonly running = new Map<string, Promise<void>>()
@@ -188,6 +220,10 @@ export class ReplayCache {
       return undefined
     }
     return hit
+  }
+
+  delete(key: string): void {
+    this.done.delete(key)
   }
 
   set(key: string, bought: Omit<Bought, 'at'>): void {
@@ -218,6 +254,8 @@ interface HeldJob {
   request: string
   receipt: string
   verified: Verified
+  /** The finished, settled result: kept for the receipt holder until the job expires. */
+  result?: { status: number; body: unknown; paymentResponse: string }
   delivered: boolean
   at: number
 }
@@ -237,7 +275,14 @@ export interface PaidRouterOptions {
   log?: SettlementLog
   /** How long a held job's payment stays good: under Gateway's seven-day window. */
   jobTtlMs?: number
+  /** How often unfinished jobs are checked and settled when done. 0 turns it off. */
+  sweepMs?: number
+  /** How many unsettled jobs one payer may hold at once. */
+  maxHeldPerPayer?: number
 }
+
+/** The paid routes, and the sweep that settles finished jobs nobody has polled. */
+export type PaidRouter = Router & { sweep: () => Promise<void> }
 
 /** The buyer-facing request digest: a retried payment must be the same request. */
 function requestDigest(route: PaidRoute, req: Request): string {
@@ -310,15 +355,16 @@ function safe(handler: (req: Request, res: Response) => Promise<void>) {
   }
 }
 
-export function paidRouter(opts: PaidRouterOptions): Router {
+export function paidRouter(opts: PaidRouterOptions): PaidRouter {
   const { rail, routes, core } = opts
   const priced = opts.prices ?? prices(routes)
   const keys = opts.apiKeys ?? []
   const replay = opts.replay ?? new ReplayCache()
   const log = opts.log ?? settlementLog(core)
   const jobTtl = opts.jobTtlMs ?? 24 * 60 * 60 * 1000
+  const maxHeld = opts.maxHeldPerPayer ?? 3
   const jobs = new Map<string, HeldJob>()
-  const router = Router()
+  const router = Router() as PaidRouter
 
   for (const route of routes) {
     if (!route.path.startsWith('/paid/')) {
@@ -396,95 +442,199 @@ export function paidRouter(opts: PaidRouterOptions): Router {
     })
   }
 
+  type Outcome =
+    | { kind: 'bought'; bought: Omit<Bought, 'at'> }
+    | { kind: 'unconfirmed'; bought: Omit<Bought, 'at'>; reason: string }
+    | { kind: 'bad_payment'; reason: string }
+    | { kind: 'pay'; reason: string }
+    | { kind: 'failed'; status: number; body: unknown }
+
+  /** Settle a call whose work is done. A settlement that cannot be confirmed keeps the
+   * answer back, and the same payment retries the settlement, not the work. */
+  async function settleAnswer(
+    route: PaidRoute,
+    req: Request,
+    request: string,
+    verified: Verified,
+    answer: { status: number; body: unknown },
+  ): Promise<Outcome> {
+    const settled = await rail.settle(verified)
+    if (settled.ok) {
+      log({ route: route.id, request, settlement: settled.settlement, ref: route.ref?.(req) })
+      return {
+        kind: 'bought',
+        bought: { request, ...answer, paymentResponse: paymentResponseHeader(settled.settlement) },
+      }
+    }
+    if (settled.ambiguous) {
+      return { kind: 'unconfirmed', bought: { request, ...answer, pending: verified }, reason: settled.reason }
+    }
+    return {
+      kind: 'failed',
+      status: 402,
+      body: { error: 'settlement_failed', reason: settled.reason, charged: false },
+    }
+  }
+
+  /** Retry the settlement of an answer held back because the last one was unheard. A
+   * refusal that says the authorisation was already settled means it was: it can pay
+   * only this seller, and only this request holds it. */
+  async function settleAgain(route: PaidRoute, req: Request, held: Omit<Bought, 'at'>): Promise<Outcome> {
+    const verified = held.pending as Verified
+    const answer = { status: held.status, body: held.body }
+    const settled = await rail.settle(verified)
+    if (!settled.ok && !settled.ambiguous && ALREADY_SETTLED.test(settled.reason)) {
+      console.log(
+        JSON.stringify({ event: 'x402.settled_unheard', route: route.id, request: held.request, payer: verified.payer }),
+      )
+      return { kind: 'bought', bought: { request: held.request, ...answer } }
+    }
+    if (settled.ok) {
+      log({ route: route.id, request: held.request, settlement: settled.settlement, ref: route.ref?.(req) })
+      return {
+        kind: 'bought',
+        bought: { request: held.request, ...answer, paymentResponse: paymentResponseHeader(settled.settlement) },
+      }
+    }
+    if (settled.ambiguous) return { kind: 'unconfirmed', bought: held, reason: settled.reason }
+    return {
+      kind: 'failed',
+      status: 402,
+      body: { error: 'settlement_failed', reason: settled.reason, charged: false },
+    }
+  }
+
   /** Verify, run the work, and settle only if it succeeded. */
-  async function buy(route: PaidRoute, req: Request, signature: string, request: string) {
+  async function buy(route: PaidRoute, req: Request, signature: string, request: string): Promise<Outcome> {
     const price = priced.get(route.id) as string
     const checked = await rail.verify(signature, price)
     if (!checked.ok) {
       return checked.status === 400
-        ? ({ kind: 'bad_payment', reason: checked.reason } as const)
-        : ({ kind: 'pay', reason: checked.reason } as const)
+        ? { kind: 'bad_payment', reason: checked.reason }
+        : { kind: 'pay', reason: checked.reason }
+    }
+    if (route.async) {
+      dropExpired()
+      const payer = checked.verified.payer.toLowerCase()
+      const open = [...jobs.values()].filter((j) => !j.result && j.verified.payer.toLowerCase() === payer)
+      if (open.length >= maxHeld) {
+        // Unsettled jobs cost the platform and nothing yet to their payer: a payer may
+        // hold only a few at once.
+        return {
+          kind: 'failed',
+          status: 429,
+          body: {
+            error: 'too_many_jobs',
+            reason: `${open.length} unfinished jobs are already held for this wallet; collect one first`,
+            charged: false,
+          },
+        }
+      }
     }
     const out = await forwarded(route, req, { 'X-Misthos-Payer': checked.verified.payer })
     if (out.status >= 400) {
       // The work failed, so the payment is not taken. The buyer may retry with the
       // same signature: it was never settled.
-      return { kind: 'failed', status: out.status, body: { ...errorBody(out.body), charged: false } } as const
+      return { kind: 'failed', status: out.status, body: { ...errorBody(out.body), charged: false } }
     }
-    if (route.async) {
-      const jobId = String((out.body as { job_id?: unknown }).job_id ?? '')
-      if (!jobId) {
-        return { kind: 'failed', status: 502, body: { error: 'core_did_not_queue_the_job', charged: false } } as const
-      }
-      const receipt = randomBytes(24).toString('base64url')
-      for (const [id, job] of jobs) {
-        // A job nobody collected in time is dropped with its payment, never settled.
-        if (Date.now() - job.at > jobTtl) jobs.delete(id)
-      }
-      jobs.set(jobId, {
-        route: route.id,
-        request,
-        receipt: sha256(receipt),
-        verified: checked.verified,
-        delivered: false,
-        at: Date.now(),
-      })
-      return {
-        kind: 'bought',
-        bought: {
-          request,
-          status: 202,
-          body: {
-            ...errorBody(out.body),
-            job_id: jobId,
-            receipt,
-            poll: `${route.path}/jobs/${jobId}`,
-            charged: false,
-            note: 'the payment is settled when the result is delivered; a failed job is not charged',
-          },
-        },
-      } as const
+    if (!route.async) return settleAnswer(route, req, request, checked.verified, out)
+
+    const jobId = String((out.body as { job_id?: unknown }).job_id ?? '')
+    if (!jobId) {
+      return { kind: 'failed', status: 502, body: { error: 'core_did_not_queue_the_job', charged: false } }
     }
-    const settled = await rail.settle(checked.verified)
-    if (!settled.ok) {
-      return {
-        kind: 'failed',
-        status: 402,
-        body: { error: 'settlement_failed', reason: settled.reason, charged: false },
-      } as const
-    }
-    log({ route: route.id, request, settlement: settled.settlement, ref: route.ref?.(req) })
+    const receipt = randomBytes(24).toString('base64url')
+    jobs.set(jobId, {
+      route: route.id,
+      request,
+      receipt: sha256(receipt),
+      verified: checked.verified,
+      delivered: false,
+      at: Date.now(),
+    })
     return {
       kind: 'bought',
       bought: {
         request,
-        status: out.status,
-        body: out.body,
-        paymentResponse: paymentResponseHeader(settled.settlement),
+        status: 202,
+        body: {
+          ...errorBody(out.body),
+          job_id: jobId,
+          receipt,
+          poll: `${route.path}/jobs/${jobId}`,
+          charged: false,
+          note: 'settled when the review finishes; a failed review is not charged',
+        },
       },
-    } as const
+    }
   }
 
-  /** Ask the core how a held job is doing; settle and deliver it once, when it is done. */
-  async function poll(route: PaidRoute, jobId: string, held: HeldJob) {
+  function dropExpired() {
+    for (const [id, job] of jobs) {
+      // Expired unsettled jobs go with their payment, never settled; settled ones go
+      // with their result, which the receipt could read until now.
+      if (Date.now() - job.at > jobTtl) jobs.delete(id)
+    }
+  }
+
+  type JobAnswer = { status: number; body: unknown; paymentResponse?: string }
+
+  /** Ask the core how a held job is doing, and settle it the moment it is done. */
+  async function advance(route: PaidRoute, jobId: string, held: HeldJob): Promise<JobAnswer> {
+    if (held.result) return held.result
     const out = await core.call({
       method: 'GET',
       path: `${CORE_PAID_PREFIX}${route.id}/jobs/${encodeURIComponent(jobId)}`,
     })
     const body = errorBody(out.body)
+    if (out.status >= 500) {
+      // The core could not say. The job is kept: a finished review is not lost to a
+      // passing outage.
+      return { status: 503, body: { error: 'core_unavailable', status: 'unknown', charged: false } }
+    }
     if (out.status >= 400 || body.status === 'failed') {
       // A failed job is not charged: the held payment is dropped, never settled.
       jobs.delete(jobId)
-      return { status: out.status >= 400 ? out.status : 200, body: { ...body, status: 'failed', charged: false } }
+      return { status: 200, body: { ...body, status: 'failed', charged: false } }
     }
     if (body.status !== 'done') return { status: 202, body: { ...body, charged: false } }
     const settled = await rail.settle(held.verified)
-    if (!settled.ok) {
+    if (!settled.ok && settled.ambiguous) {
+      return { status: 503, body: { error: 'settlement_unconfirmed', status: 'done', charged: 'unknown' } }
+    }
+    if (!settled.ok && !ALREADY_SETTLED.test(settled.reason)) {
+      jobs.delete(jobId)
       return { status: 402, body: { error: 'settlement_failed', reason: settled.reason, charged: false } }
     }
-    held.delivered = true
-    log({ route: route.id, request: held.request, settlement: settled.settlement, ref: jobId })
-    return { status: 200, body, paymentResponse: paymentResponseHeader(settled.settlement) }
+    if (settled.ok) {
+      log({ route: route.id, request: held.request, settlement: settled.settlement, ref: jobId })
+    }
+    held.result = {
+      status: 200,
+      body,
+      paymentResponse: settled.ok ? paymentResponseHeader(settled.settlement) : '',
+    }
+    return held.result
+  }
+
+  /** Settle every finished job, polled or not: a review is paid for when it is done,
+   * whether or not its buyer comes back for it. */
+  router.sweep = async () => {
+    dropExpired()
+    const byId = new Map(routes.map((r) => [r.id, r]))
+    for (const [jobId, held] of [...jobs]) {
+      const route = byId.get(held.route)
+      if (!route || held.result) continue
+      await replay.once(`job:${jobId}`, async () => {
+        await advance(route, jobId, held)
+      })
+    }
+  }
+  const sweepMs = opts.sweepMs ?? 5000
+  if (sweepMs > 0 && routes.some((r) => r.async)) {
+    setInterval(() => {
+      router.sweep().catch((err: unknown) => console.error(JSON.stringify({ event: 'paid.sweep', error: String(err) })))
+    }, sweepMs).unref()
   }
 
   for (const route of routes) {
@@ -503,10 +653,11 @@ export function paidRouter(opts: PaidRouterOptions): Router {
 
       const signature = req.header('payment-signature')
       if (!signature) return paymentRequired(route, req, res)
-      const key = sha256(signature)
+      const key = paymentKey(signature)
       const request = requestDigest(route, req)
 
-      const answered = () => {
+      /** Answer from what this payment already bought, if it bought anything. */
+      const answered = (): boolean => {
         const bought = replay.get(key)
         if (!bought) return false
         if (bought.request !== request) {
@@ -514,33 +665,45 @@ export function paidRouter(opts: PaidRouterOptions): Router {
             error: 'payment_already_used',
             reason: 'this payment already bought another request; sign a new one',
           })
-        } else {
-          send(res, bought, true)
+          return true
         }
+        if (bought.pending) return false
+        send(res, bought, true)
         return true
       }
       if (answered()) return
 
-      type Outcome =
-        | { kind: 'bought'; bought: Omit<Bought, 'at'> }
-        | { kind: 'bad_payment'; reason: string }
-        | { kind: 'pay'; reason: string }
-        | { kind: 'failed'; status: number; body: unknown }
       const result: { outcome?: Outcome } = {}
-
       const ran = await replay.once(key, async () => {
-        result.outcome = await buy(route, req, signature, request)
-        if (result.outcome.kind === 'bought') replay.set(key, result.outcome.bought)
+        const held = replay.get(key)
+        if (held?.pending && held.request === request) {
+          result.outcome = await settleAgain(route, req, held)
+        } else if (held) {
+          return
+        } else {
+          result.outcome = await buy(route, req, signature, request)
+        }
+        const outcome = result.outcome
+        if (outcome.kind === 'bought' || outcome.kind === 'unconfirmed') replay.set(key, outcome.bought)
+        else if (held) replay.delete(key)
       })
-      if (!ran) {
-        // Another request with the same signature was running; answer as it did.
+      if (!ran || !result.outcome) {
+        // Another request with the same payment was running; answer as it did.
         if (!answered()) res.status(409).json({ error: 'payment_in_use', reason: 'retry in a moment' })
         return
       }
-      const outcome = result.outcome as Outcome
+      const outcome = result.outcome
       switch (outcome.kind) {
         case 'bought':
           return send(res, outcome.bought, false)
+        case 'unconfirmed':
+          res.status(502).json({
+            error: 'settlement_unconfirmed',
+            reason: outcome.reason,
+            retry: 'send the same PAYMENT-SIGNATURE again: the answer is kept and the work is not run twice',
+            charged: 'unknown',
+          })
+          return
         case 'bad_payment':
           res.status(400).json({ error: 'bad_payment', reason: outcome.reason })
           return
@@ -565,25 +728,26 @@ export function paidRouter(opts: PaidRouterOptions): Router {
         }
         if (Date.now() - held.at > jobTtl) {
           jobs.delete(jobId)
-          res.status(410).json({ error: 'job_expired', charged: false })
+          res.status(410).json({ error: 'job_expired', charged: Boolean(held.result) })
           return
         }
-        if (held.delivered) {
-          res.status(410).json({ error: 'already_delivered' })
-          return
+        let answer: JobAnswer | null = held.result ?? null
+        if (!answer) {
+          const polled = await replay.once(`job:${jobId}`, async () => {
+            answer = await advance(route, jobId, held)
+          })
+          if (!polled) answer = held.result ?? null
         }
-        let answer: { status: number; body: unknown; paymentResponse?: string } | null = null
-        const polled = await replay.once(`job:${jobId}`, async () => {
-          answer = await poll(route, jobId, held)
-        })
-        if (!polled || answer === null) {
+        if (answer === null) {
           res.status(409).json({ error: 'poll_in_progress', reason: 'retry in a moment' })
           return
         }
-        const { status, body, paymentResponse } = answer as {
-          status: number
-          body: unknown
-          paymentResponse?: string
+        const { status, body, paymentResponse } = answer as JobAnswer
+        if (held.result) {
+          // The result stays readable with the receipt until the job expires, so a
+          // lost answer is not a lost purchase. It is settled once, whatever the polls.
+          if (held.delivered) res.setHeader('X-Misthos-Replayed', 'true')
+          held.delivered = true
         }
         if (paymentResponse) res.setHeader('PAYMENT-RESPONSE', paymentResponse)
         res.status(status).json(body)

@@ -59,26 +59,29 @@ const REVIEW: PaidRoute = {
 interface Setup {
   core?: Core
   settleFails?: string
+  unheard?: { times: number; taken: boolean }
   routes?: PaidRoute[]
+  maxHeldPerPayer?: number
 }
 
 async function serve(setup: Setup = {}) {
-  const { facilitator, calls } = fakeFacilitator({ settleFails: setup.settleFails })
+  const { facilitator, calls } = fakeFacilitator({ settleFails: setup.settleFails, unheard: setup.unheard })
   const rail = createRail(LIVE, facilitator)
   const logged: Parameters<SettlementLog>[0][] = []
   const fallback = fakeCore()
   const app = express()
   app.use(express.json())
-  app.use(
-    paidRouter({
-      rail,
-      routes: setup.routes ?? [LOOKUP, PRICED, REVIEW],
-      core: setup.core ?? fallback.core,
-      apiKeys: [FREE_KEY],
-      replay: new ReplayCache(),
-      log: (entry) => logged.push(entry),
-    }),
-  )
+  const router = paidRouter({
+    rail,
+    routes: setup.routes ?? [LOOKUP, PRICED, REVIEW],
+    core: setup.core ?? fallback.core,
+    apiKeys: [FREE_KEY],
+    replay: new ReplayCache(),
+    log: (entry) => logged.push(entry),
+    sweepMs: 0,
+    maxHeldPerPayer: setup.maxHeldPerPayer,
+  })
+  app.use(router)
   const server = app.listen(0)
   await new Promise((resolve) => server.once('listening', resolve))
   const { port } = server.address() as AddressInfo
@@ -86,6 +89,7 @@ async function serve(setup: Setup = {}) {
   return {
     calls,
     logged,
+    router,
     hits: fallback.hits,
     get: (path: string, headers: Record<string, string> = {}) => fetch(base + path, { headers }),
     post: (path: string, body: unknown, headers: Record<string, string> = {}) =>
@@ -218,6 +222,55 @@ describe('a paid call', () => {
     assert.equal(other.status, 409)
     assert.equal(((await other.json()) as { error: string }).error, 'payment_already_used')
     assert.equal(app.calls.settled.length, 1)
+  })
+
+  it('knows a payment by its authorisation, however the header is spelled', async () => {
+    const { core, hits } = fakeCore(() => ({ status: 200, body: { ok: true } }))
+    const app = await serve({ core })
+    const first = await app.get('/paid/lookup/x', { 'PAYMENT-SIGNATURE': signed('10000', { nonce: 'n-enc' }) })
+    const respelled = await app.get('/paid/lookup/x', {
+      'PAYMENT-SIGNATURE': signed('10000', { nonce: 'n-enc', indent: 2 }),
+    })
+    const elsewhere = await app.get('/paid/lookup/y', {
+      'PAYMENT-SIGNATURE': signed('10000', { nonce: 'n-enc', indent: 4 }),
+    })
+    await app.close()
+    assert.equal(first.status, 200)
+    assert.equal(respelled.headers.get('x-misthos-replayed'), 'true')
+    assert.equal(elsewhere.status, 409)
+    assert.equal(hits.length, 1, 'the work ran once')
+    assert.equal(app.calls.settled.length, 1)
+  })
+
+  it('keeps the answer when a settlement goes unheard, and delivers it once Gateway says it was taken', async () => {
+    const { core, hits } = fakeCore(() => ({ status: 200, body: { secret: 'the paid result' } }))
+    const app = await serve({ core, unheard: { times: 1, taken: true } })
+    const pay = { 'PAYMENT-SIGNATURE': signed('10000', { nonce: 'n-lost' }) }
+    const unheard = await app.get('/paid/lookup/x', pay)
+    const text = await unheard.text()
+    assert.equal(unheard.status, 502)
+    assert.equal(JSON.parse(text).error, 'settlement_unconfirmed')
+    assert.equal(JSON.parse(text).charged, 'unknown')
+    assert.doesNotMatch(text, /the paid result/)
+
+    const retried = await app.get('/paid/lookup/x', pay)
+    await app.close()
+    assert.equal(retried.status, 200)
+    assert.deepEqual(await retried.json(), { secret: 'the paid result' })
+    assert.equal(hits.length, 1, 'the work was not run twice')
+  })
+
+  it('settles on the retry when the first settlement was never taken', async () => {
+    const { core, hits } = fakeCore(() => ({ status: 200, body: { ok: true } }))
+    const app = await serve({ core, unheard: { times: 1, taken: false } })
+    const pay = { 'PAYMENT-SIGNATURE': signed('10000', { nonce: 'n-retry-settle' }) }
+    assert.equal((await app.get('/paid/lookup/x', pay)).status, 502)
+    const retried = await app.get('/paid/lookup/x', pay)
+    await app.close()
+    assert.equal(retried.status, 200)
+    assert.ok(retried.headers.get('payment-response'))
+    assert.equal(hits.length, 1)
+    assert.equal(app.logged.length, 1)
   })
 
   it('withholds the result when settlement fails', async () => {
@@ -362,7 +415,67 @@ describe('an async paid call', () => {
 
     const again = await app.get(job.poll, receipt)
     await app.close()
-    assert.equal(again.status, 410, 'a result is delivered once')
+    assert.equal(again.status, 200, 'a lost answer is not a lost purchase')
+    assert.equal(again.headers.get('x-misthos-replayed'), 'true')
+    assert.deepEqual(await again.json(), { status: 'done', verdict: 'approve' })
+    assert.equal(app.calls.settled.length, 1, 'settled once, however often it is read')
+  })
+
+  it('settles a finished review when it is done, whether or not its buyer polls', async () => {
+    const fake = reviewCore()
+    const app = await serve({ core: fake.core })
+    const queued = await app.post('/paid/review', { diff: '+x' }, { 'PAYMENT-SIGNATURE': signed('500000') })
+    const job = (await queued.json()) as { receipt: string; poll: string }
+    await app.router.sweep()
+    assert.equal(app.calls.settled.length, 0, 'not done, not settled')
+    fake.set('done')
+    await app.router.sweep()
+    await app.router.sweep()
+    assert.equal(app.calls.settled.length, 1, 'done, settled once')
+    assert.equal(app.logged.length, 1)
+    const collected = await app.get(job.poll, { Authorization: `Receipt ${job.receipt}` })
+    await app.close()
+    assert.equal(collected.status, 200)
+    assert.ok(collected.headers.get('payment-response'))
+    assert.equal(app.calls.settled.length, 1)
+  })
+
+  it('holds only a few unsettled jobs for one wallet', async () => {
+    let next = 0
+    const fake = fakeCore((hit) =>
+      hit.path === `${CORE_PAID_PREFIX}review`
+        ? { status: 202, body: { job_id: `job-${(next += 1)}`, status: 'queued' } }
+        : { status: 200, body: { status: 'running' } },
+    )
+    const app = await serve({ core: fake.core, maxHeldPerPayer: 2 })
+    const first = await app.post('/paid/review', { a: 1 }, { 'PAYMENT-SIGNATURE': signed('500000', { nonce: 'j-1' }) })
+    const second = await app.post('/paid/review', { a: 2 }, { 'PAYMENT-SIGNATURE': signed('500000', { nonce: 'j-2' }) })
+    const third = await app.post('/paid/review', { a: 3 }, { 'PAYMENT-SIGNATURE': signed('500000', { nonce: 'j-3' }) })
+    await app.close()
+    assert.deepEqual([first.status, second.status, third.status], [202, 202, 429])
+    assert.equal(((await third.json()) as { error: string }).error, 'too_many_jobs')
+    assert.equal(fake.hits.filter((h) => h.path === `${CORE_PAID_PREFIX}review`).length, 2, 'the third ran nothing')
+  })
+
+  it('keeps a job through a core that cannot answer, and settles it when it can', async () => {
+    let down = false
+    const fake = reviewCore()
+    const flaky: Core = {
+      call: (call, opts) =>
+        down && call.path.includes('/jobs/') ? Promise.resolve({ status: 503, body: { error: 'busy' } }) : fake.core.call(call, opts),
+    }
+    const app = await serve({ core: flaky })
+    const queued = await app.post('/paid/review', { diff: '+x' }, { 'PAYMENT-SIGNATURE': signed('500000') })
+    const job = (await queued.json()) as { receipt: string; poll: string }
+    const receipt = { Authorization: `Receipt ${job.receipt}` }
+    fake.set('done')
+    down = true
+    const outage = await app.get(job.poll, receipt)
+    assert.equal(outage.status, 503)
+    down = false
+    const done = await app.get(job.poll, receipt)
+    await app.close()
+    assert.equal(done.status, 200)
     assert.equal(app.calls.settled.length, 1)
   })
 
@@ -517,6 +630,22 @@ describe('configuration', () => {
   it('takes free API keys of at least 16 characters', () => {
     assert.deepEqual(freeApiKeys({ EDGE_FREE_API_KEYS: ` ${FREE_KEY}, short ,,` }), [FREE_KEY])
     assert.deepEqual(freeApiKeys({}), [])
+  })
+
+  it('takes an answer from the core that is not JSON as no answer at all', async () => {
+    const { createServer } = await import('node:http')
+    const proxy = createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      res.end(req.url?.endsWith('/empty') ? '' : '<html>maintenance</html>')
+    }).listen(0)
+    await new Promise((resolve) => proxy.once('listening', resolve))
+    const client = coreClient(`http://127.0.0.1:${(proxy.address() as AddressInfo).port}`, 'token')
+    const html = await client.call({ method: 'GET', path: `${CORE_PAID_PREFIX}x` })
+    const empty = await client.call({ method: 'GET', path: `${CORE_PAID_PREFIX}empty` })
+    proxy.closeAllConnections()
+    await new Promise((resolve) => proxy.close(resolve))
+    assert.deepEqual(html, { status: 502, body: { error: 'core_answered_non_json' } })
+    assert.equal(empty.status, 502, 'so nothing is settled for it')
   })
 
   it('never tells a buyer where the core is', async () => {
