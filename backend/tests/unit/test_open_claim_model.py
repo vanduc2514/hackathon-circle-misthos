@@ -1,10 +1,14 @@
 """Tests for the open claim model (#171).
 
 - Any number of contributors can claim simultaneously (open roster).
-- Review budget: platform pays first reviews up to budget; rework or exhausted budget requires deposit.
-- Pre-screen: draft PRs, zero changes, whitespace-only diffs rejected without spending budget or deposit.
-- Duplicate detection: exact copy of competing submission rejected and forfeits deposit; derived submission flagged.
-- Merge winner: only merge pays; supersedes other claims; off-roster author paid with retroactive claim; deadline check.
+- Review budget: platform pays first reviews up to budget; rework or exhausted budget
+  requires deposit.
+- Pre-screen: draft PRs, zero changes, whitespace-only diffs rejected without spending
+  budget or deposit.
+- Duplicate detection: exact copy of competing submission rejected and forfeits deposit;
+  derived submission flagged.
+- Merge winner: only merge pays; supersedes other claims; off-roster author paid with
+  retroactive claim; deadline check.
 """
 
 from __future__ import annotations
@@ -12,15 +16,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-import pytest
-
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import (
-    DEPOSIT_AMOUNT,
-    MAX_REVIEW_SHARE,
-    REVIEW_COST_PER_ISSUE,
-    platform_fee,
     review_budget,
 )
 from misthos.domain.review import (
@@ -37,6 +35,19 @@ from misthos.repositories import MemoryRepository
 from misthos.schemas import PublishRequest
 from misthos.services.github import PullRequest
 from misthos.store import Store
+from tests.support.fake_chain import FakeChain
+from tests.support.fake_compliance import FakeIdentity, FakeScreening
+from tests.support.fake_github import FakeGitHub
+
+
+def make_store() -> Store:
+    return Store(
+        MemoryRepository(),
+        chain=FakeChain(),
+        github=FakeGitHub(),
+        screening=FakeScreening(),
+        identity=FakeIdentity(),
+    )
 
 
 def test_review_budget_calculation() -> None:
@@ -158,8 +169,7 @@ def test_duplicate_detection_exact_copy() -> None:
 
 
 def test_multiple_claimants_on_open_roster() -> None:
-    store = Store(MemoryRepository())
-    store.reset()
+    store = make_store()
 
     # Create publisher and issue
     account = store.create_account("0x" + "11" * 20, "publisher", "acme-pub")
@@ -170,7 +180,9 @@ def test_multiple_claimants_on_open_roster() -> None:
             title="Open Market Issue",
             publisher_id=account.party_id,
             price=Decimal("1000"),
-            criteria=["A test in tests/test_feature.py reproduces the fix and passes with exit code 0."],
+            criteria=[
+                "A test in tests/test_feature.py reproduces the fix and passes with exit code 0."
+            ],
         )
     )
     criteria = ["A test in tests/test_feature.py reproduces the fix and passes with exit code 0."]
@@ -202,8 +214,7 @@ def test_multiple_claimants_on_open_roster() -> None:
 
 
 def test_winner_on_merge_and_superseded_claims() -> None:
-    store = Store(MemoryRepository())
-    store.reset()
+    store = make_store()
 
     account = store.create_account("0x" + "11" * 20, "publisher", "acme-pub")
     criteria = ["A test in tests/test_feature.py reproduces the fix and passes with exit code 0."]
@@ -275,8 +286,7 @@ def test_winner_on_merge_and_superseded_claims() -> None:
 
 
 def test_merge_after_deadline_releases_no_payout() -> None:
-    store = Store(MemoryRepository())
-    store.reset()
+    store = make_store()
 
     account = store.create_account("0x" + "11" * 20, "publisher", "acme-pub")
     criteria = ["A test in tests/test_feature.py reproduces the fix and passes with exit code 0."]
