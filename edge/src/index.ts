@@ -93,7 +93,7 @@ app.post('/wallet/:op', async (req: Request, res: Response) => {
     res.status(400).json({ error: `unsupported operation ${op}`, allowed })
     return
   }
-  res.json({ accepted: true, op, simulated: true, note: 'Circle CLI call would run here.' })
+  res.json({ accepted: true, op, note: 'Circle CLI call would run here.' })
 })
 
 if (process.env.NODE_ENV !== 'test') {
