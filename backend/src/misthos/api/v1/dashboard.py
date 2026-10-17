@@ -25,19 +25,18 @@ async def get_dashboard(request: Request, account: Account | None = SIGNED_IN) -
     """
     address = await signed_in_address(request)
     if address is None:
-        refuse_anonymous(account, "view your dashboard")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required: sign in to view your dashboard",
         )
 
-    refuse_anonymous(account, "view your dashboard")
     if account is None or not account.role or not account.party_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Role selection required: complete onboarding by choosing a role and party",
         )
 
+    refuse_anonymous(account, "view your dashboard")
     require_owner(account, account.party_id, "view your dashboard")
 
     if account.role == "publisher":

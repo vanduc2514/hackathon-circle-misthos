@@ -123,9 +123,7 @@ def test_contributor_next_action_priority():
     assert (code, label, needed) == ("wait_verdict", "Wait for the verdict", False)
 
     # 5. Claimed, no submission -> open_pr
-    rec_claimed = _make_issue(
-        "ISS-5", "P1", 5, IssueState.FUNDED, contributor_id="C1", claim=claim
-    )
+    rec_claimed = _make_issue("ISS-5", "P1", 5, IssueState.FUNDED, contributor_id="C1", claim=claim)
     code, label, needed = _contributor_next_action(rec_claimed, "C1", "c1_gh")
     assert (code, label, needed) == (
         "open_pr",
@@ -239,7 +237,9 @@ def test_contributor_accepted_issue_excluded_from_action_needed():
 
     dash = store.contributor_dashboard("con_test_dash_1", "charlie")
     action_ids = [item.id for item in dash.action_needed]
-    assert "ISS-ACCEPTED-1" not in action_ids, "ACCEPTED issue must not appear in contributor action_needed"
+    assert "ISS-ACCEPTED-1" not in action_ids, (
+        "ACCEPTED issue must not appear in contributor action_needed"
+    )
 
     work_item = next((w for w in dash.all_work if w.id == "ISS-ACCEPTED-1"), None)
     assert work_item is not None
@@ -271,7 +271,9 @@ def test_contributor_expired_claim_excluded_from_action_needed_and_inflight():
 
     dash = store.contributor_dashboard("con_test_dash_1", "charlie")
     action_ids = [item.id for item in dash.action_needed]
-    assert "ISS-EXPIRED-CLAIM" not in action_ids, "Expired claim must not prompt contributor to open/submit PR"
+    assert "ISS-EXPIRED-CLAIM" not in action_ids, (
+        "Expired claim must not prompt contributor to open/submit PR"
+    )
 
     work_item = next((w for w in dash.all_work if w.id == "ISS-EXPIRED-CLAIM"), None)
     assert work_item is not None
