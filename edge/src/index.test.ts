@@ -32,28 +32,32 @@ function start(env: Record<string, string>): Promise<{ code: number; stderr: str
 }
 
 describe('starting the edge', { concurrency: true }, () => {
-  it('starts simulated with nothing configured', async () => {
+  it('refuses to start with nothing configured', async () => {
     const run = await start({})
-    assert.equal(run.code, 0, run.stderr)
+    assert.notEqual(run.code, 0)
+    assert.match(run.stderr, /MISTHOS_SELLER_ADDRESS/)
   })
 
-  // Live for the API and the gate meant live for the wallet routes only when spelled
-  // `false`; `0` started an edge that handed the live API made-up payout addresses.
-  it('will not start live on MISTHOS_SIMULATED=0 without the Circle credentials', async () => {
-    const run = await start({ MISTHOS_SIMULATED: '0', MISTHOS_SELLER_ADDRESS: SELLER })
+  it('will not start without the Circle credentials', async () => {
+    const run = await start({ MISTHOS_SELLER_ADDRESS: SELLER })
     assert.notEqual(run.code, 0)
     assert.match(run.stderr, /CIRCLE_API_KEY and CIRCLE_APP_ID are required/)
   })
 
-  it('will not start live without the core token that guards the wallet routes', async () => {
-    const run = await start({ MISTHOS_SIMULATED: '0', MISTHOS_SELLER_ADDRESS: SELLER, ...CIRCLE })
+  it('will not start without the core token that guards the wallet routes', async () => {
+    const run = await start({ MISTHOS_SELLER_ADDRESS: SELLER, ...CIRCLE })
     assert.notEqual(run.code, 0)
     assert.match(run.stderr, /EDGE_CORE_TOKEN is required/)
   })
 
-  it('will not start on a MISTHOS_SIMULATED the API would refuse', async () => {
-    const run = await start({ MISTHOS_SIMULATED: 'maybe' })
-    assert.notEqual(run.code, 0)
-    assert.match(run.stderr, /MISTHOS_SIMULATED is not a boolean/)
+  it('starts live and names the removed switch once', async () => {
+    const run = await start({
+      MISTHOS_SIMULATED: 'maybe',
+      MISTHOS_SELLER_ADDRESS: SELLER,
+      EDGE_CORE_TOKEN: 'secret',
+      ...CIRCLE,
+    })
+    assert.equal(run.code, 0, run.stderr)
+    assert.match(run.stderr, /simulation has been removed/)
   })
 })

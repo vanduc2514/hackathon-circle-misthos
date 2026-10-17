@@ -1,8 +1,7 @@
 # Running and deploying Misthos
 
-Three ways to run it, from least to most real. All three are simulated until you
-configure otherwise: no chain is contacted, and GitHub and the review model are
-simulated until their keys are set.
+Three ways to run it, from least to most real. Every way is live: the API refuses to
+start without an escrow deployment and a GitHub App.
 
 ## 1. Development: two processes, no infrastructure
 
@@ -28,11 +27,9 @@ docker compose up --build
 | `postgres` | State, durable in the `pgdata` volume | inside the network |
 | `redis` | The per-issue lock, idempotency keys and rate limits | inside the network |
 
-The schema migrates itself on first start, and an empty database is seeded with the
-demo issues. `docker compose down --volumes` starts over. The web app's Reset button
-is refused here, because a reset deletes every row in Postgres and needs no sign-in;
-pass `MISTHOS_ALLOW_DEMO_RESET=true` only for a demo you mean to throw away. CI boots
-exactly this and fails the build if any service does not become healthy.
+The schema migrates itself on first start; a fresh database starts empty.
+`docker compose down --volumes` starts over. CI boots exactly this and fails the
+build if any service does not become healthy.
 
 Pass real integrations through from your shell or a `.env` file next to
 `compose.yaml`: `MISTHOS_GITHUB_APP_ID`, `MISTHOS_GITHUB_APP_PRIVATE_KEY`,
@@ -107,18 +104,17 @@ explorer runs Blockscout, so verifying needs no API key.
 A broadcast writes `contracts/deployments/5042002.json`: the escrow's address, its
 owner, attestor and USDC, and the block to scan logs from. Commit it; the API reads
 the address from it, so there is nothing to copy by hand. A dry run (without
-`--broadcast`) writes no record, and outside the simulation the API refuses a
-record whose address holds no code. `MISTHOS_ESCROW_CONTRACT` still pins an
+`--broadcast`) writes no record, and the API refuses a record whose address holds
+no code. `MISTHOS_ESCROW_CONTRACT` still pins an
 address explicitly and wins over the record. `MISTHOS_CHAIN_ID` names the network;
 there is no separate label to set.
 
-`GET /api/v1/issues/{id}/escrow` reads a commitment back: from the contract with
-`eth_call` when `MISTHOS_SIMULATED=false`, from the simulated escrow's books
-otherwise, and says which. Report anything settled on testnet as testnet.
+`GET /api/v1/issues/{id}/escrow` reads a commitment back from the contract with
+`eth_call`. Report anything settled on testnet as testnet.
 
 ### Settling on Arc
 
-With `MISTHOS_SIMULATED=false` the store settles through the deployed escrow (#69).
+The store settles through the deployed escrow (#69).
 Who signs what is fixed by the contract, and the platform never signs for a
 publisher:
 
@@ -155,9 +151,6 @@ hand over by reading `GET /api/v1/issues/{id}/escrow` -- a ceiling with no money
 against it means the commitment is owed -- and not by reading the refusal's own
 words, which a proxy between the browser and the API may have replaced (#147). A
 wallet that has never been to Arc is offered the chain before the two transactions.
-The demo seed is not written outside the simulation: it would fund made-up issues
-from made-up wallets.
-
 After any change to the contract, run `mise run abi:contracts` and commit
 `contracts/deployments/MisthosEscrow.abi.json`; `mise run lint` fails while it is
 stale.
@@ -175,8 +168,7 @@ Mainnet moves real USDC irreversibly. There is deliberately no mainnet task.
 
 This runs an issue in a real repository from a label to a payout on GitHub events
 (#6). Use a sandbox repository and two GitHub accounts: one publishes, one
-contributes. Leave `MISTHOS_SIMULATED=true` to keep the money simulated while GitHub
-is real, or settle on Arc testnet as section 3 describes.
+contributes. Money settles on Arc testnet as section 3 describes.
 
 1. **Give GitHub a way to reach the API.** On a laptop, a smee.io channel forwards
    webhooks to it. Open https://smee.io/new, then run:
@@ -210,8 +202,7 @@ is real, or settle on Arc testnet as section 3 describes.
    `MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`. These are the App's own **Client ID** and
    **Client secrets** from the same settings page, so no separate OAuth App is
    needed; the callback is `http://localhost:5173/api/v1/auth/github/callback` (and
-   the deployment's own `https://<host>/api/v1/auth/github/callback`). In the
-   simulation, linking by login works too.
+   the deployment's own `https://<host>/api/v1/auth/github/callback`).
 
    An OAuth App is not a substitute for the App itself. It can only identify who
    someone is — the token this flow returns is read once for the login and dropped —

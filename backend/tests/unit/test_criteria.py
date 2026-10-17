@@ -7,7 +7,7 @@ import pytest
 from misthos.domain.criteria import MAX_CRITERIA, draft, problems
 from misthos.domain.review import ChangedFile, Submitted
 from misthos.services.review.rules import RuleReviewer
-from misthos.store import _ISSUE_SPECS
+from tests.support.seed_data import _ISSUE_SPECS
 
 # Twenty issue shapes, the sample #38 asks a person to judge.
 SHAPES = [

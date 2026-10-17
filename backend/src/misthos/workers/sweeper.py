@@ -2,7 +2,7 @@
 
 Claim expiry, deadline refunds, the silent-publisher release and the retry of a
 payout that compliance held are owed to people whether or not anyone calls the API.
-Before this module they happened only when the demo stepper was pushed, which is to
+Before this module they happened only when a request asked for them, which is to
 say they did not happen. The sweeper wakes on an interval, asks the store which open
 issues have a timer due, and has the store carry each one out, so the lifecycle keeps
 its single writer.

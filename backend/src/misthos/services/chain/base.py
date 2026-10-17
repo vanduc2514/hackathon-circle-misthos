@@ -65,5 +65,3 @@ class ChainGateway(Protocol):
         """What would stop this escrow paying a funded issue out, in words for an
         operator. Empty when nothing would."""
 
-    def reset(self) -> None:
-        """Forget everything. The simulation's reset; a real chain refuses."""

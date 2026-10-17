@@ -2,8 +2,8 @@
 
 The wallets are user-controlled: the core starts a session and reads an address back,
 and nothing else. The address it keeps is the one a payout goes to, so these routes are
-the party's own — a signed-in account, of the kind the path names, acting on its own id.
-The simulation lets a visitor try them, like every other write.
+the party's own — a signed-in account, of the kind the path names, acting on its own
+id.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from misthos.api.guards import limit_actions
-from misthos.api.session import SIGNED_IN, require_owner_or_simulation, require_role
+from misthos.api.session import SIGNED_IN, require_owner, require_role
 from misthos.config import settings
 from misthos.schemas import Account, Wallet, WalletSessionOut
 from misthos.services.wallets import Wallets, WalletUnavailable
@@ -29,13 +29,11 @@ async def _require_own(account: Account | None, party: PartyPath, party_id: str)
     """The party itself, and of the kind the path names.
 
     What this records is where the money goes, so a caller who could name any id
-    could point a contributor's payout at an address of its own. Signed in, the
-    account must be that party and of that role; the simulation keeps the demo
-    usable by a visitor, as it does everywhere else.
+    could point a contributor's payout at an address of its own. The account must be
+    that party and of that role.
     """
-    if account is not None:
-        require_role(account, party, f"use this {party} wallet")
-    require_owner_or_simulation(account, party_id, f"use this {party} wallet")
+    require_role(account, party, f"use this {party} wallet")
+    require_owner(account, party_id, f"use this {party} wallet")
 
 
 async def _require_known(party: PartyPath, party_id: str) -> None:
@@ -94,7 +92,6 @@ async def start_session(
         encryption_key=session.encryption_key,
         challenge_id=session.challenge_id,
         wallet=wallet,
-        simulated=session.simulated,
     )
 
 

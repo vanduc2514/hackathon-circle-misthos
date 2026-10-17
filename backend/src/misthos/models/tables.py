@@ -206,7 +206,7 @@ reviews = Table(
 )
 
 # Append-only. `position` keeps each issue's log in the order it was written, which
-# is not always timestamp order: seeded history is backdated around a live entry.
+# is not always timestamp order: imported history is backdated around a live entry.
 decisions = Table(
     "decisions",
     metadata,
@@ -252,31 +252,6 @@ money_events = Table(
     Column("tx_hash", String(80), nullable=False, unique=True),
     Column("occurred_at", Timestamp, nullable=False),
     UniqueConstraint("issue_id", "position"),
-)
-
-# The simulated chain's own books. Not the ledger: the thing the ledger is reconciled
-# against while no real chain is contacted. Unused once the Arc client runs (#69).
-simulated_escrow = Table(
-    "simulated_escrow",
-    metadata,
-    Column("issue_id", Id, primary_key=True),
-    Column("publisher_wallet", String(64), nullable=False),
-    Column("amount_base_units", BigInteger, nullable=False),
-    Column("status", String(16), nullable=False),
-    Column("last_tx_hash", String(80), nullable=False),
-    # The take rate the simulated escrow holds, so the fee a settlement records is the
-    # rate the escrow enforced (#32).
-    Column("fee_bps", Integer, nullable=False, server_default="0"),
-)
-
-# The simulated escrow's per-issue ceilings: the price a human approved, which the
-# escrow refuses to exceed (#34). Separate from the books because a ceiling exists
-# before any commitment does.
-simulated_escrow_ceilings = Table(
-    "simulated_escrow_ceilings",
-    metadata,
-    Column("issue_id", Id, primary_key=True),
-    Column("ceiling_base_units", BigInteger, nullable=False),
 )
 
 # A signed-in wallet and the role it chose (#70). One role per wallet.

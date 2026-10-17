@@ -467,7 +467,7 @@ html:has(.landing) { scroll-behavior: smooth; }
 .landing .issue-table tfoot td { padding-top: 12px; padding-bottom: 12px; border-top: 1px solid #302b25; border-bottom: 0; color: #9e968b; }
 .landing .issue-table tfoot td.issue-price-column { color: #eee9e1; }
 .landing .issue-table .issue-empty { height: 70px; color: #938b80; text-align: center; }
-.landing .issues-demo-note { margin: 9px 0 0; color: #71695f; font-size: 9px; }
+.landing .issues-note { margin: 9px 0 0; color: #71695f; font-size: 9px; }
 @media (max-width: 680px) {
   .landing .current-issues { padding: 58px 0 62px; }
   .landing .current-issues-inner { width: min(100% - 40px, 520px); }
@@ -477,11 +477,11 @@ html:has(.landing) { scroll-behavior: smooth; }
 }
 
 /* The header's way in, as the prototype drew it: its button reset the font to the page's. */
-.landing .demo-preview-trigger { border: 0; cursor: pointer; font: inherit; }
+.landing .preview-trigger { border: 0; cursor: pointer; font: inherit; }
 
 /* The port's own additions: a row opens its issue, and the note under the table links on. */
 .landing .issue-title-cell a { display: block; }
 .landing .issue-title-cell a:hover strong { text-decoration: underline; text-underline-offset: 3px; }
 .landing .issue-title-cell a:focus-visible { outline: 2px solid #df8a42; outline-offset: 3px; }
-.landing .issues-demo-note a { color: #aaa297; text-underline-offset: 3px; }
-.landing .issues-demo-note a:hover { color: #f5f2ed; text-decoration: underline; }
+.landing .issues-note a { color: #aaa297; text-underline-offset: 3px; }
+.landing .issues-note a:hover { color: #f5f2ed; text-decoration: underline; }

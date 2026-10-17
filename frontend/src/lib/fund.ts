@@ -5,7 +5,7 @@
  * price records it as the escrow's ceiling, and the API then refuses to book the
  * funding until the commitment is on chain (`NotCommitted`). The wallet sends the two
  * calls the API spells out (the USDC allowance, then the commitment), and approving
- * again books the publisher's own transaction. The simulation needs none of this.
+ * again books the publisher's own transaction.
  */
 
 import { ApiError, type EscrowReadback } from './client'

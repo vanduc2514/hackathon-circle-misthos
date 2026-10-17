@@ -23,12 +23,9 @@ export type Act =
   | { kind: 'claim' }
   | { kind: 'submit'; prNumber: number }
   | { kind: 'review' }
-  | { kind: 'merge' }
   | { kind: 'decline'; reason: string }
   | { kind: 'dispute'; reason: string }
   | { kind: 'approve-release' }
-  | { kind: 'step' }
-  | { kind: 'complete' }
 
 export async function perform(issueId: string, act: Act): Promise<IssueOut> {
   const path = { params: { path: { issue_id: issueId } } }
@@ -49,8 +46,8 @@ export async function perform(issueId: string, act: Act): Promise<IssueOut> {
         }),
       )
     case 'fund':
-      // In the simulation the first approval books the funding. On Arc it records the
-      // ceiling and waits for the publisher's own wallet to commit (see lib/fund). The
+      // The approval records the ceiling and waits for the publisher's own wallet to
+      // commit (see lib/fund). The
       // amount is the price the publisher set when they published the issue, so there is
       // none to pass: a second place to name it would be a second thing to audit. The
       // escrow readback is what decides whether the wallet is asked at all, because a
@@ -74,8 +71,6 @@ export async function perform(issueId: string, act: Act): Promise<IssueOut> {
       )
     case 'review':
       return unwrap(await api.POST('/api/v1/issues/{issue_id}/review', path))
-    case 'merge':
-      return unwrap(await api.POST('/api/v1/demo/issues/{issue_id}/merge', path))
     case 'decline':
       return unwrap(
         await api.POST('/api/v1/issues/{issue_id}/decline', {
@@ -94,10 +89,6 @@ export async function perform(issueId: string, act: Act): Promise<IssueOut> {
       // No name in the body: the approver is whoever is signed in, by their linked
       // GitHub login, and the server checks the organisation named it.
       return unwrap(await api.POST('/api/v1/issues/{issue_id}/approve-release', path))
-    case 'step':
-      return unwrap(await api.POST('/api/v1/issues/{issue_id}/advance', path))
-    case 'complete':
-      return unwrap(await api.POST('/api/v1/issues/{issue_id}/complete', path))
   }
 }
 
@@ -118,11 +109,9 @@ export function roleOn(issue: IssueOut, me: MeOut | null | undefined) {
 export default function IssueActions({
   issue,
   me,
-  simulated,
 }: {
   issue: IssueOut
   me: MeOut | null | undefined
-  simulated: boolean
 }) {
   const qc = useQueryClient()
   const who = roleOn(issue, me)
@@ -143,7 +132,7 @@ export default function IssueActions({
   switch (issue.state) {
     case 'AWAITING_APPROVAL':
       body = who.publisher ? (
-        <ApproveAndFund issue={issue} simulated={simulated} busy={busy} run={run} />
+        <ApproveAndFund issue={issue} busy={busy} run={run} />
       ) : (
         <Wait>
           {issue.publisher_name} approves the acceptance criteria, then the price. Funds are
@@ -171,7 +160,7 @@ export default function IssueActions({
     case 'CLAIMED':
     case 'REWORK':
       body = who.claimant ? (
-        <Submit issue={issue} simulated={simulated} busy={busy} run={run} />
+        <Submit issue={issue} busy={busy} run={run} />
       ) : (
         <Wait>
           {issue.state === 'REWORK'
@@ -217,7 +206,7 @@ export default function IssueActions({
           )
       } else {
         body = who.publisher ? (
-          <Accepted issue={issue} simulated={simulated} busy={busy} run={run} />
+          <Accepted issue={issue} busy={busy} run={run} />
         ) : (
           <Wait>
             The review passed. Merging is acceptance and releases the payment; seven silent days
@@ -252,19 +241,6 @@ export default function IssueActions({
     <>
       {body}
       {act.error && <div className="error-box form-error">{act.error.message}</div>}
-      {simulated && !['PAID', 'REFUNDED'].includes(issue.state) && (
-        <div className="demo-shortcuts">
-          <span className="stat-hint">Demo shortcuts, acting for everyone at once:</span>
-          <div className="btn-row">
-            <button className="btn" disabled={busy} onClick={() => run({ kind: 'step' })}>
-              One step
-            </button>
-            <button className="btn" disabled={busy} onClick={() => run({ kind: 'complete' })}>
-              Run to settlement
-            </button>
-          </div>
-        </div>
-      )}
     </>
   )
 }
@@ -296,7 +272,7 @@ function SignInTo({
   )
 }
 
-function ApproveAndFund({ issue, simulated, busy, run }: Step & { simulated: boolean }) {
+function ApproveAndFund({ issue, busy, run }: Step) {
   const [draft, setDraft] = useState(issue.acceptance_criteria.join('\n'))
   // The price is the publisher's, named when they published the issue. This step approves
   // what they set rather than picking a number: the engine's reading of the issue sits
@@ -352,9 +328,8 @@ function ApproveAndFund({ issue, simulated, busy, run }: Step & { simulated: boo
         or the deadline can move. The contributor receives $
         {contributorShare(price).toFixed(2)} of it; Misthos keeps $
         {platformFee(price).toFixed(2)}.
-        {!simulated &&
-          ' Your wallet sends the commitment itself: it asks you to sign two transactions, ' +
-            'letting the escrow take the amount, then committing it. The platform never holds it.'}
+        {' Your wallet sends the commitment itself: it asks you to sign two transactions, ' +
+          'letting the escrow take the amount, then committing it. The platform never holds it.'}
       </p>
       <ChangePrice issue={issue} busy={busy} run={run} />
       <div style={{ marginTop: 12 }}>
@@ -419,26 +394,12 @@ function ChangePrice({ issue, busy, run }: Step) {
   )
 }
 
-function Submit({ issue, simulated, busy, run }: Step & { simulated: boolean }) {
+function Submit({ issue, busy, run }: Step) {
   const [prNumber, setPrNumber] = useState(issue.submission?.pr_number?.toString() ?? '')
   // The commit the review already judged. A commit gets one verdict, so after a rework
   // verdict or a decline the work goes back as a new commit. The same one is refused:
   // in review it would wait for a review that never comes (#119).
   const judged = issue.state === 'REWORK' ? (issue.review?.head_sha ?? null) : null
-
-  const open = useMutation({
-    mutationFn: async () =>
-      unwrap(
-        await api.POST('/api/v1/demo/issues/{issue_id}/pull-request', {
-          params: { path: { issue_id: issue.id } },
-        }),
-      ),
-    onSuccess: (pr) => setPrNumber(String(pr.pr_number)),
-  })
-  // The simulation knows the pull request's head, because this page pushed it. On
-  // GitHub only GitHub does, and submitting the judged commit is refused with why.
-  const pushed = open.data?.head_sha ?? null
-  const unpushed = simulated && judged !== null && (pushed === null || pushed === judged)
 
   return (
     <div className="form">
@@ -447,16 +408,6 @@ function Submit({ issue, simulated, busy, run }: Step & { simulated: boolean }) 
           ? `Push the requested changes to #${issue.submission?.pr_number} as a new commit, then submit it again.${judged ? ` The review already judged ${judged.slice(0, 7)}, and a commit is judged once.` : ''}`
           : `Open a pull request on ${issue.repo} that says "Fixes #${issue.number}", then submit it here. Only a pull request you opened counts.`}
       </p>
-      {simulated && (
-        <div className="btn-row">
-          <button className="btn" disabled={open.isPending} onClick={() => open.mutate()}>
-            {issue.state === 'REWORK'
-              ? 'Push a new commit on the simulated GitHub'
-              : 'Open it on the simulated GitHub'}
-          </button>
-        </div>
-      )}
-      {open.error && <div className="error-box form-error">{open.error.message}</div>}
       <form
         className="field-row"
         onSubmit={(e) => {
@@ -478,8 +429,7 @@ function Submit({ issue, simulated, busy, run }: Step & { simulated: boolean }) 
         <button
           className="btn primary align-end"
           type="submit"
-          disabled={busy || !prNumber || unpushed}
-          title={unpushed ? 'Push a new commit first' : undefined}
+          disabled={busy || !prNumber}
         >
           Submit for review
         </button>
@@ -526,7 +476,7 @@ function ApproveRelease({
   )
 }
 
-function Accepted({ issue, simulated, busy, run }: Step & { simulated: boolean }) {
+function Accepted({ issue, busy, run }: Step) {
   const pr = issue.submission?.pr_number
 
   return (
@@ -536,20 +486,14 @@ function Accepted({ issue, simulated, busy, run }: Step & { simulated: boolean }
         payment. If you do nothing for seven days, it releases anyway.
       </p>
       <div className="btn-row">
-        {simulated ? (
-          <button className="btn primary" disabled={busy} onClick={() => run({ kind: 'merge' })}>
-            Merge #{pr} on the simulated GitHub
-          </button>
-        ) : (
-          <a
-            className="btn primary"
-            href={`https://github.com/${issue.repo}/pull/${pr}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Merge #{pr} on GitHub ↗
-          </a>
-        )}
+        <a
+          className="btn primary"
+          href={`https://github.com/${issue.repo}/pull/${pr}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Merge #{pr} on GitHub ↗
+        </a>
       </div>
       <Reason
         label="Decline, with a reason"

@@ -40,16 +40,15 @@ reviews the pull request against the acceptance criteria, and payment settles in
 
 ### Current status
 
-A scaffold with a working simulation. The lifecycle, pricing engine, escrow contract,
-decision log, money ledger and its timers are real code; by default the money is
-fake — no chain is contacted, and the escrow is a simulated one behind the chain
-gateway. With `MISTHOS_SIMULATED=false` the same gateway settles against the deployed
-`MisthosEscrow` on Arc (docs/DEPLOY.md §3). GitHub is
-simulated too unless a GitHub App is configured (`MISTHOS_GITHUB_APP_ID`), in which
-case issues are read and pull request events move the lifecycle for real. State is in memory unless `MISTHOS_DATABASE_URL` points at Postgres, and the
-per-issue lock, idempotency keys and rate limits are per process unless
-`MISTHOS_REDIS_URL` points at Redis.
-Do not assume a live integration because a module names one.
+The app runs live, and only live. The lifecycle, pricing engine, escrow contract,
+decision log, money ledger and its timers are real code, and the chain gateway
+settles against the deployed `MisthosEscrow` on Arc (docs/DEPLOY.md §3). The process
+refuses to start without the escrow record, a GitHub App (`MISTHOS_GITHUB_APP_ID` and
+its private key) and the signing-key references. Compliance uses real providers:
+Stripe Identity for a contributor's first payout and the official OFAC SDN list for
+screening; without a Stripe key a first payout stays pending. State is in memory
+unless `MISTHOS_DATABASE_URL` points at Postgres, and the per-issue lock, idempotency
+keys and rate limits are per process unless `MISTHOS_REDIS_URL` points at Redis.
 
 ## Project layout
 
@@ -113,7 +112,6 @@ mise run test:contracts  # forge test
 mise run lint            # ruff + tsc for both TS packages + stale-ABI check
 mise run abi:contracts   # re-export MisthosEscrow's ABI after a contract change
 mise run codegen         # regenerate frontend API types from the live schema
-mise run reset           # restore the seeded simulation data
 ```
 
 `setup:<runtime>`, `lint:<runtime>` and `test:<runtime>` exist for one runtime at a
@@ -129,8 +127,8 @@ jobs, one per runtime: `ruff` and `pytest`, then `tsc` and `vitest`, then the ed
 `tsc` and `node --test`, then `forge test`. Each job installs only its own dependencies through
 `mise run setup:<runtime>`, so a failure names the runtime it came from.
 
-`mise run ci` is the same thing locally. `MISTHOS_SIMULATED=true` is pinned in the
-workflow: CI must never reach a chain, Circle or GitHub.
+`mise run ci` is the same thing locally. CI never reaches a chain, Circle or GitHub:
+the tests inject in-memory gateways at those boundaries.
 
 
 ## Coding conventions
@@ -157,7 +155,7 @@ trim trailing whitespace (Markdown excluded).
 - Pydantic v2 models for all request and response shapes in
   [schemas.py](backend/src/misthos/schemas.py).
 - Settings come from `Settings` in [config.py](backend/src/misthos/config.py), env prefix
-  `MISTHOS_`, every value with a safe default so the demo runs with no config.
+  `MISTHOS_`, every value a local run and a deployment must supply named here.
 - Tests: `pytest` with `asyncio_mode = "auto"`. Unit tests for domain logic in
   `tests/unit/`, API tests via `httpx` in `tests/integration/`. Name tests as
   behaviour sentences, in the project's plain voice.
@@ -230,8 +228,8 @@ trim trailing whitespace (Markdown excluded).
 - **Lifecycle state has a single writer.** Do not add a second code path that mutates
   issue state (webhook handler included); go through the lifecycle service so every
   transition gets a decision-log entry.
-- Anything that hits a blockchain must respect the `MISTHOS_SIMULATED` flag and stay
-  offline by default.
+- Anything that hits a blockchain settles against the deployed escrow. Tests inject an
+  in-memory chain gateway; shipped code has no offline mode.
 - Configuration goes in the relevant `.env.example` with a comment; **never commit a
   real `.env`, key or address-with-funds**. Lockfiles are committed — do not gitignore
   them.

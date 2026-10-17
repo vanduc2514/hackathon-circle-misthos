@@ -17,7 +17,6 @@ from misthos.services.github import (
     STATUS_CONTEXT,
     GitHubError,
     ReviewEvent,
-    SimulatedGitHub,
     StatusState,
     build_github,
 )
@@ -305,10 +304,6 @@ class TestWritePath:
         with pytest.raises(GitHubError, match="Issues are disabled"):
             app.create_issue(REPO, "Pin the parser", "", [])
 
-    def test_the_simulation_opens_nothing(self) -> None:
-        with pytest.raises(GitHubError):
-            SimulatedGitHub().create_issue(REPO, "Pin the parser", "", [])
-
     def test_a_review_is_pinned_to_the_reviewed_commit(
         self, app: GitHubApp, github: FakeGitHub
     ) -> None:
@@ -328,7 +323,10 @@ class TestWritePath:
         assert len(sent["description"]) == 140
 
 
-def test_the_app_is_used_only_when_configured(pem: str) -> None:
-    assert isinstance(build_github("", "", "https://api.github.com"), SimulatedGitHub)
+def test_the_app_is_required(pem: str) -> None:
+    from misthos.services.github import GitHubNotConfigured
+
+    with pytest.raises(GitHubNotConfigured):
+        build_github("", "", "https://api.github.com")
     escaped = pem.replace("\n", "\\n")
     assert isinstance(build_github("1", escaped, "https://api.github.com"), GitHubApp)

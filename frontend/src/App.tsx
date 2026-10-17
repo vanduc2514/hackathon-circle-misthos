@@ -17,8 +17,7 @@ const AccountPage = lazy(() => import('./routes/Account'))
 const REPO_URL = 'https://github.com/vanduc2514/hackathon-circle-misthos'
 
 /** Say what the money is, in the words a user would look for. */
-const moneyChip: Record<'simulated' | 'test' | 'real' | 'unknown', string> = {
-  simulated: 'simulated',
+const moneyChip: Record<'test' | 'real' | 'unknown', string> = {
   test: 'USDC',
   real: 'real USDC',
   unknown: 'not Arc: treat as real',
@@ -62,7 +61,7 @@ function Layout() {
           {health && (
             <span
               className={
-                health.money === 'simulated' || health.money === 'test' ? 'chip accent' : 'chip warn'
+                health.money === 'test' ? 'chip accent' : 'chip warn'
               }
             >
               <i className="dot" />
@@ -93,7 +92,6 @@ function Layout() {
         </Link>
         <span className="footer-note">
           Fixed price per issue, settled in USDC on Arc. {health?.money_note ?? ''}
-          {health?.simulated ? ` ${health.seeded_issues} seeded issues.` : ''}
         </span>
         <a href={REPO_URL} target="_blank" rel="noreferrer" className="footer-link">
           Built in the open <ArrowUpRight aria-hidden="true" />

@@ -5,7 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.concurrency import run_in_threadpool
 
-from misthos.api.session import SIGNED_IN, require_owner_or_simulation
+from misthos.api.session import SIGNED_IN, require_owner
 from misthos.schemas import (
     Account,
     AnnualStatement,
@@ -59,11 +59,10 @@ async def statement(
     """One contributor's payouts for one calendar year, to file from.
 
     A statement is personal: its settlement references would link a wallet to a
-    handle. It is served to the signed-in contributor it belongs to, and by the
-    simulation, whose numbers are not real; an operator exports one with
-    `python -m misthos.services.statements`.
+    handle. It is served to the signed-in contributor it belongs to; an operator
+    exports one with `python -m misthos.services.statements`.
     """
-    require_owner_or_simulation(account, contributor_id, "see this statement")
+    require_owner(account, contributor_id, "see this statement")
     found = await run_in_threadpool(annual_statement, store, contributor_id, year)
     if found is None:
         raise HTTPException(status_code=404, detail=f"no contributor {contributor_id}")

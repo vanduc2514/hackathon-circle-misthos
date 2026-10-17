@@ -163,26 +163,19 @@ class TestRotationIsARunbookStep:
 
 
 class TestARealDeploymentMustNameItsSecret:
-    def test_the_simulation_needs_no_reference(self) -> None:
-        assert_secrets_are_configured(simulated=True, reference="")
-
-    def test_a_live_deployment_without_a_reference_is_refused(self) -> None:
+    def test_a_deployment_without_a_reference_is_refused(self) -> None:
         """Discovering the missing reference at the first release is too late."""
         with pytest.raises(AttestorKeyError, match="MISTHOS_ATTESTOR_SECRET_REF"):
-            assert_secrets_are_configured(simulated=False, reference="")
+            assert_secrets_are_configured("")
 
-    def test_a_live_deployment_with_a_reference_passes(self) -> None:
-        assert_secrets_are_configured(simulated=False, reference=REFERENCE)
+    def test_a_deployment_with_a_reference_passes(self) -> None:
+        assert_secrets_are_configured(REFERENCE)
 
-    def test_a_live_deployment_without_the_owner_key_is_refused(self) -> None:
+    def test_a_deployment_without_the_owner_key_is_refused(self) -> None:
         """Without it no approved price becomes a ceiling, so nothing can be funded."""
         with pytest.raises(AttestorKeyError, match="MISTHOS_OWNER_SECRET_REF"):
-            assert_secrets_are_configured(
-                simulated=False, reference=REFERENCE, owner_reference=""
-            )
-        assert_secrets_are_configured(
-            simulated=False, reference=REFERENCE, owner_reference="owner-2026-10"
-        )
+            assert_secrets_are_configured(REFERENCE, owner_reference="")
+        assert_secrets_are_configured(REFERENCE, owner_reference="owner-2026-10")
 
     def test_the_api_checks_it_on_construction(self) -> None:
         main = REPO_ROOT / "backend" / "src" / "misthos" / "main.py"

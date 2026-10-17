@@ -1,13 +1,40 @@
-"""Compliance providers: sanctions screening and identity verification.
+"""Compliance providers.
 
-Both are a provider's job, not ours. The protocols here are the whole of what the
-store needs, and the simulated providers make the demo and the tests exercise every
-outcome without a vendor account. A real provider replaces one class each.
+Identity is Stripe Identity and screening is the official OFAC SDN list. There is no
+fake fallback: a missing Stripe key leaves a first payout pending, and an unreadable
+SDN list blocks funding and payouts.
 """
 
 from __future__ import annotations
 
-from misthos.services.compliance.identity import IdentityProvider, SimulatedIdentity
-from misthos.services.compliance.screening import ScreeningProvider, SimulatedScreening
+from misthos.config import Settings
+from misthos.services.compliance.identity import IdentityProvider
+from misthos.services.compliance.ofac import OfacSdnScreening
+from misthos.services.compliance.screening import ScreeningProvider
+from misthos.services.compliance.stripe_identity import (
+    IdentityUnavailable,
+    StripeIdentity,
+    UnconfiguredIdentity,
+)
 
-__all__ = ["IdentityProvider", "ScreeningProvider", "SimulatedIdentity", "SimulatedScreening"]
+__all__ = [
+    "IdentityProvider",
+    "IdentityUnavailable",
+    "ScreeningProvider",
+    "build_identity",
+    "build_screening",
+]
+
+
+def build_screening(cfg: Settings) -> ScreeningProvider:
+    return OfacSdnScreening(
+        cfg.ofac_sdn_url,
+        cfg.ofac_refresh_seconds,
+        cfg.ofac_cache_path or None,
+    )
+
+
+def build_identity(cfg: Settings) -> IdentityProvider:
+    if cfg.stripe_secret_key:
+        return StripeIdentity(cfg.stripe_secret_key, cfg.stripe_api_url)
+    return UnconfiguredIdentity()

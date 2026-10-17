@@ -46,6 +46,7 @@ build-backend = "hatchling.build"
 packages = ["src/misthos"]
 
 [tool.pytest.ini_options]
+markers = ["real_auth: keep the real session; do not auto-sign-in"]
 # tests/ too, for the shared helpers (a test wallet that signs in).
 pythonpath = ["src", "tests"]
 testpaths = ["tests"]

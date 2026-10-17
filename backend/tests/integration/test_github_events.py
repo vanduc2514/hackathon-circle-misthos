@@ -23,19 +23,16 @@ from misthos.domain.signals import IssueFacts, TreeCounts
 from misthos.main import app
 from misthos.models.records import IssueRecord
 from misthos.services.chain import ChainRevert, ChainUnavailable
-from misthos.services.github import GitHubNotConfigured, SimulatedGitHub
+from misthos.services.github import GitHubNotConfigured
 from misthos.services.github.events import closed_issues
 from misthos.store import store
 from misthos.workers.sweeper import sweep_once
+from tests.support.fake_github import FakeGitHub
 
 API = "/api/v1"
 HOOK = f"{API}/webhooks/github"
 
 
-@pytest.fixture(autouse=True)
-def fresh_store():
-    store.reset()
-    yield
 
 
 @pytest.fixture
@@ -44,8 +41,8 @@ def client() -> TestClient:
 
 
 @pytest.fixture
-def github() -> SimulatedGitHub:
-    assert isinstance(store.github, SimulatedGitHub)
+def github() -> FakeGitHub:
+    assert isinstance(store.github, FakeGitHub)
     return store.github
 
 
@@ -124,7 +121,7 @@ class TestLinking:
 
 class TestSubmission:
     def test_the_claimants_pull_request_moves_the_issue_to_review(
-        self, client: TestClient, github: SimulatedGitHub
+        self, client: TestClient, github: FakeGitHub
     ) -> None:
         issue_id, repo, number, author = CLAIMED
         github.history[(repo, author)] = 3
@@ -144,7 +141,7 @@ class TestSubmission:
         assert [(s.kind, s.state) for s in github.sent] == [("status", "pending")]
 
     def test_someone_elses_pull_request_does_not_take_the_claim(
-        self, client: TestClient, github: SimulatedGitHub
+        self, client: TestClient, github: FakeGitHub
     ) -> None:
         issue_id, repo, number, _ = CLAIMED
         out = deliver(
@@ -186,7 +183,7 @@ class TestSubmission:
 
 class TestChecks:
     def test_the_projects_checks_are_recorded_on_the_submission(
-        self, client: TestClient, github: SimulatedGitHub
+        self, client: TestClient, github: FakeGitHub
     ) -> None:
         issue_id, repo, number, author = CLAIMED
         deliver(client, "pull_request", pull_request(repo, 501, author, body=f"Fixes #{number}"))
@@ -206,7 +203,7 @@ class TestChecks:
         assert rec.decisions[-1].action == "checks_completed"
 
     def test_checks_still_running_change_nothing(
-        self, client: TestClient, github: SimulatedGitHub
+        self, client: TestClient, github: FakeGitHub
     ) -> None:
         issue_id, repo, number, author = CLAIMED
         deliver(client, "pull_request", pull_request(repo, 501, author, body=f"Fixes #{number}"))
@@ -224,7 +221,7 @@ class TestUnreportedChecks:
     or a repository with no CI at all. Neither is a failure."""
 
     @pytest.fixture
-    def submitted(self, client: TestClient, github: SimulatedGitHub) -> str:
+    def submitted(self, client: TestClient, github: FakeGitHub) -> str:
         issue_id, repo, number, author = CLAIMED
         github.put_files(repo, 501, [ChangedFile("src/parse.c", 20, 4),
                                      ChangedFile("tests/fuzz/test_unterminated.c", 35),
@@ -240,7 +237,7 @@ class TestUnreportedChecks:
         assert shown["submission"]["checks_passed"] is None
 
     def test_the_review_waits_for_the_checks_and_runs_once_they_report(
-        self, client: TestClient, github: SimulatedGitHub, submitted: str
+        self, client: TestClient, github: FakeGitHub, submitted: str
     ) -> None:
         assert submitted not in sweep_once(store).reviewed
         assert get(submitted).state is IssueState.IN_REVIEW
@@ -271,7 +268,7 @@ class TestUnreportedChecks:
 
 class TestMergeIsAcceptance:
     def test_merging_releases_the_payout_with_no_other_action(
-        self, client: TestClient, github: SimulatedGitHub
+        self, client: TestClient, github: FakeGitHub
     ) -> None:
         issue_id, repo, pr = IN_REVIEW
         merged = pull_request(repo, pr, "jonas_k", action="closed", merged=True)
@@ -391,7 +388,7 @@ class TestMergeIsAcceptance:
 
 class TestWritePath:
     def test_funding_publishes_the_price_and_the_criteria_on_the_issue(
-        self, github: SimulatedGitHub
+        self, github: FakeGitHub
     ) -> None:
         rec = store.advance("ISS-1006")  # the publisher approves: funded
         comment = github.sent[-1]
@@ -403,7 +400,7 @@ class TestWritePath:
         assert all(c in comment.body for c in rec.acceptance_criteria)
         assert "Merging it is acceptance" in comment.body
 
-    def test_the_verdict_is_posted_as_a_review_and_a_status(self, github: SimulatedGitHub) -> None:
+    def test_the_verdict_is_posted_as_a_review_and_a_status(self, github: FakeGitHub) -> None:
         issue_id, repo, pr = IN_REVIEW
         store.advance(issue_id)  # the review agent's verdict
         review, status = github.sent[-2:]
@@ -411,7 +408,7 @@ class TestWritePath:
         assert "Criterion 2 met" in review.body  # "documented with a working example"
         assert (status.kind, status.state) == ("status", "success")
 
-    def test_a_refund_is_said_on_the_issue(self, github: SimulatedGitHub) -> None:
+    def test_a_refund_is_said_on_the_issue(self, github: FakeGitHub) -> None:
         from misthos.workers.sweeper import sweep_once
 
         funded = get("ISS-1001")
@@ -420,7 +417,7 @@ class TestWritePath:
         assert any("went back to the publisher" in s.body for s in github.sent)
 
     def test_a_failed_post_never_undoes_the_step(
-        self, github: SimulatedGitHub, caplog: pytest.LogCaptureFixture
+        self, github: FakeGitHub, caplog: pytest.LogCaptureFixture
     ) -> None:
         github.fail_writes = True
         rec = store.advance("ISS-1006")
@@ -428,14 +425,14 @@ class TestWritePath:
         assert get("ISS-1006").state is IssueState.FUNDED
         assert "after-save step failed: criteria on" in caplog.text
 
-    def test_a_refused_step_posts_nothing(self, github: SimulatedGitHub) -> None:
+    def test_a_refused_step_posts_nothing(self, github: FakeGitHub) -> None:
         from misthos.domain.issue import IllegalTransition
 
         with pytest.raises(IllegalTransition):
             store.advance("ISS-1005")  # already paid
         assert github.sent == []
 
-    def test_the_seed_posts_nothing(self, github: SimulatedGitHub) -> None:
+    def test_the_seed_posts_nothing(self, github: FakeGitHub) -> None:
         assert github.sent == []
 
 
@@ -450,7 +447,7 @@ class TestReadPath:
     )
 
     def test_publishing_reads_the_issue_and_prices_it_from_what_it_found(
-        self, client: TestClient, github: SimulatedGitHub
+        self, client: TestClient, github: FakeGitHub
     ) -> None:
         github.put_issue(self.FACTS)
         r = client.post(
@@ -474,7 +471,7 @@ class TestReadPath:
         assert body["proposal"]["signals"]["blast_radius"] == 3.0
 
     def test_an_edited_issue_is_priced_again_before_funding(
-        self, client: TestClient, github: SimulatedGitHub
+        self, client: TestClient, github: FakeGitHub
     ) -> None:
         github.put_issue(self.FACTS)
         published = client.post(
@@ -501,7 +498,7 @@ class TestReadPath:
         assert rec.decisions[-1].rule == "issue_changed"
 
     def test_once_funded_an_edit_does_not_move_the_price(
-        self, client: TestClient, github: SimulatedGitHub
+        self, client: TestClient, github: FakeGitHub
     ) -> None:
         rec = get("ISS-1001")  # funded
         github.put_issue(
@@ -519,7 +516,7 @@ class TestReadPath:
         assert get("ISS-1001").proposal == rec.proposal
 
     def test_an_issue_github_will_not_give_us_is_refused(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, github: SimulatedGitHub
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, github: FakeGitHub
     ) -> None:
         from misthos.services.github import GitHubError
 
@@ -536,7 +533,7 @@ class TestReadPath:
         assert "could not read acme/private#5" in r.json()["detail"]
 
 
-class LiveGateway(SimulatedGitHub):
+class LiveGateway(FakeGitHub):
     """The App's gateway as far as the receiver is concerned.
 
     It keeps the simulation's fixtures so a signed delivery still lands and can be
@@ -552,7 +549,7 @@ class LiveGateway(SimulatedGitHub):
 def live(monkeypatch: pytest.MonkeyPatch) -> LiveGateway:
     """Put a live App in front of the receiver, with the chain flag untouched."""
     gateway = LiveGateway()
-    monkeypatch.setattr(store, "github", gateway)
+    monkeypatch.setattr(store.current(), "github", gateway)
     return gateway
 
 
@@ -562,14 +559,14 @@ class TestReceiver:
     ) -> None:
         """The documented App setup leaves MISTHOS_SIMULATED on, and that must not
         disable verification: an unsigned delivery here could release escrow."""
-        assert settings.simulated is True  # the default the README tells operators to keep
         monkeypatch.setattr(settings, "github_webhook_secret", "a-real-secret")
         r = client.post(HOOK, json={"zen": "hi"}, headers={"X-GitHub-Event": "ping"})
         assert r.status_code == 401
 
     def test_a_live_deployment_refuses_everything_until_the_secret_is_set(
-        self, client: TestClient, live: LiveGateway
+        self, client: TestClient, live: LiveGateway, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(settings, "github_webhook_secret", "dev-secret")
         body = b"{}"
         r = client.post(
             HOOK,
@@ -596,17 +593,20 @@ class TestReceiver:
         )
         assert r.status_code == 401
 
-    def test_the_simulation_still_accepts_an_unsigned_delivery(
-        self, client: TestClient
-    ) -> None:
-        """Only the simulation may skip verification; it is the demo's hand driver."""
-        assert store.github.name == "simulated"
+    def test_an_unsigned_delivery_is_refused(self, client: TestClient) -> None:
         r = client.post(HOOK, json={"zen": "hi"}, headers={"X-GitHub-Event": "ping"})
-        assert r.status_code == 202
-        assert r.json()["signature_verified"] is False
+        assert r.status_code == 401
 
     def test_a_body_that_is_not_json_is_refused(self, client: TestClient) -> None:
-        r = client.post(HOOK, content=b"not json", headers={"X-GitHub-Event": "ping"})
+        body = b"not json"
+        r = client.post(
+            HOOK,
+            content=body,
+            headers={
+                "X-GitHub-Event": "ping",
+                "X-Hub-Signature-256": signature_for(body, settings.github_webhook_secret),
+            },
+        )
         assert r.status_code == 400
 
     def test_an_event_we_do_not_act_on_is_acknowledged(self, client: TestClient) -> None:

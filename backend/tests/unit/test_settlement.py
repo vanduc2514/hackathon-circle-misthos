@@ -594,15 +594,9 @@ class TestTheStartupReport:
     ) -> None:
         from misthos import main
 
-        monkeypatch.setattr(main.settings, "simulated", False)
-        monkeypatch.setattr(main.store, "chain", _escrow())
+        monkeypatch.setattr(main.store.current(), "chain", _escrow())
         assert await main.report_settlement_problems() == [NO_FEE_RECIPIENT]
 
-        monkeypatch.setattr(main.store, "chain", _escrow_with(WITH_A_RECIPIENT))
+        monkeypatch.setattr(main.store.current(), "chain", _escrow_with(WITH_A_RECIPIENT))
         assert await main.report_settlement_problems() == []
 
-    async def test_a_simulated_run_reports_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from misthos import main
-
-        monkeypatch.setattr(main.settings, "simulated", True)
-        assert await main.report_settlement_problems() == []

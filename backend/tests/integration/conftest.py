@@ -11,6 +11,11 @@ from misthos.repositories import MemoryRepository
 from misthos.repositories.sql import SqlRepository
 from misthos.store import Store
 from misthos.workers.sweeper import reset_review_failures
+from tests.support.fake_chain import FakeChain
+from tests.support.fake_compliance import FakeIdentity, FakeScreening
+from tests.support.fake_github import FakeGitHub
+from tests.support.fake_rail import FakeRail
+from tests.support.seeded import SeededStore
 
 
 @pytest.fixture(params=["memory", "sqlite", "postgres"])
@@ -29,7 +34,13 @@ def every_store(request: pytest.FixtureRequest, tmp_path: Path) -> Store:
         if not url.startswith(("postgres://", "postgresql")):
             pytest.skip("set MISTHOS_DATABASE_URL to a Postgres database to run against it")
         repo = SqlRepository(url)
-    store = Store(repo)
-    store.reset()
+    store: Store = SeededStore(
+        repository=repo,
+        chain=FakeChain(),
+        rail=FakeRail(),
+        github=FakeGitHub(),
+        screening=FakeScreening(),
+        identity=FakeIdentity(),
+    )
     reset_review_failures()
     return store

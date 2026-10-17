@@ -1,12 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api, money, relativeTime, unwrap, type Decision, type IssueSummaryOut, type MetricsOut } from '../lib/client'
+import { api, money, relativeTime, type Decision, type IssueSummaryOut, type MetricsOut } from '../lib/client'
 import { Bar, Panel, Stat, StateBadge } from '../components/ui'
 import { useHealth } from '../lib/session'
 
 export default function Dashboard() {
-  const qc = useQueryClient()
-
   const metrics = useQuery({
     queryKey: ['metrics'],
     queryFn: async () => (await api.GET('/api/v1/metrics')).data as MetricsOut | undefined,
@@ -21,16 +19,6 @@ export default function Dashboard() {
   })
 
   const health = useHealth()
-  // Reset deletes every row, and it is refused wherever a database is configured, so it
-  // belongs to the simulation alone: on a live deployment there is nothing to reset and
-  // the button only offers a refusal.
-  const simulated = health.data?.simulated ?? false
-
-  const reset = useMutation({
-    mutationFn: async () => unwrap(await api.POST('/api/v1/demo/reset')),
-    onSuccess: () => qc.invalidateQueries(),
-  })
-
   const m = metrics.data
   const rows = issues.data ?? []
   const byState = m?.by_state ?? {}
@@ -47,25 +35,11 @@ export default function Dashboard() {
             work is accepted.
           </p>
         </div>
-        {simulated && (
-          <div className="btn-row">
-            <button className="btn" onClick={() => reset.mutate()} disabled={reset.isPending}>
-              {reset.isPending ? 'Resetting…' : 'Reset simulation'}
-            </button>
-          </div>
-        )}
       </div>
-      {simulated && reset.error && (
-        <div className="error-box form-error">{reset.error.message}</div>
-      )}
-
       <div className="banner">
-        {simulated
-          ? 'Simulated build. The lifecycle, the pricing engine, the review agent and the decision log are real code; the money is fake and no chain is contacted.'
-          : `${health.data?.money_note || `Live on ${health.data?.network_label ?? 'chain'}.`} The escrow holds the money on chain, and the review agent and the decision log are its record.`}{' '}
-        {health.data?.github_oauth
-          ? 'GitHub is connected through the App.'
-          : 'GitHub is simulated until a GitHub App is configured.'}
+        {health.data?.money_note || `Live on ${health.data?.network_label ?? 'chain'}.`} The
+        escrow holds the money on chain, and the review agent and the decision log are its
+        record. GitHub is connected through the App.
       </div>
 
       <div className="hero">

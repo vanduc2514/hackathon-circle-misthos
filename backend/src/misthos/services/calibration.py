@@ -38,7 +38,6 @@ from decimal import Decimal
 from pathlib import Path
 from statistics import median
 
-from misthos.config import settings
 from misthos.domain.issue import IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import RATE_PER_HOUR, WEIGHTS, ComplexitySignals, propose
@@ -277,8 +276,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.settled:
         observations = load_settled()
-        if settings.simulated and not settings.database_url:
-            print("Warning: these are the simulation's seeded settlements, not evidence.")
     else:
         observations = load_corpus(args.corpus)
     report = calibrate(observations)

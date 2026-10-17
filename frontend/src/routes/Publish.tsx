@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { ApiError, api, unwrap } from '../lib/client'
 import { MINIMUM_PRICE, contributorShare, parseAmount, platformFee } from '../lib/fee'
 import { parseRepoLink } from '../lib/repo-link'
-import { useHealth, useMe } from '../lib/session'
+import { useMe } from '../lib/session'
 import { Panel } from '../components/ui'
 import { GateLink } from '../components/SignInGate'
 
@@ -17,7 +17,6 @@ import { GateLink } from '../components/SignInGate'
  */
 export default function Publish() {
   const me = useMe()
-  const health = useHealth()
   const navigate = useNavigate()
   const qc = useQueryClient()
 
@@ -151,11 +150,11 @@ export default function Publish() {
                     onChange={(e) => setNumber(e.target.value)}
                     inputMode="numeric"
                     pattern="[0-9]*"
-                    placeholder={health.data?.simulated ? 'optional' : 'empty opens a new issue'}
+                    placeholder="empty opens a new issue"
                   />
                 </label>
               </div>
-              {!health.data?.simulated && !issueNumber && (
+              {!issueNumber && (
                 <p className="field-note">
                   Leaving the number empty opens the issue on GitHub with this title and
                   description, and prices the issue it creates.

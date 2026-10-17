@@ -59,7 +59,7 @@ class Coordinator(Protocol):
         """Count one event against `key`, whose count lapses after `window`."""
 
     def reset(self) -> None:
-        """Forget every key. The simulation's reset."""
+        """Forget every key. Used when a test starts from an empty one."""
 
 
 class LocalCoordinator:

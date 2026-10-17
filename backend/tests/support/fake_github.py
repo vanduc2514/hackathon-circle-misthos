@@ -35,11 +35,11 @@ class Sent:
     state: str = ""
 
 
-class SimulatedGitHub:
-    name = "simulated"
+class FakeGitHub:
+    name = "fake"
     creates_issues = False
-    """The simulation's GitHub holds only what a test or a demo put in it, so there is
-    no repository to open an issue in; the store invents a number as it always has."""
+    """The fake holds only what a test put in it, so there is no repository to open an
+    issue in; the store invents a number when a publish names none."""
 
     def __init__(self) -> None:
         self._guard = threading.Lock()
@@ -49,6 +49,7 @@ class SimulatedGitHub:
         self.files: dict[tuple[str, int], list[ChangedFile]] = {}
         self.history: dict[tuple[str, str], int] = {}
         self.sent: list[Sent] = []
+        self.installations: list[Installation] = []
         self.fail_writes = False
         """Make every write raise, to prove a failed post never fails the action."""
 

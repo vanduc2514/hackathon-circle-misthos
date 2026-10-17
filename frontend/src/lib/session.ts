@@ -3,7 +3,7 @@ import { api, unwrap, type MeOut } from './client'
 import { siweMessage } from './siwe'
 import type { Signer } from './wallet'
 
-/** The API's health, which also says whether this is the simulation. */
+/** The API's health, including the network and what its money is. */
 export function useHealth() {
   return useQuery({
     queryKey: ['health'],
