@@ -42,6 +42,16 @@ description = "Review every open pull request, post the verdict, and merge what 
 dir = "backend"
 run = "uv run python -m misthos.services.pr_review"
 
+[tasks."review:history"]
+description = "Replay the review agent over historical pull requests and hold its recorded baseline"
+dir = "backend"
+run = "uv run python -m misthos.services.review.harness --corpus historical --against-baseline"
+
+[tasks."review:history:build"]
+description = "Rebuild the historical review corpus from GitHub (needs GITHUB_TOKEN)"
+dir = "backend"
+run = "uv run python -m misthos.services.review.history"
+
 [tasks."review:harness"]
 description = "Replay the review agent over the regression corpus and report agreement"
 dir = "backend"

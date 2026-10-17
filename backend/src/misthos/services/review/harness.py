@@ -3,6 +3,7 @@
     python -m misthos.services.review.harness                 # the rule reviewer
     python -m misthos.services.review.harness --reviewer model # Claude, if configured
     python -m misthos.services.review.harness --corpus path.json --json
+    python -m misthos.services.review.harness --corpus historical --against-baseline
 
 Each case is a pull request reduced to what a reviewer is given (the criteria, the
 changed files, whether the checks pass, how many rework rounds came before) and the
@@ -11,6 +12,13 @@ band, because agreement on trivial patches is easy and hides failures in the
 aggregate, and exits non-zero when any figure is below its floor. The CI suite runs
 the same replay (tests/unit/test_review_agreement.py), so a regression in the
 reviewer fails the build before it reaches a contributor.
+
+Two corpora. `regression` is constructed: it pins what the rule reviewer must conclude
+from a file list, and is held to the floors. `historical` is real pull requests a
+maintainer already decided (#36, built by `services/review/history.py`). No reviewer
+here meets the floors on it yet, so it is held to a ratchet instead: the cases the
+reviewer agreed on when the baseline was recorded must stay agreed, and recording a
+better baseline is a reviewed change (`--record-baseline`).
 """
 
 from __future__ import annotations
@@ -28,6 +36,9 @@ from misthos.services.review.base import Reviewer
 from misthos.services.review.rules import RuleReviewer
 
 CORPUS = Path(__file__).with_name("regression-corpus.json")
+HISTORICAL = Path(__file__).with_name("historical-corpus.json")
+BASELINE = Path(__file__).with_name("historical-baseline.json")
+CORPORA = {"regression": CORPUS, "historical": HISTORICAL}
 
 # 09 sets the guardrail at 85 percent agreement. A band may sit lower, but not by
 # much: a reviewer that is only right on easy work is not trustworthy on hard work.
@@ -150,12 +161,63 @@ def render(report: Report) -> str:
     return "\n".join(lines)
 
 
+def baseline_regressions(report: Report, baseline: dict[str, Any]) -> list[str]:
+    """What the reviewer agreed on when the baseline was recorded and no longer does.
+
+    A baseline is one reviewer's. Another reviewer measured against it would report
+    the difference between two reviewers as a regression, so that is refused instead.
+    """
+    recorded_for = baseline.get("reviewer")
+    if recorded_for is not None and recorded_for != report.reviewer:
+        return [
+            f"the baseline was recorded for {recorded_for}, not {report.reviewer}; record "
+            "one for this reviewer with --record-baseline"
+        ]
+    now = {d["id"] for d in report.disagreements}
+    problems = [f"no longer agrees on {case}" for case in sorted(set(baseline["agreed"]) & now)]
+    # Compared at the precision the baseline is stored at, so the run that recorded it
+    # holds it.
+    if round(report.rate(), 4) < baseline["rate"]:
+        problems.append(
+            f"agreement {report.rate():.0%} fell below the baseline {baseline['rate']:.0%}"
+        )
+    return problems
+
+
+def record_baseline(report: Report, cases: list[Case], path: Path = BASELINE) -> dict[str, Any]:
+    disagreed = {d["id"] for d in report.disagreements}
+    baseline = {
+        "reviewer": report.reviewer,
+        "rate": round(report.rate(), 4),
+        "agreed": sorted(c.id for c in cases if c.id not in disagreed),
+    }
+    path.write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+    return baseline
+
+
+def _corpus(value: str) -> Path:
+    return CORPORA.get(value, Path(value))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--corpus", type=Path, default=CORPUS)
+    parser.add_argument(
+        "--corpus", type=_corpus, default=CORPUS, help="regression, historical, or a path"
+    )
+    parser.add_argument(
+        "--against-baseline",
+        action="store_true",
+        help="judge by the recorded baseline instead of the floors (the historical corpus)",
+    )
+    parser.add_argument(
+        "--record-baseline", action="store_true", help="record this run as the new baseline"
+    )
     parser.add_argument("--reviewer", choices=["rules", "model"], default="rules")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     args = parser.parse_args(argv)
+    if (args.against_baseline or args.record_baseline) and args.corpus != HISTORICAL:
+        # The one baseline there is was recorded on the historical corpus.
+        parser.error("--against-baseline and --record-baseline take --corpus historical")
 
     if args.reviewer == "model":
         from misthos.store import store
@@ -167,8 +229,18 @@ def main(argv: list[str] | None = None) -> int:
     else:
         reviewer = RuleReviewer()
 
-    report = replay(reviewer, load(args.corpus))
+    cases = load(args.corpus)
+    report = replay(reviewer, cases)
     print(json.dumps(asdict(report), indent=2) if args.json else render(report))
+    if args.record_baseline:
+        recorded = record_baseline(report, cases)
+        print(f"\nRecorded the baseline: {len(recorded['agreed'])} cases agreed.")
+        return 0
+    if args.against_baseline:
+        baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+        problems = baseline_regressions(report, baseline)
+        print("\n" + ("REGRESSED: " + "; ".join(problems) if problems else "Baseline held."))
+        return 1 if problems else 0
     return 1 if report.below_floor() else 0
 
 
