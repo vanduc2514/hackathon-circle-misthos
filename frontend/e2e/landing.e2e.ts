@@ -52,8 +52,10 @@ test('the landing page leads into the app, and the app back home', async ({ page
   await expect(page).toHaveURL(/\/$/)
   await expect(page.locator('.landing')).toBeVisible()
 
-  // And the overview has an address of its own.
-  await page.getByRole('link', { name: 'Overview' }).click()
+  // The way in is the account page, and the app's nav has its own overview.
+  await page.getByRole('link', { name: 'Sign in' }).click()
+  await expect(page).toHaveURL(/\/account$/)
+  await page.getByRole('navigation').getByRole('link', { name: 'Overview' }).click()
   await expect(page).toHaveURL(/\/overview$/)
   await expect(page.getByRole('heading', { name: 'The treasury, running itself' })).toBeVisible()
 })
