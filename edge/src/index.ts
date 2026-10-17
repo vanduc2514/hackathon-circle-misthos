@@ -16,7 +16,7 @@
 
 import express, { type Request, type Response } from 'express'
 import { CATALOG } from './catalog.js'
-import { catalogOf, coreClient, freeApiKeys, paidRouter, prices } from './paid.js'
+import { CORE_PAID_PREFIX, catalogOf, coreClient, freeApiKeys, paidRouter, prices } from './paid.js'
 import { createRail } from './x402-gate.js'
 import { walletStatus, type WalletOp } from './circle-cli.js'
 import { createWalletService } from './circle-wallets.js'
@@ -59,9 +59,23 @@ app.get('/health', (_req: Request, res: Response) => {
   })
 })
 
-/** The seller page's data: every paid route, its price, and how to pay. Free. */
+const core = coreClient(CORE_URL, CORE_TOKEN)
+
+/** The address certificates are signed by, asked of the core and kept a while. */
+let signer: { value: string | null; at: number } | null = null
+async function certificateSigner(): Promise<string | null> {
+  const fresh = signer && Date.now() - signer.at < (signer.value ? 10 * 60_000 : 60_000)
+  if (fresh && signer) return signer.value
+  const out = await core.call({ method: 'GET', path: `${CORE_PAID_PREFIX}signer` })
+  const found = (out.body as { signer?: unknown }).signer
+  signer = { value: out.status === 200 && typeof found === 'string' ? found : null, at: Date.now() }
+  return signer.value
+}
+
+/** The seller page's data: every paid route, its price, how to pay, and who signs the
+ * certificates it sells. Free. */
 app.get('/paid', async (_req: Request, res: Response) => {
-  res.json(await catalogOf(rail, CATALOG, priced))
+  res.json(await catalogOf(rail, CATALOG, priced, { certificate_signer: await certificateSigner() }))
 })
 
 /**
@@ -73,7 +87,7 @@ app.use(
   paidRouter({
     rail,
     routes: CATALOG,
-    core: coreClient(CORE_URL, CORE_TOKEN),
+    core,
     prices: priced,
     apiKeys: freeApiKeys(),
   }),

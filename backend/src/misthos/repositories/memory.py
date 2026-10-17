@@ -228,6 +228,32 @@ class MemoryRepository:
         rows.sort(key=lambda d: d.created_at, reverse=True)
         return [d.model_copy() for d in rows[:limit]]
 
+    def page_decisions(
+        self,
+        *,
+        after: tuple[datetime, str] | None = None,
+        limit: int = 50,
+        issue_id: str | None = None,
+        actor: str | None = None,
+        action: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[Decision]:
+        with self._guard:
+            rows = [d for r in self._issues.values() for d in r.decisions]
+        kept = [
+            d
+            for d in rows
+            if (after is None or (d.created_at, d.id) > after)
+            and (issue_id is None or d.issue_id == issue_id)
+            and (actor is None or d.actor == actor)
+            and (action is None or d.action == action)
+            and (since is None or d.created_at >= since)
+            and (until is None or d.created_at < until)
+        ]
+        kept.sort(key=lambda d: (d.created_at, d.id))
+        return [d.model_copy() for d in kept[:limit]]
+
     # ---------------------------------------------------------- paid calls
 
     def record_paid_call(self, call: PaidCall) -> PaidCall:

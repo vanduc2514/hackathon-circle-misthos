@@ -12,6 +12,11 @@ each entry names one route under this prefix.
 - `POST /access` says whether a signed-in caller may use a paid route free.
 - `POST /calls` writes down a settlement once the edge has settled it.
 - `GET /calls` reads the books of paid calls back, to reconcile with Circle Gateway.
+- `GET /signer` names the address certificates are signed by.
+
+The views an agent buys (#202) are below those: the decision log, a reputation, an
+escrow attestation. Each answers an error the edge does not charge for when it
+cannot answer: a missing record, an unknown filter, a chain it cannot read.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 
 from misthos.auth import sessions
 from misthos.config import settings
@@ -36,7 +42,9 @@ from misthos.schemas import (
     PaidRouteTotal,
     money,
 )
+from misthos.services import certificates, paid_views
 from misthos.services.paid import PaidCaller, is_free, who
+from misthos.services.paid_views import Unanswerable
 from misthos.store import store
 
 PREFIX = "/internal/paid"
@@ -76,7 +84,7 @@ async def access(asked: PaidAccessAsked, request: Request) -> PaidAccess:
     token = header[7:].strip() if header.lower().startswith("bearer ") else ""
     address = sessions.address_in(token) if token else None
     account = await run_in_threadpool(store.repo.get_account, address) if address else None
-    if account is None or not is_free(asked.route, account, asked.params):
+    if account is None or not await run_in_threadpool(is_free, asked.route, account, asked.params):
         return PaidAccess(free=False)
     return PaidAccess(free=True, who=who(account))
 
@@ -134,3 +142,85 @@ async def list_calls(
         ],
         total=money(Usdc(sum(c.amount.base_units for c in calls))),
     )
+
+
+# ----------------------------------------------------------- what agents buy
+
+
+def refused(exc: Unanswerable) -> JSONResponse:
+    return JSONResponse(status_code=exc.status, content={"error": exc.error, "detail": exc.detail})
+
+
+def only(request: Request, *allowed: str) -> None:
+    """Refuse a filter the route does not know, rather than ignore it and charge for an
+    answer the buyer did not ask for."""
+    unknown = sorted(set(request.query_params) - set(allowed))
+    if unknown:
+        raise Unanswerable(
+            400,
+            "unknown_filter",
+            f"unknown {', '.join(unknown)}; this route takes {', '.join(allowed) or 'none'}",
+        )
+
+
+@router.get("/signer")
+async def signer() -> JSONResponse:
+    """The address every certificate is signed by. Free: it is how one is checked."""
+    try:
+        address = await run_in_threadpool(certificates.signer)
+    except certificates.CertificatesUnavailable:
+        return refused(Unanswerable(503, "certificates_unavailable", "no certificate key"))
+    return JSONResponse({"signer": address, "scheme": certificates.SCHEME})
+
+
+@router.get("/decisions")
+async def decisions(
+    request: Request,
+    cursor: Annotated[str | None, Query(max_length=200)] = None,
+    limit: Annotated[int, Query()] = paid_views.DECISIONS_PAGE_DEFAULT,
+    issue_id: Annotated[str | None, Query(max_length=32)] = None,
+    actor: Annotated[str | None, Query(max_length=16)] = None,
+    action: Annotated[str | None, Query(max_length=64)] = None,
+    since: Annotated[datetime | None, Query()] = None,
+    until: Annotated[datetime | None, Query()] = None,
+) -> JSONResponse:
+    """The whole decision log, a page at a time, oldest first (#202)."""
+    try:
+        only(request, "cursor", "limit", "issue_id", "actor", "action", "since", "until")
+        page = await run_in_threadpool(
+            lambda: paid_views.decisions_page(
+                store,
+                cursor=cursor,
+                limit=limit,
+                issue_id=issue_id,
+                actor=actor,
+                action=action,
+                since=since,
+                until=until,
+            )
+        )
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(page)
+
+
+@router.get("/reputation/{contributor_id}")
+async def contributor_reputation(request: Request, contributor_id: str) -> JSONResponse:
+    """A contributor's standing taken apart: score, signals, specialisation (#202)."""
+    try:
+        only(request)
+        found = await run_in_threadpool(paid_views.reputation_of, store, contributor_id)
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(found)
+
+
+@router.get("/escrow/{issue_id}/attestation")
+async def escrow_attestation(request: Request, issue_id: str) -> JSONResponse:
+    """A signed certificate of what the escrow holds for an issue (#202)."""
+    try:
+        only(request)
+        found = await run_in_threadpool(paid_views.escrow_attestation, store, issue_id)
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(found)

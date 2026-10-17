@@ -61,8 +61,11 @@ describe('starting the edge', { concurrency: true }, () => {
 
 describe('the running edge', () => {
   let facilitator: Server
+  let core: Server
   let edge: Server
   let base = ''
+  let coreAt = ''
+  const SIGNER = '0x4444444444444444444444444444444444444444'
 
   before(async () => {
     // A Gateway facilitator on localhost, so nothing here reaches Circle.
@@ -87,11 +90,28 @@ describe('the running edge', () => {
       res.end('{}')
     }).listen(0)
     await new Promise((resolve) => facilitator.once('listening', resolve))
+    // The core's paid API, answering only the edge's token.
+    core = createServer((req, res) => {
+      res.setHeader('Content-Type', 'application/json')
+      if (req.headers['x-misthos-core-token'] !== 'secret') {
+        res.statusCode = 404
+        res.end('{"detail":"Not Found"}')
+        return
+      }
+      if (req.url === '/api/v1/internal/paid/signer') {
+        res.end(JSON.stringify({ signer: SIGNER, scheme: 'eip191-personal-sign' }))
+        return
+      }
+      res.statusCode = 404
+      res.end('{}')
+    }).listen(0)
+    await new Promise((resolve) => core.once('listening', resolve))
+    coreAt = `127.0.0.1:${(core.address() as AddressInfo).port}`
     Object.assign(process.env, {
       NODE_ENV: 'test',
       MISTHOS_SELLER_ADDRESS: SELLER,
       EDGE_CORE_TOKEN: 'secret',
-      CORE_API_URL: 'http://10.9.8.7:8000',
+      CORE_API_URL: `http://${coreAt}`,
       GATEWAY_FACILITATOR_URL: `http://127.0.0.1:${(facilitator.address() as AddressInfo).port}`,
     })
     const { default: app } = await import('./index.js')
@@ -101,7 +121,7 @@ describe('the running edge', () => {
   })
 
   after(async () => {
-    for (const server of [edge, facilitator]) {
+    for (const server of [edge, core, facilitator]) {
       server.closeAllConnections()
       await new Promise((resolve) => server.close(resolve))
     }
@@ -111,17 +131,41 @@ describe('the running edge', () => {
     const res = await fetch(`${base}/health`)
     const text = await res.text()
     assert.equal(res.status, 200)
-    assert.doesNotMatch(text, /10\.9\.8\.7|core/)
+    assert.ok(!text.includes(coreAt), 'the core address stays inside')
+    assert.doesNotMatch(text, /core/)
     assert.equal(JSON.parse(text).role, 'x402-seller')
   })
 
-  it('publishes the catalog at /paid', async () => {
+  it('publishes the catalog at /paid, with who signs its certificates', async () => {
     const res = await fetch(`${base}/paid`)
-    const body = (await res.json()) as { protocol: string; payTo: string; accepts: { asset: string }[] }
+    const text = await res.text()
+    const body = JSON.parse(text) as {
+      protocol: string
+      payTo: string
+      accepts: { asset: string }[]
+      certificate_signer: string
+      routes: { id: string; path: string }[]
+    }
     assert.equal(res.status, 200)
     assert.equal(body.protocol, 'x402')
     assert.equal(body.payTo, SELLER)
     assert.equal(body.accepts[0].asset, ARC_USDC)
+    assert.equal(body.certificate_signer, SIGNER)
+    assert.deepEqual(
+      body.routes.map((r) => r.id),
+      ['decisions', 'reputation', 'escrow-attestation'],
+    )
+    assert.ok(!text.includes(coreAt))
+  })
+
+  it('asks for payment on every listed route', async () => {
+    for (const path of ['/paid/decisions', '/paid/reputation/CON-1', '/paid/escrow/ISS-1001/attestation']) {
+      const res = await fetch(`${base}${path}`)
+      assert.equal(res.status, 402, path)
+      const required = JSON.parse(Buffer.from(res.headers.get('payment-required') ?? '', 'base64').toString())
+      assert.equal(required.accepts[0].network, 'eip155:5042002', path)
+      assert.equal(required.accepts[0].payTo, SELLER, path)
+    }
   })
 
   it('no longer sells the free metrics, and sells nothing it does not list', async () => {

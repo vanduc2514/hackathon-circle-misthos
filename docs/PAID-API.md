@@ -125,11 +125,79 @@ refuses to forward a call whose core path leaves the paid API, however its param
 are spelled. No paid route reaches an auth, wallet, statement, policy or lifecycle
 route; tests in both services walk every route and check.
 
-| Route | Price | Phase |
-| --- | --- | --- |
-| None yet | | #201 is the rail |
+| Route | Id | Price | Free to | Phase |
+| --- | --- | --- | --- | --- |
+| `GET /paid/decisions` | `decisions` | $0.02 a page | anyone signed in | #202 |
+| `GET /paid/reputation/{contributor_id}` | `reputation` | $0.05 | that contributor | #202 |
+| `GET /paid/escrow/{issue_id}/attestation` | `escrow-attestation` | $0.02 | that issue's publisher | #202 |
 
-`/paid/pricing-report`, which charged $0.25 for the free `/api/v1/metrics`, is gone.
+`/paid/pricing-report`, which charged $0.25 for the free `/api/v1/metrics`, is gone, and
+no market report replaces it: the metrics stay free.
+
+A call the core cannot answer is answered with `{"error", "detail", "charged": false}`
+and the payment is not taken: `400` for a filter or parameter the route does not know
+(an unknown filter is refused, never ignored), `404` for a record that does not exist,
+`409` when the record and the chain disagree, `502` when the chain cannot be read, and
+`503` when a signing key is not configured.
+
+### Views over what the platform holds (#202)
+
+Raw public reads stay free: `GET /api/v1/decisions` (the newest 500), a contributor's
+profile, `GET /api/v1/issues/{id}/escrow`. What these sell is what those do not give.
+
+**`GET /paid/decisions`**: the whole append-only decision log, oldest first, in
+`(created_at, id)` order. `limit` is 1 to **200**, the maximum page size, and 50 by
+default. Each page is one payment, and `next` is the cursor for the following page,
+`null` on the last. Filters: `issue_id`, `actor` (`agent`, `publisher`, `contributor`,
+`system`), `action`, `since` and `until` (ISO 8601; a time with no zone is UTC; `since`
+is inclusive, `until` exclusive). Decisions name contributors by handle, never by
+wallet, as the public log does.
+
+**`GET /paid/reputation/{contributor_id}`**: a contributor's standing taken apart, as
+aggregates only. `reputation`, `settled_issues` and `earned` are exactly the standing
+the money ledger derives (`services/reputation.py`). On top of them:
+
+- `score`, 0 to 100: `100 * points / (points + 50)`. A record of about five settled
+  issues scores 50, and the curve saturates, so a long record counts for more than one
+  large issue.
+- `percentile`: the share of contributors with any standing whose points are at or
+  below this one's, out of `ranked_contributors`; `null` with no standing.
+- `signals`: the agent's verdicts on work the contributor holds (accept, rework,
+  reject), `acceptance_rate`, `rework_rounds`, `first_pass_settled` (settled with no
+  rework), and disputes opened, overturned and upheld. Counted from the contributor's
+  own claim on, so an issue that changed hands is not the earlier claimant's record.
+- `repos` and `labels`: where the contributor settled work, most first.
+
+No wallet, no handle, and no payout transfer is in the answer.
+
+**`GET /paid/escrow/{issue_id}/attestation`**: a signed certificate of what
+`MisthosEscrow` holds for an issue. The core reads the commitment from the chain,
+compares it with its own record of the commitment (amount, status, publisher, deadline),
+and signs only when they agree; a divergence is `409 escrow_diverges` and is not
+charged. The certificate names the issue and its `bytes32` key, the publisher and its
+wallet, the amount and take rate, the deadline, the status (`held`, `released`,
+`refunded`), the contract, chain and commitment transaction, and when it was read.
+
+```json
+{
+  "certificate": { "kind": "misthos/escrow-attestation", "version": 1, "issue": { "id": "ISS-1001", "key": "0x…" }, "amount": { "usdc": "762.05", "base_units": 762047999 }, "status": "held", "escrow": { "contract": "0x…", "chain_id": 5042002, "network": "eip155:5042002", "commit_tx": "0x…" }, "read_at": "…" },
+  "canonical": "{\"amount\":…}",
+  "signature": "0x…",
+  "signer": "0x…",
+  "scheme": "eip191-personal-sign"
+}
+```
+
+To check one: recover the signer from `canonical` and `signature` with EIP-191
+`personal_sign` (in Python, `Account.recover_message(encode_defunct(text=canonical),
+signature=signature)`), compare it with `certificate_signer` on `GET /paid`, and read
+the commitment from `escrow.contract` on `escrow.chain_id` by `issue.key` to see it
+still holds. `canonical` is the certificate with sorted keys and no whitespace, and it
+is the text that was signed.
+
+The certificate key is a third key, kept in the secret store by
+`MISTHOS_CERTIFICATE_SECRET_REF` like the escrow's two. The escrow does not know it, so
+nothing it signs can move money. Without it the attestation is `503` and not charged.
 
 ## The core's side
 
@@ -164,4 +232,6 @@ On the edge (`edge/.env.example`):
 | `EDGE_PRICES` | JSON of route id to USDC price, overriding the catalog, such as `{"decisions":"0.02"}`. An unknown id or a price that is not a positive USDC amount stops the edge starting |
 | `EDGE_FREE_API_KEYS` | Comma separated, each at least 16 characters |
 
-On the core, `MISTHOS_EDGE_CORE_TOKEN`. Without it every internal paid route is `404`.
+On the core, `MISTHOS_EDGE_CORE_TOKEN`; without it every internal paid route is `404`.
+And `MISTHOS_CERTIFICATE_SECRET_REF`, the certificate key's name in the secret store;
+without it the signed routes are `503`.

@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from misthos.domain.ledger import MoneyEventKind
 from misthos.domain.money import Usdc, format_usdc
 from misthos.models.records import IssueRecord
+from misthos.schemas import Decision
 
 POINTS_PER_SETTLED_ISSUE = 10
 POINTS_PER_HUNDRED_USDC = 1
@@ -78,6 +80,163 @@ def standing(records: Iterable[IssueRecord]) -> dict[str, Standing]:
             reputation=now.reputation + ev.points,
         )
     return totals
+
+
+# A score of 50 is this many points: about five settled issues of a few hundred USDC.
+HALF_SCORE_POINTS = 50
+TOP_REPOS = 10
+TOP_LABELS = 10
+
+
+@dataclass(frozen=True)
+class RepoShare:
+    repo: str
+    settled_issues: int
+    earned: Usdc
+
+
+@dataclass(frozen=True)
+class Signals:
+    """How the contributor's work went, from the decision log of the issues they hold.
+
+    Counted only from their own claim on: an issue that changed hands is not the
+    earlier claimant's record and not this one's.
+    """
+
+    issues_held: int = 0
+    accepted: int = 0
+    reworked: int = 0
+    rejected: int = 0
+    rework_rounds: int = 0
+    first_pass_settled: int = 0
+    disputes_opened: int = 0
+    disputes_overturned: int = 0
+    disputes_upheld: int = 0
+
+    @property
+    def verdicts(self) -> int:
+        return self.accepted + self.reworked + self.rejected
+
+
+@dataclass(frozen=True)
+class Profile:
+    """A contributor's standing and what it is made of, as aggregates only (#202).
+
+    No wallet, no handle, no issue that is not already public: the paid reputation is
+    a derived view, and a wallet next to an identity is what docs/PRIVACY.md forbids.
+    """
+
+    contributor_id: str
+    standing: Standing
+    score: int
+    """0 to 100: points / (points + HALF_SCORE_POINTS). Saturates, so a long record
+    counts for more than one big issue, and never quite reaches 100."""
+    percentile: int | None
+    """The share of contributors with any standing whose points are at or below this
+    one's, in percent. None for a contributor with none."""
+    ranked: int
+    """How many contributors have any standing: what the percentile is out of."""
+    signals: Signals
+    repos: list[RepoShare] = field(default_factory=list)
+    labels: list[tuple[str, int]] = field(default_factory=list)
+    first_settled_at: datetime | None = None
+    last_settled_at: datetime | None = None
+
+
+def score_of(points: int) -> int:
+    return round(100 * points / (points + HALF_SCORE_POINTS)) if points > 0 else 0
+
+
+def _since_claim(rec: IssueRecord) -> list[Decision]:
+    """The issue's decisions from its current claim on."""
+    claimed = [i for i, d in enumerate(rec.decisions) if d.action == "claimed"]
+    return rec.decisions[claimed[-1] :] if claimed else list(rec.decisions)
+
+
+def profile(records: Iterable[IssueRecord], contributor_id: str) -> Profile:
+    """Everything the paid reputation says about one contributor, from the ledger and
+    the decision log alone. The standing is `standing(records)`'s, exactly."""
+    records = list(records)
+    standings = standing(records)
+    mine = standings.get(contributor_id, Standing())
+    mine_events = [e for e in events(records) if e.contributor_id == contributor_id]
+    settled_ids = {e.issue_id for e in mine_events}
+
+    accepted = reworked = rejected = rounds = first_pass = 0
+    opened = overturned = upheld = held = 0
+    labels: Counter[str] = Counter()
+    for rec in records:
+        if rec.contributor_id != contributor_id:
+            continue
+        held += 1
+        since = _since_claim(rec)
+        issue_rounds = 0
+        for d in since:
+            if d.action == "verdict_issued":
+                if d.outcome.startswith("accept"):
+                    accepted += 1
+                elif d.outcome.startswith("rework"):
+                    reworked += 1
+                    issue_rounds += 1
+                elif d.outcome.startswith("reject"):
+                    rejected += 1
+            elif d.action == "publisher_declined":
+                issue_rounds += 1
+            elif d.action == "dispute_opened":
+                opened += 1
+            elif d.action == "dispute_overturned":
+                overturned += 1
+            elif d.action == "dispute_upheld":
+                upheld += 1
+        rounds += issue_rounds
+        if rec.id in settled_ids:
+            labels.update(rec.labels)
+            if issue_rounds == 0:
+                first_pass += 1
+
+    by_repo: dict[str, list[ReputationEvent]] = {}
+    for e in mine_events:
+        by_repo.setdefault(e.repo, []).append(e)
+    repos = sorted(
+        (
+            RepoShare(
+                repo=repo,
+                settled_issues=len(group),
+                earned=Usdc(sum(e.amount.base_units for e in group)),
+            )
+            for repo, group in by_repo.items()
+        ),
+        key=lambda r: (-r.settled_issues, -r.earned.base_units, r.repo),
+    )[:TOP_REPOS]
+
+    ranked = [st.reputation for st in standings.values() if st.reputation > 0]
+    percentile = (
+        round(100 * sum(1 for p in ranked if p <= mine.reputation) / len(ranked))
+        if mine.reputation > 0
+        else None
+    )
+    return Profile(
+        contributor_id=contributor_id,
+        standing=mine,
+        score=score_of(mine.reputation),
+        percentile=percentile,
+        ranked=len(ranked),
+        signals=Signals(
+            issues_held=held,
+            accepted=accepted,
+            reworked=reworked,
+            rejected=rejected,
+            rework_rounds=rounds,
+            first_pass_settled=first_pass,
+            disputes_opened=opened,
+            disputes_overturned=overturned,
+            disputes_upheld=upheld,
+        ),
+        repos=repos,
+        labels=sorted(labels.items(), key=lambda kv: (-kv[1], kv[0]))[:TOP_LABELS],
+        first_settled_at=mine_events[0].settled_at if mine_events else None,
+        last_settled_at=mine_events[-1].settled_at if mine_events else None,
+    )
 
 
 def as_fields(st: Standing) -> dict[str, object]:

@@ -129,12 +129,17 @@ publisher:
 | The commitment itself | the publisher's own wallet, in the browser | never the platform's |
 | Release on acceptance | the attestor | `MISTHOS_ATTESTOR_SECRET_REF` |
 | Refund once the deadline passed | the attestor (anyone may) | `MISTHOS_ATTESTOR_SECRET_REF` |
+| A paid escrow attestation or receipt ([PAID-API.md](./PAID-API.md)) | the certificate key, off chain, EIP-191 | `MISTHOS_CERTIFICATE_SECRET_REF` |
 
-Both keys are read from the secret store by reference when a transaction is signed.
+The certificate key is a third key and the escrow does not know it: it vouches for what
+the escrow holds and can move nothing. It needs no gas. Its address is published at the
+edge's `GET /paid` as `certificate_signer`.
+
+Every key is read from the secret store by reference when it signs.
 `MISTHOS_SECRET_STORE_DIR` points at a mounted directory with one file per reference,
 mode 600, for local runs and anvil; a production deployment supplies its managed
-store behind the same `SecretStore` interface. Fund both signers with a little USDC,
-which is Arc's gas. The owner is the deployer unless ownership was transferred; the
+store behind the same `SecretStore` interface. Fund the owner and the attestor with a
+little USDC, which is Arc's gas. The owner is the deployer unless ownership was transferred; the
 attestor is the address passed as `MISTHOS_ATTESTOR_ADDRESS` at deploy.
 
 A release the chain refuses — a revert, or the RPC unreachable — does not undo the

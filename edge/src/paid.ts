@@ -59,7 +59,21 @@ export interface PaidRoute {
   /** Long work: 202 and a job to poll, settled when the result is delivered. */
   async?: boolean
   /** What a call looks like, for the catalog and the MCP tools. */
-  example?: { query?: Record<string, string>; body?: unknown }
+  example?: { params?: Record<string, string>; query?: Record<string, string>; body?: unknown }
+  /** What the call is about, for the settlement log: an issue or a contributor. */
+  ref?: (req: Request) => string | undefined
+}
+
+/** The request's own query string, as the buyer sent it, for the core to read and to
+ * refuse a filter it does not know. Empty, or `?` and the query. */
+export function queryOf(req: Request): string {
+  const at = req.originalUrl.indexOf('?')
+  return at < 0 ? '' : req.originalUrl.slice(at)
+}
+
+/** A path segment from a route parameter, encoded so it cannot leave its segment. */
+export function segment(value: unknown): string {
+  return encodeURIComponent(String(value ?? ''))
 }
 
 /** Answers from the core, as the paid router sees them. */
@@ -406,7 +420,7 @@ export function paidRouter(opts: PaidRouterOptions): Router {
         body: { error: 'settlement_failed', reason: settled.reason, charged: false },
       } as const
     }
-    log({ route: route.id, request, settlement: settled.settlement })
+    log({ route: route.id, request, settlement: settled.settlement, ref: route.ref?.(req) })
     return {
       kind: 'bought',
       bought: {
@@ -547,6 +561,7 @@ export async function catalogOf(
   rail: Rail,
   routes: PaidRoute[],
   priced: Map<string, string>,
+  extra: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
   let accepts: unknown[] = []
   try {
@@ -567,6 +582,7 @@ export async function catalogOf(
     networks: rail.config.networks,
     payTo: rail.config.sellerAddress,
     accepts,
+    ...extra,
     routes: routes.map((r) => ({
       id: r.id,
       method: r.method,

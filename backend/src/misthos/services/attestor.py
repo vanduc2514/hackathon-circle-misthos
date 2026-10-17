@@ -15,6 +15,11 @@ The Arc gateway (`services/chain/arc.py`,
 #69) is the only caller: it asks this module for the attestation key when it signs a
 release or a refund, and for the escrow owner's key when it records an approved price
 as a ceiling. No other code path can reach either key.
+
+A third key, the certificate key, signs the paid API's certificates (#202): an escrow
+attestation, a settlement receipt. It is read through the same guards by
+`services/certificates.py` alone, and it is a different key on purpose. It vouches for
+what the escrow holds; the escrow does not know it, so it can release nothing.
 """
 
 from __future__ import annotations
@@ -129,6 +134,16 @@ def load_owner_key(store: SecretStore, reference: str) -> AttestorKey:
     if not reference:
         raise AttestorKeyError(
             "no owner secret reference is configured, so no approved price can be recorded"
+        )
+    return _load(store, reference)
+
+
+def load_certificate_key(store: SecretStore, reference: str) -> AttestorKey:
+    """Fetch the key that signs certificates. The escrow does not know this key, so a
+    certificate it signs is evidence and never an instruction to move money."""
+    if not reference:
+        raise AttestorKeyError(
+            "no certificate secret reference is configured, so nothing can be certified"
         )
     return _load(store, reference)
 

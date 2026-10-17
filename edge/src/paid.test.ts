@@ -417,12 +417,39 @@ describe('the allowlist', () => {
     for (const route of CATALOG) {
       assert.match(route.path, /^\/paid\//, route.id)
       assert.ok(priced.get(route.id), route.id)
-      const params = Object.fromEntries([...route.path.matchAll(/:(\w+)/g)].map(([, name]) => [name, 'x1']))
-      const call = route.core({ params, query: route.example?.query ?? {}, body: route.example?.body ?? {} } as never)
+      const named = [...route.path.matchAll(/:(\w+)/g)].map(([, name]) => name)
+      const params = { ...Object.fromEntries(named.map((n) => [n, 'x1'])), ...route.example?.params }
+      for (const name of named) assert.ok(route.example?.params?.[name], `${route.id} shows ${name}`)
+      const query = route.example?.query ?? {}
+      const search = new URLSearchParams(query).toString()
+      const req = { params, query, body: route.example?.body ?? {}, originalUrl: `${route.path}${search ? `?${search}` : ''}` }
+      const call = route.core(req as never)
       assert.ok(insidePaidApi(call.path), `${route.id} calls ${call.path}`)
       assert.doesNotMatch(call.path, /\/(auth|wallets?|statements?|policy|lifecycle)\b/, route.id)
+      assert.equal(call.path.includes('?'), search !== '', `${route.id} forwards the query as sent`)
     }
     assert.equal(new Set(CATALOG.map((r) => r.id)).size, CATALOG.length, 'route ids are unique')
+  })
+
+  it('sells the #202 views at prices inside the ranges #200 set', () => {
+    const ranges: Record<string, [number, number]> = {
+      decisions: [0.01, 0.05],
+      reputation: [0.02, 0.1],
+      'escrow-attestation': [0.01, 0.05],
+    }
+    for (const [id, [low, high]] of Object.entries(ranges)) {
+      const route = CATALOG.find((r) => r.id === id)
+      assert.ok(route, id)
+      assert.ok(Number(route.price) >= low && Number(route.price) <= high, `${id} at ${route.price}`)
+    }
+  })
+
+  it('keeps a route parameter inside its own segment', () => {
+    const attestation = CATALOG.find((r) => r.id === 'escrow-attestation') as PaidRoute
+    const req = { params: { issue_id: '../../auth/me' }, query: {}, originalUrl: '/paid/escrow/x/attestation' }
+    const call = attestation.core(req as never)
+    assert.equal(call.path, `${CORE_PAID_PREFIX}escrow/..%2F..%2Fauth%2Fme/attestation`)
+    assert.equal(insidePaidApi(call.path), false, 'so the router refuses it and charges nothing')
   })
 })
 

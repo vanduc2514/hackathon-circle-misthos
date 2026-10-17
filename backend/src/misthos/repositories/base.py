@@ -117,6 +117,21 @@ class Repository(Protocol):
     def list_decisions(self, limit: int) -> list[Decision]:
         """The decision log across every issue, newest first."""
 
+    def page_decisions(
+        self,
+        *,
+        after: tuple[datetime, str] | None = None,
+        limit: int = 50,
+        issue_id: str | None = None,
+        actor: str | None = None,
+        action: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[Decision]:
+        """One page of the decision log, oldest first, in (created_at, id) order and
+        starting just after `after`. For the paid export (#202), which pages through the
+        whole log where the public read shows only the newest."""
+
     def record_paid_call(self, call: PaidCall) -> PaidCall:
         """Append one settled x402 call (#201) and return the call on record. When the
         same route, request and settlement are already recorded, nothing is written and

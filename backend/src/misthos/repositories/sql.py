@@ -24,7 +24,18 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Connection, create_engine, delete, func, insert, select, text, update
+from sqlalchemy import (
+    Connection,
+    and_,
+    create_engine,
+    delete,
+    func,
+    insert,
+    or_,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -444,6 +455,34 @@ class SqlRepository:
         query = query.order_by(*newest).limit(limit)
         with self.engine.connect() as conn:
             return [_paid_call(r) for r in conn.execute(query).mappings()]
+
+    def page_decisions(
+        self,
+        *,
+        after: tuple[datetime, str] | None = None,
+        limit: int = 50,
+        issue_id: str | None = None,
+        actor: str | None = None,
+        action: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[Decision]:
+        self.migrate()
+        d = t.decisions.c
+        query = select(t.decisions)
+        if after is not None:
+            at, last = after
+            query = query.where(or_(d.created_at > at, and_(d.created_at == at, d.id > last)))
+        for column, value in ((d.issue_id, issue_id), (d.actor, actor), (d.action, action)):
+            if value is not None:
+                query = query.where(column == value)
+        if since is not None:
+            query = query.where(d.created_at >= since)
+        if until is not None:
+            query = query.where(d.created_at < until)
+        query = query.order_by(d.created_at, d.id).limit(limit)
+        with self.engine.connect() as conn:
+            return [_decision(r) for r in conn.execute(query).mappings()]
 
     @contextmanager
     def try_lock(self, name: str) -> Iterator[bool]:

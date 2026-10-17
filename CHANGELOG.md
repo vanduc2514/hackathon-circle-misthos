@@ -29,6 +29,20 @@ Notable changes to Misthos, newest first. The format follows
   - The core's paid routes live under `/api/v1/internal/paid/`, answer only the edge's
     `X-Misthos-Core-Token` (404 to anyone else), and are not in the API schema.
 
+- **Paid views over existing data** (#202). Three routes on the edge, each free to its
+  owner signed in and paid by everyone else:
+  - `GET /paid/decisions`, $0.02 a page: the whole decision log, oldest first, filtered
+    by issue, actor, action and time, up to 200 a page with a cursor. The public read
+    still shows the newest 500 free.
+  - `GET /paid/reputation/{contributor_id}`, $0.05: the ledger's standing, a 0 to 100
+    score, a percentile, the verdicts, rework and disputes on the contributor's work,
+    and where they settled it. Aggregates only: no wallet, no handle.
+  - `GET /paid/escrow/{issue_id}/attestation`, $0.02: a certificate of what the escrow
+    holds, read from the chain, compared with the record, and signed with EIP-191 by a
+    new certificate key (`MISTHOS_CERTIFICATE_SECRET_REF`) the escrow does not know. A
+    divergence is not certified. The signer is published at `GET /paid`.
+  - An unknown filter is refused with 400 rather than ignored and charged for.
+
 ### Removed
 
 - **`/paid/pricing-report`** (#201). It charged $0.25 for `/api/v1/metrics`, which is

@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     # The escrow owner's key, which records each approved price as the escrow's
     # ceiling (#34). Also a reference into the secret store, never the key.
     owner_secret_ref: str = ""
+    # The key that signs the paid API's certificates: escrow attestations and
+    # settlement receipts (#202). A reference into the secret store, like the two
+    # above, and a different key from both: it vouches for what the escrow holds and
+    # can move nothing. Unset, the signed routes answer 503 and nobody is charged.
+    certificate_secret_ref: str = ""
     # A mounted directory holding the referenced keys, one file each, mode 600. For
     # local testing and anvil; a production deployment supplies its managed store.
     secret_store_dir: str = ""
