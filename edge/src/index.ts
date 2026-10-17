@@ -67,8 +67,19 @@ app.get('/paid/pricing-report', gate.require('0.25'), (_req: Request, res: Respo
     )
 })
 
-/** Circle user-controlled wallets for publishers and contributors. Core only. */
-app.use('/wallets', walletRouter(createWalletService()))
+/**
+ * Circle user-controlled wallets for publishers and contributors. Core only.
+ *
+ * The x402 gate does not need Circle, and the wallet routes are a separate concern on
+ * the same service, so they are mounted only when Circle is configured. Without the
+ * credentials the gate still runs and the routes are absent rather than half-working.
+ */
+const circleConfigured = Boolean(process.env.CIRCLE_API_KEY && process.env.CIRCLE_APP_ID)
+if (circleConfigured) {
+  app.use('/wallets', walletRouter(createWalletService()))
+} else {
+  console.warn('CIRCLE_API_KEY and CIRCLE_APP_ID are unset; Circle wallet routes are not mounted')
+}
 
 /** Wallet operations the Python core delegates here because the CLI is Node. */
 app.get('/wallet/status', async (_req: Request, res: Response) => {

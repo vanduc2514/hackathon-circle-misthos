@@ -38,16 +38,10 @@ describe('starting the edge', { concurrency: true }, () => {
     assert.match(run.stderr, /MISTHOS_SELLER_ADDRESS/)
   })
 
-  it('will not start without the Circle credentials', async () => {
-    const run = await start({ MISTHOS_SELLER_ADDRESS: SELLER })
-    assert.notEqual(run.code, 0)
-    assert.match(run.stderr, /CIRCLE_API_KEY and CIRCLE_APP_ID are required/)
-  })
-
-  it('will not start without the core token that guards the wallet routes', async () => {
-    const run = await start({ MISTHOS_SELLER_ADDRESS: SELLER, ...CIRCLE })
-    assert.notEqual(run.code, 0)
-    assert.match(run.stderr, /EDGE_CORE_TOKEN is required/)
+  it('starts the gate without Circle and says the wallet routes are off', async () => {
+    const run = await start({ MISTHOS_SELLER_ADDRESS: SELLER, EDGE_CORE_TOKEN: 'secret' })
+    assert.equal(run.code, 0, run.stderr)
+    assert.match(run.stderr, /Circle wallet routes are not mounted/)
   })
 
   it('starts live and names the removed switch once', async () => {
