@@ -67,6 +67,9 @@ export interface PaidRoute {
   capped?: boolean
   /** One line for the buyer about how the route is priced or run. */
   note?: string
+  /** Why the route is switched off, or null when it is on. A route that is off answers
+   * 503 before any price is named, so nobody signs a payment for it. */
+  unavailable?: () => string | null
 }
 
 /** The request's own query string, as the buyer sent it, for the core to read and to
@@ -471,6 +474,11 @@ export function paidRouter(opts: PaidRouterOptions): Router {
 
   for (const route of routes) {
     const handle = async (req: Request, res: Response) => {
+      const off = route.unavailable?.()
+      if (off) {
+        res.status(503).json({ error: 'route_unavailable', route: route.id, reason: off, charged: false })
+        return
+      }
       const free = await freeCaller(route, req)
       if (free) {
         const out = await forwarded(route, req, { 'X-Misthos-Free-Caller': free })
@@ -608,6 +616,8 @@ export async function catalogOf(
       free_tier: Boolean(r.freeTier),
       async: Boolean(r.async),
       capped: Boolean(r.capped),
+      available: !r.unavailable?.(),
+      ...(r.unavailable?.() ? { unavailable: r.unavailable() } : {}),
       ...(r.note ? { note: r.note } : {}),
       ...(r.async ? { poll: `${r.path}/jobs/{job_id}` } : {}),
       ...(r.example ? { example: r.example } : {}),

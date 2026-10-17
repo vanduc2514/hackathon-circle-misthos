@@ -11,6 +11,9 @@ The retention periods below are the defaults we hold ourselves to. They are not 
 - No public page or API response carries a contributor's wallet. The contributor list serves a profile with no wallet and no identity-provider reference.
 - The release transfer that pays a contributor names their wallet on chain, so its reference stays off the issue page, the timeline, the decision log and the publisher's audit export. It appears only on the contributor's own annual statement.
 - The decision log names contributors by handle, never by wallet.
+- The paid API (docs/PAID-API.md) carries no wallet next to a person: a reputation is
+  aggregates with no handle, opportunities never say who holds an issue, and a
+  settlement receipt carries the release transfer only in the contributor's own copy.
 
 `test_no_public_response_links_a_wallet_to_a_handle` reads every public response and fails the build if a contributor wallet or a payout reference appears in one.
 
@@ -46,6 +49,7 @@ Identity is verified at a contributor's first payout, never at signup. Claiming 
 | Payout records and annual statements | 7 years from the end of the tax year of the payout | Not automated yet |
 | Decision log | The life of the platform | Append-only by design; it holds handles, never wallets |
 | Paid calls | 7 years, as income records | Not automated yet |
+| Price quotes and paid reviews (inputs, answers, latency, cost; never a diff) | 2 years, for calibration | Not automated yet |
 
 ## Statements
 

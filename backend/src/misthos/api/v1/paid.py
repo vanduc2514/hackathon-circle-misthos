@@ -16,7 +16,8 @@ each entry names one route under this prefix.
 - `GET /signer` names the address certificates are signed by.
 
 The views an agent buys are below those: the decision log, a reputation, an escrow
-attestation (#202); a price and its comparables (#203); a pre-flight review (#204).
+attestation (#202); a price and its comparables (#203); a pre-flight review (#204);
+opportunities, a settlement receipt and a sanctions screen (#206).
 Each answers an error the edge does not charge for when it cannot answer: a missing
 record, an unknown filter, a chain it cannot read.
 """
@@ -44,7 +45,7 @@ from misthos.schemas import (
     PaidRouteTotal,
     money,
 )
-from misthos.services import certificates, paid_pricing, paid_review, paid_views
+from misthos.services import certificates, paid_deals, paid_pricing, paid_review, paid_views
 from misthos.services.paid import PaidCaller, is_free, who
 from misthos.services.paid_views import Unanswerable
 from misthos.store import store
@@ -282,6 +283,45 @@ async def review_job(job_id: str) -> JSONResponse:
     """Where a paid review is: queued, running, done with its result, or failed."""
     try:
         found = await run_in_threadpool(paid_review.poll, store, job_id)
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(found)
+
+
+@router.get("/opportunities")
+async def opportunities(request: Request) -> JSONResponse:
+    """Funded work still open, filtered and paged (#206)."""
+    try:
+        query = dict(request.query_params)
+        page = await run_in_threadpool(paid_deals.opportunities_page, store, query)
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(page)
+
+
+@router.get("/receipt/{settlement_id}")
+async def receipt(
+    request: Request, settlement_id: str, caller: PaidCaller = PAID_CALLER
+) -> JSONResponse:
+    """A signed receipt of one issue's settlement, checked against the books (#206)."""
+    try:
+        only(request)
+        found = await run_in_threadpool(paid_deals.receipt, store, settlement_id, caller)
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(found)
+
+
+@router.post("/screen")
+async def screen(request: Request) -> JSONResponse:
+    """A sanctions check of one wallet. Off by default: 503 until it is cleared (#206)."""
+    try:
+        only(request)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        found = await run_in_threadpool(paid_deals.screen, store, body)
     except Unanswerable as exc:
         return refused(exc)
     return JSONResponse(found)

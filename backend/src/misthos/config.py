@@ -121,6 +121,9 @@ class Settings(BaseSettings):
     # above, and a different key from both: it vouches for what the escrow holds and
     # can move nothing. Unset, the signed routes answer 503 and nobody is charged.
     certificate_secret_ref: str = ""
+    # The paid sanctions screen (#206). Off until the screening provider's terms and a
+    # legal review allow reselling its answers; until then it answers 503.
+    paid_screening_enabled: bool = False
     # A mounted directory holding the referenced keys, one file each, mode 600. For
     # local testing and anvil; a production deployment supplies its managed store.
     secret_store_dir: str = ""

@@ -130,4 +130,55 @@ const REVIEW: PaidRoute[] = [
   },
 ]
 
-export const CATALOG: PaidRoute[] = [...VIEWS, ...PRICING, ...REVIEW]
+/** #206: deal flow and settlement artefacts, and a screen that stays off. */
+const DEALS: PaidRoute[] = [
+  {
+    id: 'opportunities',
+    method: 'GET',
+    path: '/paid/opportunities',
+    price: '0.02',
+    description:
+      'Funded issues still open: price, what the contributor receives, deadline, claim ' +
+      'state, repo, labels and acceptance criteria. Filters: repo, labels (comma ' +
+      'separated), min_price, max_price, claimable (true or false), sort (newest, ' +
+      'price, deadline). limit 1 to 100 (default 25); follow `next`.',
+    core: (req) => ({ method: 'GET', path: `${CORE_PAID_PREFIX}opportunities${queryOf(req)}` }),
+    freeTier: true,
+    example: { query: { claimable: 'true', sort: 'price', limit: '25' } },
+  },
+  {
+    id: 'receipt',
+    method: 'GET',
+    path: '/paid/receipt/:settlement_id',
+    price: '0.01',
+    description:
+      "A signed receipt of an issue's settlement (the settlement id is the issue's id): " +
+      'released or refunded, gross, the platform fee, net, when, and the escrow and ' +
+      'commitment transaction, checked against the money ledger and the escrow. The ' +
+      "release transfer is in the contributor's own receipt only.",
+    core: (req) => ({
+      method: 'GET',
+      path: `${CORE_PAID_PREFIX}receipt/${segment(req.params.settlement_id)}${queryOf(req)}`,
+    }),
+    freeTier: true,
+    ref: (req) => String(req.params.settlement_id),
+    example: { params: { settlement_id: 'ISS-1004' } },
+  },
+  {
+    id: 'screen',
+    method: 'POST',
+    path: '/paid/screen',
+    price: '0.25',
+    description:
+      'A sanctions-list check of one wallet: clear or hit, and the list. Body: ' +
+      '{"address": "0x…"}. Off until the provider\'s terms and a legal review allow it.',
+    core: (req) => ({ method: 'POST', path: `${CORE_PAID_PREFIX}screen${queryOf(req)}` }),
+    unavailable: () =>
+      process.env.EDGE_PAID_SCREENING === 'true'
+        ? null
+        : 'sanctions screening is off until its provider terms and a legal review clear it',
+    example: { body: { address: '0x0000000000000000000000000000000000000001' } },
+  },
+]
+
+export const CATALOG: PaidRoute[] = [...VIEWS, ...PRICING, ...REVIEW, ...DEALS]

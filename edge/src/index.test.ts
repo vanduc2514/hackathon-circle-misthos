@@ -153,7 +153,17 @@ describe('the running edge', () => {
     assert.equal(body.certificate_signer, SIGNER)
     assert.deepEqual(
       body.routes.map((r) => r.id),
-      ['decisions', 'reputation', 'escrow-attestation', 'price', 'comparables', 'review'],
+      [
+        'decisions',
+        'reputation',
+        'escrow-attestation',
+        'price',
+        'comparables',
+        'review',
+        'opportunities',
+        'receipt',
+        'screen',
+      ],
     )
     assert.ok(!text.includes(coreAt))
   })
@@ -166,6 +176,8 @@ describe('the running edge', () => {
       ['POST', '/paid/price'],
       ['GET', '/paid/comparables'],
       ['POST', '/paid/review'],
+      ['GET', '/paid/opportunities'],
+      ['GET', '/paid/receipt/ISS-1004'],
     ]) {
       const res = await fetch(`${base}${path}`, {
         method,
@@ -176,6 +188,18 @@ describe('the running edge', () => {
       assert.equal(required.accepts[0].network, 'eip155:5042002', path)
       assert.equal(required.accepts[0].payTo, SELLER, path)
     }
+  })
+
+  it('keeps the sanctions screen off, with no price named', async () => {
+    const res = await fetch(`${base}/paid/screen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"address":"0x0000000000000000000000000000000000000001"}',
+    })
+    assert.equal(res.status, 503)
+    assert.equal(res.headers.get('payment-required'), null)
+    const catalog = (await (await fetch(`${base}/paid`)).json()) as { routes: { id: string; available: boolean }[] }
+    assert.equal(catalog.routes.find((r) => r.id === 'screen')?.available, false)
   })
 
   it('no longer sells the free metrics, and sells nothing it does not list', async () => {

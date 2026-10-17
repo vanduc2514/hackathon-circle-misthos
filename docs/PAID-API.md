@@ -133,6 +133,9 @@ route; tests in both services walk every route and check.
 | `POST /paid/price` | `price` | $0.25 | any publisher | #203 |
 | `GET /paid/comparables` | `comparables` | $0.10 | any publisher | #203 |
 | `POST /paid/review` | `review` | $2.00, the cap | nobody | #204 |
+| `GET /paid/opportunities` | `opportunities` | $0.02 a page | anyone signed in | #206 |
+| `GET /paid/receipt/{settlement_id}` | `receipt` | $0.01 | that issue's contributor and publisher | #206 |
+| `POST /paid/screen` | `screen` | $0.25 | nobody; off by default | #206 |
 
 `/paid/pricing-report`, which charged $0.25 for the free `/api/v1/metrics`, is gone, and
 no market report replaces it: the metrics stay free.
@@ -290,6 +293,40 @@ Each review is kept as a job row and then as a calibration record (`paid_reviews
 migration `0021`): latency, cost, verdict, reviewer, and the diff's size, never the
 diff.
 
+### Deal flow and receipts (#206)
+
+**`GET /paid/opportunities`**: funded issues still open, the feed a contributor's agent
+works from. Only issues whose money the escrow holds and whose work is not yet accepted
+(`FUNDED`, `CLAIMED`, `IN_REVIEW`, `REWORK`). Each names its price, what the
+contributor would receive after the fee, the deadline, whether it can be claimed now
+and when a claim on it runs out, the repo, labels, acceptance criteria and its GitHub
+link; never who holds it. Filters: `repo`, `labels` (comma separated, all of them),
+`min_price` and `max_price` (USDC), `claimable` (`true`, `false`), `sort` (`newest`,
+the default, `price` or `deadline`). `limit` is 1 to **100**, 25 by default; follow
+`next`. The web app's issue list stays free.
+
+**`GET /paid/receipt/{settlement_id}`**: a signed receipt of one issue's settlement.
+The settlement id is the issue's id; an issue settles once, released to its
+contributor or refunded to its publisher. The core checks the money ledger (one
+commitment and one settlement of the committed amount), the record (fee and payout
+add up to the commitment) and the escrow (released or refunded, for that amount)
+before it signs, and a disagreement is `409 ledger_diverges`, not charged. The receipt
+names the outcome, gross, fee and rate, net, who was paid, when, and the escrow and
+commitment transaction, signed like an attestation with the certificate key.
+
+The release transfer names the contributor's wallet on chain, so `settlement_tx` is in
+the contributor's own receipt only, read free with their session. Everyone else's
+receipt, the publisher's included, carries `null` there: next to an issue whose
+contributor is public, the transfer would link a wallet to a person. A refund's
+transfer goes to the publisher's wallet, which the escrow already shows, so a refund's
+receipt carries it.
+
+**`POST /paid/screen`**: a sanctions-list check of one wallet, `{"address": "0x…"}` to
+`clear` or `hit` and the list. **Off.** Reselling a screening provider's answers needs
+its terms and a legal review, so until `EDGE_PAID_SCREENING=true` on the edge and
+`MISTHOS_PAID_SCREENING_ENABLED=true` on the core, it answers `503
+route_unavailable` before any price is named, and nobody signs a payment for it.
+
 ## The core's side
 
 The core's paid routes are internal: every request must carry `X-Misthos-Core-Token`
@@ -322,7 +359,9 @@ On the edge (`edge/.env.example`):
 | `EDGE_CORE_TOKEN` | Shared with the core's `MISTHOS_EDGE_CORE_TOKEN`. Required once any paid route is listed |
 | `EDGE_PRICES` | JSON of route id to USDC price, overriding the catalog, such as `{"decisions":"0.02"}`. An unknown id or a price that is not a positive USDC amount stops the edge starting |
 | `EDGE_FREE_API_KEYS` | Comma separated, each at least 16 characters |
+| `EDGE_PAID_SCREENING` | `true` lists the sanctions screen. Off by default (#206) |
 
 On the core, `MISTHOS_EDGE_CORE_TOKEN`; without it every internal paid route is `404`.
 And `MISTHOS_CERTIFICATE_SECRET_REF`, the certificate key's name in the secret store;
-without it the signed routes are `503`.
+without it the signed routes are `503`. `MISTHOS_PAID_SCREENING_ENABLED` is the
+screen's switch on the core, off by default.

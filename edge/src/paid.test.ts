@@ -382,6 +382,31 @@ describe('an async paid call', () => {
   })
 })
 
+describe('a route that is switched off', () => {
+  it('answers 503 before naming a price, so nobody signs a payment for it', async () => {
+    const off: PaidRoute = { ...PRICED, id: 'off', path: '/paid/off', unavailable: () => 'not yet' }
+    const app = await serve({ routes: [off] })
+    const res = await app.post('/paid/off', {}, { 'PAYMENT-SIGNATURE': signed('250000') })
+    const body = await res.json()
+    await app.close()
+    assert.equal(res.status, 503)
+    assert.deepEqual(body, { error: 'route_unavailable', route: 'off', reason: 'not yet', charged: false })
+    assert.equal(res.headers.get('payment-required'), null)
+    assert.equal(app.calls.verified.length + app.calls.settled.length + app.hits.length, 0)
+  })
+
+  it('keeps the sanctions screen off unless EDGE_PAID_SCREENING is true', () => {
+    const screen = CATALOG.find((r) => r.id === 'screen') as PaidRoute
+    const before = process.env.EDGE_PAID_SCREENING
+    delete process.env.EDGE_PAID_SCREENING
+    assert.match(String(screen.unavailable?.()), /legal review/)
+    process.env.EDGE_PAID_SCREENING = 'true'
+    assert.equal(screen.unavailable?.(), null)
+    if (before === undefined) delete process.env.EDGE_PAID_SCREENING
+    else process.env.EDGE_PAID_SCREENING = before
+  })
+})
+
 describe('the allowlist', () => {
   it('serves only what the catalog lists', async () => {
     const app = await serve({ routes: [PRICED] })
@@ -458,6 +483,9 @@ describe('the allowlist', () => {
       price: [0.1, 0.5],
       comparables: [0.05, 0.25],
       review: [1.0, 6.31],
+      opportunities: [0.01, 0.05],
+      receipt: [0.01, 0.01],
+      screen: [0.1, 0.5],
     }
     for (const [id, [low, high]] of Object.entries(ranges)) {
       const route = CATALOG.find((r) => r.id === id)

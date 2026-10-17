@@ -57,6 +57,16 @@ Notable changes to Misthos, newest first. The format follows
   It changes no issue, and the signed-in review is unchanged. Circle Gateway has no
   `upto`, so the review is sold at its cap, and the 402 says so. Each review's latency,
   cost and verdict is kept for calibration (migration `0021`).
+- **Opportunities, receipts and a screen that stays off** (#206).
+  - `GET /paid/opportunities`, $0.02 a page, free signed in: funded issues still open,
+    with price, net to the contributor, deadline and claim state, filtered by repo,
+    labels, price and claimability, sorted and paged. Never who holds an issue.
+  - `GET /paid/receipt/{settlement_id}`, $0.01, free to the issue's contributor and
+    publisher: a signed receipt of the release or refund, checked against the ledger,
+    the record and the escrow. The release transfer is in the contributor's own
+    receipt only.
+  - `POST /paid/screen`: off until the provider's terms and a legal review clear it,
+    and until then a 503 before any price.
 
 ### Removed
 
