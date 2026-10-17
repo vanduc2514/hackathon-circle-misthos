@@ -32,6 +32,7 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Fixed
 
+- Removed the duplicate "Your Circle wallet" setup panel from Account so wallet connection has a single entry point (#179).
 - The header's money chip says USDC rather than TEST USDC (#138).
 - An issue's "Next step" panel no longer shows a source comment as text (#168, #169).
 - **A `misthos` label is priced even when nothing recorded the repository's connection**
