@@ -153,7 +153,7 @@ describe('the running edge', () => {
     assert.equal(body.certificate_signer, SIGNER)
     assert.deepEqual(
       body.routes.map((r) => r.id),
-      ['decisions', 'reputation', 'escrow-attestation', 'price', 'comparables'],
+      ['decisions', 'reputation', 'escrow-attestation', 'price', 'comparables', 'review'],
     )
     assert.ok(!text.includes(coreAt))
   })
@@ -165,6 +165,7 @@ describe('the running edge', () => {
       ['GET', '/paid/escrow/ISS-1001/attestation'],
       ['POST', '/paid/price'],
       ['GET', '/paid/comparables'],
+      ['POST', '/paid/review'],
     ]) {
       const res = await fetch(`${base}${path}`, {
         method,

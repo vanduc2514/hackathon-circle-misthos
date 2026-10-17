@@ -15,7 +15,7 @@ from datetime import datetime
 
 from misthos.domain.compliance import PartyKind, Screening
 from misthos.domain.issue import IssueState
-from misthos.domain.paid import PaidCall, PriceQuote
+from misthos.domain.paid import PaidCall, PaidReview, PriceQuote
 from misthos.models.records import IssueRecord
 from misthos.repositories.base import (
     AccountConflict,
@@ -47,6 +47,7 @@ class MemoryRepository:
         self._connections: dict[str, RepoConnection] = {}
         self._paid_calls: list[PaidCall] = []
         self._price_quotes: list[PriceQuote] = []
+        self._paid_reviews: dict[str, PaidReview] = {}
 
     def next_value(self, counter: str, start: int) -> int:
         with self._guard:
@@ -291,6 +292,15 @@ class MemoryRepository:
             rows = [copy.deepcopy(q) for q in self._price_quotes]
         rows.sort(key=lambda q: (q.quoted_at, q.id), reverse=True)
         return rows[:limit]
+
+    def save_paid_review(self, review: PaidReview) -> None:
+        with self._guard:
+            self._paid_reviews[review.id] = copy.deepcopy(review)
+
+    def get_paid_review(self, review_id: str) -> PaidReview | None:
+        with self._guard:
+            found = self._paid_reviews.get(review_id)
+            return copy.deepcopy(found) if found else None
 
     @contextmanager
     def try_lock(self, name: str) -> Iterator[bool]:

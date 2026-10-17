@@ -49,7 +49,7 @@ from misthos.domain.compliance import (
 from misthos.domain.issue import FundingTerms, IssueState
 from misthos.domain.ledger import MoneyEvent, MoneyEventKind
 from misthos.domain.money import Usdc, format_usdc
-from misthos.domain.paid import PaidCall, PriceQuote
+from misthos.domain.paid import PaidCall, PaidReview, PriceQuote
 from misthos.domain.pricing import PriceProposal
 from misthos.models import tables as t
 from misthos.models.records import IssueRecord
@@ -490,6 +490,64 @@ class SqlRepository:
                 )
                 for r in conn.execute(query).mappings()
             ]
+
+    def save_paid_review(self, review: PaidReview) -> None:
+        self.migrate()
+        values = {
+            "status": review.status,
+            "request_digest": review.request_digest,
+            "payer": review.payer,
+            "free_caller": review.free_caller,
+            "repo": review.repo,
+            "title": review.title,
+            "criteria": review.criteria,
+            "files": review.files,
+            "additions": review.additions,
+            "deletions": review.deletions,
+            "created_at": review.created_at,
+            "started_at": review.started_at,
+            "finished_at": review.finished_at,
+            "verdict": review.verdict,
+            "rule": review.rule,
+            "reviewer": review.reviewer,
+            "seconds": review.seconds,
+            "cost_base_units": review.cost.base_units if review.cost else None,
+            "result": review.result,
+            "error": review.error,
+        }
+        with self.engine.begin() as conn:
+            _upsert(conn, t.paid_reviews, {"id": review.id}, values)
+
+    def get_paid_review(self, review_id: str) -> PaidReview | None:
+        self.migrate()
+        query = select(t.paid_reviews).where(t.paid_reviews.c.id == review_id)
+        with self.engine.connect() as conn:
+            r = conn.execute(query).mappings().first()
+        if r is None:
+            return None
+        return PaidReview(
+            id=r["id"],
+            status=r["status"],
+            request_digest=r["request_digest"],
+            payer=r["payer"],
+            free_caller=r["free_caller"],
+            repo=r["repo"],
+            title=r["title"],
+            criteria=r["criteria"],
+            files=r["files"],
+            additions=r["additions"],
+            deletions=r["deletions"],
+            created_at=_utc(r["created_at"]),
+            started_at=_utc_or_none(r["started_at"]),
+            finished_at=_utc_or_none(r["finished_at"]),
+            verdict=r["verdict"],
+            rule=r["rule"],
+            reviewer=r["reviewer"],
+            seconds=r["seconds"],
+            cost=Usdc(int(r["cost_base_units"])) if r["cost_base_units"] is not None else None,
+            result=dict(r["result"]),
+            error=r["error"],
+        )
 
     def page_decisions(
         self,

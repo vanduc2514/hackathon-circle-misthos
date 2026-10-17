@@ -52,6 +52,8 @@ const REVIEW: PaidRoute = {
   description: 'Review a diff',
   core: () => ({ method: 'POST', path: `${CORE_PAID_PREFIX}review` }),
   async: true,
+  capped: true,
+  note: 'the cap is the price',
 }
 
 interface Setup {
@@ -305,6 +307,22 @@ describe('the free tier', () => {
 })
 
 describe('an async paid call', () => {
+  it('names the exact scheme and the cap when unpaid, since Gateway has no upto', async () => {
+    const app = await serve()
+    const res = await app.post('/paid/review', { diff: '+x' })
+    const body = (await res.json()) as Record<string, unknown>
+    await app.close()
+    assert.equal(res.status, 402)
+    assert.equal(body.scheme, 'exact')
+    assert.deepEqual(body.cap, { usdc: '0.50', base_units: '500000' })
+    assert.equal(body.upto, false)
+    assert.equal(body.async, true)
+    assert.equal(body.note, 'the cap is the price')
+    const required = decode(res.headers.get('payment-required'))
+    assert.equal(required.accepts[0].scheme, 'exact')
+    assert.equal(required.accepts[0].amount, '500000')
+  })
+
   function reviewCore() {
     let state = 'queued'
     const fake = fakeCore((hit) => {
@@ -439,6 +457,7 @@ describe('the allowlist', () => {
       'escrow-attestation': [0.01, 0.05],
       price: [0.1, 0.5],
       comparables: [0.05, 0.25],
+      review: [1.0, 6.31],
     }
     for (const [id, [low, high]] of Object.entries(ranges)) {
       const route = CATALOG.find((r) => r.id === id)

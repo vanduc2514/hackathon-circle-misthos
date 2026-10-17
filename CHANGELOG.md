@@ -49,6 +49,14 @@ Notable changes to Misthos, newest first. The format follows
     policy in it. Each quote is kept against its payment (migration `0020`).
   - `GET /paid/comparables`, $0.10: the settled history, filtered by repository,
     labels and signals, a page at a time.
+- **A paid pre-flight review** (#204). `POST /paid/review`, $2.00: the review agent
+  holds a diff, or a pull request it reads, to acceptance criteria and answers the
+  verdict, findings and per-criterion evidence, through the same reviewer and rules as
+  the lifecycle review. It runs as a job: `202`, then a free poll with the receipt that
+  delivers the result once and settles only then; a failed review is never charged.
+  It changes no issue, and the signed-in review is unchanged. Circle Gateway has no
+  `upto`, so the review is sold at its cap, and the 402 says so. Each review's latency,
+  cost and verdict is kept for calibration (migration `0021`).
 
 ### Removed
 

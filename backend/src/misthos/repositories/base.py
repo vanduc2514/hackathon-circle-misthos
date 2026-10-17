@@ -9,7 +9,7 @@ from typing import Protocol
 
 from misthos.domain.compliance import PartyKind, Screening
 from misthos.domain.issue import IssueState
-from misthos.domain.paid import PaidCall, PriceQuote
+from misthos.domain.paid import PaidCall, PaidReview, PriceQuote
 from misthos.models.records import IssueRecord
 from misthos.schemas import (
     Account,
@@ -149,6 +149,11 @@ class Repository(Protocol):
 
     def list_price_quotes(self, limit: int = 500) -> list[PriceQuote]:
         """Quotes, newest first."""
+
+    def save_paid_review(self, review: PaidReview) -> None:
+        """Create or update a paid review's job (#204)."""
+
+    def get_paid_review(self, review_id: str) -> PaidReview | None: ...
 
     def try_lock(self, name: str) -> AbstractContextManager[bool]:
         """Hold a named lock for the duration of the block if nobody else holds it.

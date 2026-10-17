@@ -290,6 +290,35 @@ price_quotes = Table(
     Column("quoted_at", Timestamp, nullable=False),
 )
 
+# Every paid pre-flight review (#204): the job while it runs, and afterwards the record
+# of how long it took, what it cost and what it decided, for calibration. Keeps the
+# diff's size, never the diff.
+paid_reviews = Table(
+    "paid_reviews",
+    metadata,
+    Column("id", Id, primary_key=True),
+    Column("status", String(16), nullable=False),
+    Column("request_digest", String(64), index=True),
+    Column("payer", String(64)),
+    Column("free_caller", String(64)),
+    Column("repo", String(200)),
+    Column("title", String(300), nullable=False),
+    Column("criteria", Integer, nullable=False),
+    Column("files", Integer, nullable=False),
+    Column("additions", Integer, nullable=False),
+    Column("deletions", Integer, nullable=False),
+    Column("created_at", Timestamp, nullable=False),
+    Column("started_at", Timestamp),
+    Column("finished_at", Timestamp),
+    Column("verdict", String(16)),
+    Column("rule", String(64)),
+    Column("reviewer", String(100)),
+    Column("seconds", Float),
+    Column("cost_base_units", BigInteger),
+    Column("result", Json, nullable=False),
+    Column("error", Text),
+)
+
 # A signed-in wallet and the role it chose (#70). One role per wallet.
 accounts = Table(
     "accounts",

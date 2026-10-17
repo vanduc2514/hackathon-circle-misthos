@@ -66,6 +66,41 @@ class PriceQuote:
 
 
 @dataclass(frozen=True)
+class PaidReview:
+    """One pre-flight review an agent paid for, and the job that ran it (#204).
+
+    The row is the job: queued when the edge has verified the payment, running while
+    the reviewer reads the diff, then done or failed. The edge settles the payment
+    when it collects a done review and never for a failed one. Kept afterwards for
+    calibration: how long the review took, what it cost and what it decided. The
+    diff itself is not kept, only its size.
+    """
+
+    id: str
+    status: str
+    """queued, running, done or failed."""
+    request_digest: str | None
+    payer: str | None
+    free_caller: str | None
+    repo: str | None
+    title: str
+    criteria: int
+    files: int
+    additions: int
+    deletions: int
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    verdict: str | None = None
+    rule: str | None = None
+    reviewer: str | None = None
+    seconds: float | None = None
+    cost: Usdc | None = None
+    result: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class RouteTotal:
     route: str
     network: str

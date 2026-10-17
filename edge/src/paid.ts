@@ -62,6 +62,11 @@ export interface PaidRoute {
   example?: { params?: Record<string, string>; query?: Record<string, string>; body?: unknown }
   /** What the call is about, for the settlement log: an issue or a contributor. */
   ref?: (req: Request) => string | undefined
+  /** The price is a cap on work whose cost varies. Gateway settles `exact` only, so
+   * the cap is what is charged; the 402 and the catalog say so. */
+  capped?: boolean
+  /** One line for the buyer about how the route is priced or run. */
+  note?: string
 }
 
 /** The request's own query string, as the buyer sent it, for the core to read and to
@@ -344,7 +349,11 @@ export function paidRouter(opts: PaidRouterOptions): Router {
       error: 'payment_required',
       ...(reason ? { reason } : {}),
       route: route.id,
+      scheme: 'exact',
       price: { usdc: price, base_units: baseUnits(price) },
+      ...(route.capped ? { cap: { usdc: price, base_units: baseUnits(price) }, upto: false } : {}),
+      ...(route.note ? { note: route.note } : {}),
+      ...(route.async ? { async: true } : {}),
       accepts,
     })
   }
@@ -598,6 +607,8 @@ export async function catalogOf(
       description: r.description,
       free_tier: Boolean(r.freeTier),
       async: Boolean(r.async),
+      capped: Boolean(r.capped),
+      ...(r.note ? { note: r.note } : {}),
       ...(r.async ? { poll: `${r.path}/jobs/{job_id}` } : {}),
       ...(r.example ? { example: r.example } : {}),
     })),

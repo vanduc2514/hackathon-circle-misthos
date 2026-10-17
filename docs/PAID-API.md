@@ -132,6 +132,7 @@ route; tests in both services walk every route and check.
 | `GET /paid/escrow/{issue_id}/attestation` | `escrow-attestation` | $0.02 | that issue's publisher | #202 |
 | `POST /paid/price` | `price` | $0.25 | any publisher | #203 |
 | `GET /paid/comparables` | `comparables` | $0.10 | any publisher | #203 |
+| `POST /paid/review` | `review` | $2.00, the cap | nobody | #204 |
 
 `/paid/pricing-report`, which charged $0.25 for the free `/api/v1/metrics`, is gone, and
 no market report replaces it: the metrics stay free.
@@ -246,6 +247,48 @@ comparables for work of that shape (settled within a year, close enough to count
 closest first with same-repository work ahead), each with its distance and implied
 price. Without, it is every settlement, newest first. `limit` is 1 to **100**, 20 by
 default; follow `next`. An unknown filter, or some signals but not all, is `400`.
+
+### A pre-flight review (#204)
+
+**`POST /paid/review`**: the review agent holds a diff to acceptance criteria, before
+anything is submitted. It is the reviewer and the rules the lifecycle review uses
+(`store.reviewer`, then `domain/review.decide`, with no rework rounds behind it), so a
+diff that passes here passes there on the same criteria. It is not that review:
+nothing reads or writes an issue, posts to GitHub, publishes a verdict or moves money,
+and the signed-in, per-issue review is unchanged.
+
+```json
+{
+  "criteria": ["Covered by a test", "Documented in the changelog"],
+  "diff": "diff --git a/tests/test_x.py b/tests/test_x.py\n…",
+  "title": "Retry timed-out deliveries",
+  "repo": "acme/hooks",
+  "checks_passed": true
+}
+```
+
+`criteria` is 1 to 20, each up to 500 characters. Send a unified diff (`git diff` or
+plain, up to 200,000 characters and 300 files) or `pull_request: {repo, number}`, which
+the core reads through the GitHub App, with the checks on its head commit; a pull
+request it cannot read is `404` and no job is made.
+
+The review is a job. Paid, the answer is `202` with `job_id`, `receipt` and `poll`.
+Poll `GET /paid/review/jobs/{job_id}` with `Authorization: Receipt <receipt>`, free:
+`202` while it is queued or running, then `200` with the result and `PAYMENT-RESPONSE`
+once, when the payment settles, and `410` after that. The result: `verdict` (`accept`,
+`rework`, `reject`), the `rule` that produced it, `findings`, and for each criterion
+`met` (`true`, `false`, or `null` when it was not judged) with its `evidence`, the
+reviewer's `summary`, and how long it took. A review that fails, or does not finish
+within 15 minutes, is `failed` and never charged.
+
+**`upto` is not available.** #204 asked for the `upto` scheme with a cap so the charge
+could follow token use. Circle Gateway settles `exact` only, so the review is sold at
+the cap, $2.00, and the size limits above keep the work inside what it pays for. The
+402 says so: `scheme: "exact"`, `cap`, `upto: false`, and a note.
+
+Each review is kept as a job row and then as a calibration record (`paid_reviews`,
+migration `0021`): latency, cost, verdict, reviewer, and the diff's size, never the
+diff.
 
 ## The core's side
 

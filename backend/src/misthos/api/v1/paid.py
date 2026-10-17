@@ -16,9 +16,9 @@ each entry names one route under this prefix.
 - `GET /signer` names the address certificates are signed by.
 
 The views an agent buys are below those: the decision log, a reputation, an escrow
-attestation (#202); a price and its comparables (#203). Each answers an error the edge
-does not charge for when it cannot answer: a missing record, an unknown filter, a chain
-it cannot read.
+attestation (#202); a price and its comparables (#203); a pre-flight review (#204).
+Each answers an error the edge does not charge for when it cannot answer: a missing
+record, an unknown filter, a chain it cannot read.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from misthos.schemas import (
     PaidRouteTotal,
     money,
 )
-from misthos.services import certificates, paid_pricing, paid_views
+from misthos.services import certificates, paid_pricing, paid_review, paid_views
 from misthos.services.paid import PaidCaller, is_free, who
 from misthos.services.paid_views import Unanswerable
 from misthos.store import store
@@ -254,3 +254,34 @@ async def comparables(request: Request) -> JSONResponse:
     except Unanswerable as exc:
         return refused(exc)
     return JSONResponse(page)
+
+
+@router.post("/review")
+async def review(request: Request, caller: PaidCaller = PAID_CALLER) -> JSONResponse:
+    """Queue a pre-flight review of a diff against acceptance criteria (#204). 202 and
+    a job id; the edge polls the job and settles when it collects the result."""
+    try:
+        only(request)
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            raise Unanswerable(400, "bad_request", "the body is not JSON") from exc
+        asked = paid_review.parse_review_asked(body)
+        digest = request.headers.get("x-misthos-request-digest") or None
+        job = await run_in_threadpool(paid_review.submit, store, asked, caller, digest)
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(
+        status_code=202,
+        content={"job_id": job.id, "status": job.status, "files": job.files},
+    )
+
+
+@router.get("/review/jobs/{job_id}")
+async def review_job(job_id: str) -> JSONResponse:
+    """Where a paid review is: queued, running, done with its result, or failed."""
+    try:
+        found = await run_in_threadpool(paid_review.poll, store, job_id)
+    except Unanswerable as exc:
+        return refused(exc)
+    return JSONResponse(found)

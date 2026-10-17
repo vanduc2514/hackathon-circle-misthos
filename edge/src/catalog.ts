@@ -102,4 +102,32 @@ const PRICING: PaidRoute[] = [
   },
 ]
 
-export const CATALOG: PaidRoute[] = [...VIEWS, ...PRICING]
+/** #204: the review agent, as a pre-flight check anyone can buy. */
+const REVIEW: PaidRoute[] = [
+  {
+    id: 'review',
+    method: 'POST',
+    path: '/paid/review',
+    price: '2.00',
+    description:
+      'A pre-flight review: the Misthos review agent holds a diff to your acceptance ' +
+      'criteria and returns the verdict, findings and a met / unmet / unjudged check ' +
+      'per criterion with its evidence. Body: criteria (1 to 20), and a unified diff ' +
+      'or a pull_request {repo, number}; optionally title, repo, checks_passed. ' +
+      'Answers 202 with a job; poll it with the receipt. Changes no issue.',
+    core: (req) => ({ method: 'POST', path: `${CORE_PAID_PREFIX}review${queryOf(req)}` }),
+    async: true,
+    capped: true,
+    note:
+      'Gateway settles the exact scheme only, so the cap is the price: you pay it once ' +
+      'the finished review is delivered, and nothing if the review fails.',
+    example: {
+      body: {
+        criteria: ['Covered by a test', 'Documented in the changelog'],
+        diff: 'diff --git a/tests/test_x.py b/tests/test_x.py\n--- /dev/null\n+++ b/tests/test_x.py\n@@ -0,0 +1 @@\n+def test_x(): pass\n',
+      },
+    },
+  },
+]
+
+export const CATALOG: PaidRoute[] = [...VIEWS, ...PRICING, ...REVIEW]
