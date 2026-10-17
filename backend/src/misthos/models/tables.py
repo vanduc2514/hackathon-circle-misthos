@@ -56,7 +56,6 @@ publishers = Table(
     Column("id", Id, primary_key=True),
     Column("name", String(200), nullable=False),
     Column("kind", String(16), nullable=False),
-    Column("tier", String(16), nullable=False),
     Column("wallet_address", String(64), nullable=False),
     Column("chain", String(32), nullable=False),
     Column("budget_remaining_base_units", BigInteger, nullable=False),
@@ -306,36 +305,6 @@ counters = Table(
     metadata,
     Column("name", String(32), primary_key=True),
     Column("value", BigInteger, nullable=False),
-)
-
-
-# A publisher's plan, one row per publisher (#53). The pending payment request, if
-# any, is kept with it.
-subscriptions = Table(
-    "subscriptions",
-    metadata,
-    Column("publisher_id", Id, ForeignKey("publishers.id"), primary_key=True),
-    Column("plan", String(16), nullable=False),
-    Column("status", String(16), nullable=False),
-    Column("period_start", Timestamp),
-    Column("period_end", Timestamp),
-    Column("cancel_at_period_end", Boolean, nullable=False),
-    Column("pending", Json),
-    Column("updated_at", Timestamp, nullable=False),
-)
-
-# Every subscription payment, append-only. A transaction pays for one period, once.
-subscription_payments = Table(
-    "subscription_payments",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("publisher_id", Id, ForeignKey("publishers.id"), nullable=False),
-    Column("plan", String(16), nullable=False),
-    Column("amount_base_units", BigInteger, nullable=False),
-    Column("tx_hash", String(66), nullable=False, unique=True),
-    Column("period_start", Timestamp, nullable=False),
-    Column("period_end", Timestamp, nullable=False),
-    Column("paid_at", Timestamp, nullable=False),
 )
 
 

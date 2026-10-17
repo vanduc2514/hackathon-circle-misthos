@@ -33,7 +33,7 @@ The supply of fixes arrived before the market for them. GitHub's 2025 data cover
 
 ## How we make money
 
-A flat 10 percent of every issue that settles, carved out of the amount the publisher committed and charged only when the work is accepted. Nothing on an issue that never settles. Subscription seats for organisations that want budget rules, approval thresholds and reporting are the second line, and the more durable one, because the compliance deadline makes the reporting a requirement rather than a preference. A subscription gates features, never the rate: the fee is the same 10 percent on every plan, because charging a company more or less for the same verification work is a second price for one service.
+A flat 10 percent of every issue that settles, carved out of the amount the publisher committed and charged only when the work is accepted. Nothing on an issue that never settles. There is no subscription and no plan: the fee is the same 10 percent for everyone, because charging a company more or less for the same verification work is a second price for one service.
 
 Settlement costs us roughly a cent per payment, so the gross margin on a $500 fix is $50 less that cent. Review costs about $6.31 an issue, which is where the fee stops covering our own cost: a $63 price is break-even, and below it we run the issue at a loss on purpose, because a publisher's first small fix is the cheapest way to win them. Volume is the whole game, which is why the product has to work for small fixes as well as $4,000 ones, and why we let the publisher set the price rather than refusing the ones we would have found unprofitable.
 

@@ -11,7 +11,6 @@ This is the document to read if you want the product in your head in ten minutes
 | Pricing agent | Reads the issue, shows what comparable work settled for, writes the reason | Name the price, or move money |
 | Review agent | Reads the submission against the acceptance criteria and the test suite, issues the verdict | Merge, or release payment |
 | Settlement layer | Holds committed funds, releases on acceptance, refunds on timeout | Decide anything |
-| Publisher's finance tool | Supplies spend reporting and an audit trail for the publisher's own eyes | Anything, unless the publisher enables it |
 
 Review means one thing here: the platform assessing the contributor's submitted pull request against the published acceptance criteria and the project's own test suite, and issuing a verdict. It is review of the submission, not of the issue before it is funded and not of the repository in general. No human reads the diff as a required step.
 
@@ -32,7 +31,6 @@ flowchart TB
     end
 
     GH["GitHub<br/>issues, pull requests, checks"]
-    FIN["Publisher's finance stack<br/>Firefly III, beancount, ERP"]
     ARC["Arc<br/>USDC settlement"]
     WALLET["Wallets<br/>Circle agent wallets"]
 
@@ -43,11 +41,8 @@ flowchart TB
     TRIAGE --> REVIEW
     REVIEW --> LEDGER
     LEDGER --> ARC
-    LEDGER -.->|"records the publisher can import"| FIN
     ARC --> WALLET
 ```
-
-The finance stack box is optional and is the part we are least certain about. Everything else works with nothing but a GitHub account and a wallet. It reads our records rather than informing our prices: a publisher's budget used to cap what they were allowed to pay, which made their own money a one-way constraint on their own decision, so it no longer touches the price at all.
 
 ## The lifecycle of a funded issue
 
@@ -218,10 +213,7 @@ A small number of screens, in this order.
 1. A list of their funded issues with state, price and deadline.
 2. The publisher's price, with what comparable work settled for beside it, a confidence level, and the comparable issues behind it. Move the price, or commit it.
 3. A submissions view: the verdict, the findings and the test results, with the diff available as evidence. Reading it is optional, not the job.
-4. A spend view: what was budgeted, what was committed, what was released, and what to file for the security review.
-5. Budget rules: category limits, per-transaction thresholds, and who counts as an approver.
-
-Screen four is the one that turns a per-issue buyer into an organisation subscription, because it is the output the compliance obligation actually requires.
+4. Budget rules: category limits, per-transaction thresholds, and who counts as an approver.
 
 ## Where the product is thin
 

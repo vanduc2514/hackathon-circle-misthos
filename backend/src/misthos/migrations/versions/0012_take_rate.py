@@ -1,8 +1,8 @@
-"""The take rate is fixed with the money, not read from the publisher's plan.
+"""The take rate is fixed with the money, not read again at release.
 
 A release computes the platform's fee from the rate the escrow holds for that issue, so
-the recorded fee is the transfer. Reading the publisher's tier at release time instead
-would let a plan that lapses mid-flight move the fee after the price was approved.
+the recorded fee is the transfer. Reading the rate again at release time instead would
+let a later change move the fee after the price was approved.
 
 Revision ID: 0012
 Revises: 0011

@@ -218,9 +218,20 @@ export interface paths {
          * Commitment Plan
          * @description The two transactions the publisher's own wallet sends to fund the issue.
          *
-         *     The platform never signs a commitment: it moves the publisher's USDC. Approving
-         *     the price records it as the escrow's ceiling; the publisher's wallet then lets the
-         *     escrow take that amount and commits it, and approving again books it.
+         *     The platform never signs a commitment: it moves the publisher's USDC. Approving the
+         *     price records it as the escrow's ceiling; the publisher's wallet then lets the escrow
+         *     take that amount and commits it, and approving again books it.
+         *
+         *     The amount is the publisher's price -- the same value `_fund` records as the ceiling,
+         *     and never the engine's suggestion. The escrow refuses any commitment above the
+         *     ceiling (`ExceedsCeiling`), so a plan built from the suggestion could not be booked:
+         *     the wallet would be asked for a number the contract had already ruled out (#150).
+         *
+         *     The deadline is the one the approval fixed, to the second, and the amount and rate
+         *     are the approved ones too. Working them out here instead is what made the booking
+         *     refuse a commitment once an hour had passed between the plan and the booking: the
+         *     escrow's term starts at the commit, so `now + 14d` no longer matches what is on
+         *     chain, and it never matches again (#126).
          */
         get: operations["commitment_plan_api_v1_issues__issue_id__commitment_get"];
         put?: never;
@@ -471,27 +482,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/loop": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Loop
-         * @description The loop in public: issues funded, settled and paid, for one repository or all.
-         *     Built for a repository's watchers to see, so it carries no wallet or transfer.
-         */
-        get: operations["loop_api_v1_loop_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/issues/{issue_id}/dispute": {
         parameters: {
             query?: never;
@@ -722,27 +712,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/publishers/{publisher_id}/spend": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Spend
-         * @description What was budgeted, committed, released and refunded in a year, by category,
-         *     and the settled fixes to file for a security review.
-         */
-        get: operations["spend_api_v1_publishers__publisher_id__spend_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/publishers/{publisher_id}/audit": {
         parameters: {
             query?: never;
@@ -756,30 +725,6 @@ export interface paths {
          *     funded, unedited, as JSON or one sortable CSV.
          */
         get: operations["audit_api_v1_publishers__publisher_id__audit_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/publishers/{publisher_id}/finance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Finance
-         * @description What the publisher's books say, for the publisher alone.
-         *
-         *     Read-only, and informational: it no longer caps or refuses a price (#142), so a
-         *     publisher whose budget is small can still fund whatever they think the work is
-         *     worth. Cash and budgets are commercially sensitive, so only the publisher sees it.
-         */
-        get: operations["finance_api_v1_publishers__publisher_id__finance_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -803,93 +748,6 @@ export interface paths {
         get: operations["repositories_api_v1_publishers__publisher_id__repositories_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/plans": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Plans
-         * @description What each plan costs and includes, with the take rate and the smallest fix
-         *     it will price.
-         */
-        get: operations["list_plans_api_v1_plans_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/publishers/{publisher_id}/subscription": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Subscription
-         * @description The plan in force, its period, what is waiting to be paid, and every payment.
-         */
-        get: operations["subscription_api_v1_publishers__publisher_id__subscription_get"];
-        put?: never;
-        /**
-         * Subscribe
-         * @description Choose a plan. A paid plan answers with what to send and where; choosing Open
-         *     cancels at the end of the paid period.
-         */
-        post: operations["subscribe_api_v1_publishers__publisher_id__subscription_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/publishers/{publisher_id}/subscription/payment": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Confirm Payment
-         * @description Confirm the transaction that paid. The server reads it from the chain, and the
-         *     plan switches on only if it moved what is due from the publisher's wallet to ours.
-         */
-        post: operations["confirm_payment_api_v1_publishers__publisher_id__subscription_payment_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/demo/publishers/{publisher_id}/subscription/pay": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Demo Pay
-         * @description Send what is due on the simulation's rail and confirm it. The simulation's only.
-         */
-        post: operations["demo_pay_api_v1_demo_publishers__publisher_id__subscription_pay_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1321,64 +1179,6 @@ export interface components {
             explorer_url: string;
         };
         /**
-         * FileableItem
-         * @description One settled fix, with what a security review needs to file it.
-         */
-        FileableItem: {
-            /** Issue Id */
-            issue_id: string;
-            /** Repo */
-            repo: string;
-            /** Number */
-            number: number;
-            /** Title */
-            title: string;
-            /** Labels */
-            labels: string[];
-            /** Compliance Driven */
-            compliance_driven: boolean;
-            /** Acceptance Criteria */
-            acceptance_criteria: string[];
-            /** Amount */
-            amount: {
-                [key: string]: string | number;
-            };
-            /**
-             * Settled At
-             * Format: date-time
-             */
-            settled_at: string;
-            /** Github Url */
-            github_url: string;
-        };
-        /**
-         * FinanceOut
-         * @description A publisher's money as the pricing engine sees it, for that publisher alone (#43).
-         */
-        FinanceOut: {
-            /** Publisher Id */
-            publisher_id: string;
-            /** Declared Budget Usdc */
-            declared_budget_usdc: string;
-            /** Connected */
-            connected: boolean;
-            /** Source */
-            source?: string | null;
-            /** Budget Remaining Usdc */
-            budget_remaining_usdc?: string | null;
-            /** Cash Usdc */
-            cash_usdc?: string | null;
-            /** As Of */
-            as_of?: string | null;
-            /** Spendable Usdc */
-            spendable_usdc: string;
-            /**
-             * Note
-             * @default
-             */
-            note: string;
-        };
-        /**
          * FundRequest
          * @description Approving the price the publisher already set.
          *
@@ -1516,49 +1316,6 @@ export interface components {
             /** Github Url */
             github_url: string;
         };
-        /**
-         * LoopOut
-         * @description The loop in public: what was funded, settled and paid, for one repository or
-         *     all of them. No wallet and no transfer appears here.
-         */
-        LoopOut: {
-            /** Repo */
-            repo: string | null;
-            /** Funded Open */
-            funded_open: number;
-            /** Settled Issues */
-            settled_issues: number;
-            /** Settled Issues 7D */
-            settled_issues_7d: number;
-            /** Matched Volume Usdc */
-            matched_volume_usdc: string;
-            /** Recent */
-            recent: components["schemas"]["LoopSettlement"][];
-        };
-        /** LoopSettlement */
-        LoopSettlement: {
-            /** Issue Id */
-            issue_id: string;
-            /** Repo */
-            repo: string;
-            /** Number */
-            number: number;
-            /** Title */
-            title: string;
-            /** Amount */
-            amount: {
-                [key: string]: string | number;
-            };
-            /** Contributor */
-            contributor: string;
-            /**
-             * Settled At
-             * Format: date-time
-             */
-            settled_at: string;
-            /** Github Url */
-            github_url: string;
-        };
         /** MeOut */
         MeOut: {
             /** Address */
@@ -1637,65 +1394,6 @@ export interface components {
             chain_id: number;
             /** Statement */
             statement: string;
-        };
-        /** PaymentConfirmation */
-        PaymentConfirmation: {
-            /** Tx Hash */
-            tx_hash: string;
-        };
-        /**
-         * PaymentRequest
-         * @description What to send to start or renew a plan: USDC on Arc, from the publisher's wallet.
-         */
-        PaymentRequest: {
-            /**
-             * Plan
-             * @enum {string}
-             */
-            plan: "open" | "team" | "enterprise";
-            /** Amount Usdc */
-            amount_usdc: string;
-            /** Pay To */
-            pay_to: string;
-            /** Payer */
-            payer: string;
-            /** Chain */
-            chain: string;
-            /** Chain Id */
-            chain_id: number;
-            /** Usdc Address */
-            usdc_address: string;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            expires_at: string;
-        };
-        /** PlanOut */
-        PlanOut: {
-            /**
-             * Id
-             * @enum {string}
-             */
-            id: "open" | "team" | "enterprise";
-            /** Name */
-            name: string;
-            /** Audience */
-            audience: string;
-            /** Monthly Usdc */
-            monthly_usdc: string;
-            /** Price From */
-            price_from: boolean;
-            /** Self Serve */
-            self_serve: boolean;
-            /** Take Rate Percent */
-            take_rate_percent: number;
-            /** Minimum Fix Usdc */
-            minimum_fix_usdc: string;
-            /** Features */
-            features: string[];
-            /** Support */
-            support: string;
         };
         /** PolicyRequest */
         PolicyRequest: {
@@ -1799,11 +1497,6 @@ export interface components {
              * @enum {string}
              */
             kind: "company" | "maintainer";
-            /**
-             * Tier
-             * @enum {string}
-             */
-            tier: "open" | "team" | "enterprise";
             wallet: components["schemas"]["Wallet"];
             /** Budget Remaining Usdc */
             budget_remaining_usdc: string;
@@ -1832,11 +1525,6 @@ export interface components {
              * @enum {string}
              */
             kind: "company" | "maintainer";
-            /**
-             * Tier
-             * @enum {string}
-             */
-            tier: "open" | "team" | "enterprise";
             wallet: components["schemas"]["Wallet"];
             /** Budget Remaining Usdc */
             budget_remaining_usdc?: string | null;
@@ -1969,65 +1657,6 @@ export interface components {
             /** Login */
             login: string;
         };
-        /** SpendCategory */
-        SpendCategory: {
-            /** Label */
-            label: string;
-            /** Committed */
-            committed: {
-                [key: string]: string | number;
-            };
-            /** Released */
-            released: {
-                [key: string]: string | number;
-            };
-            /** Committed This Month */
-            committed_this_month: {
-                [key: string]: string | number;
-            };
-            /** Limit */
-            limit?: {
-                [key: string]: string | number;
-            } | null;
-        };
-        /**
-         * SpendOut
-         * @description What an organisation budgeted, committed, released and can file (#50).
-         */
-        SpendOut: {
-            /** Publisher Id */
-            publisher_id: string;
-            /** Name */
-            name: string;
-            /** Year */
-            year: number;
-            /** Month */
-            month: string;
-            /** Budget Remaining */
-            budget_remaining: {
-                [key: string]: string | number;
-            };
-            /** Committed Held */
-            committed_held: {
-                [key: string]: string | number;
-            };
-            /** Committed */
-            committed: {
-                [key: string]: string | number;
-            };
-            /** Released */
-            released: {
-                [key: string]: string | number;
-            };
-            /** Refunded */
-            refunded: {
-                [key: string]: string | number;
-            };
-            /** By Category */
-            by_category: components["schemas"]["SpendCategory"][];
-            /** Fileable */
-            fileable: components["schemas"]["FileableItem"][];
-        };
         /** StatementLine */
         StatementLine: {
             /**
@@ -2081,72 +1710,6 @@ export interface components {
         SubmitRequest: {
             /** Pr Number */
             pr_number: number;
-        };
-        /** SubscribeRequest */
-        SubscribeRequest: {
-            /**
-             * Plan
-             * @enum {string}
-             */
-            plan: "open" | "team" | "enterprise";
-        };
-        /** SubscriptionOut */
-        SubscriptionOut: {
-            /** Publisher Id */
-            publisher_id: string;
-            /**
-             * Plan
-             * @enum {string}
-             */
-            plan: "open" | "team" | "enterprise";
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "none" | "pending" | "active" | "past_due" | "lapsed" | "cancelled" | "contract";
-            /** Period End */
-            period_end?: string | null;
-            /** Grace Ends */
-            grace_ends?: string | null;
-            /**
-             * Cancel At Period End
-             * @default false
-             */
-            cancel_at_period_end: boolean;
-            pending?: components["schemas"]["PaymentRequest"] | null;
-            /** Payments */
-            payments?: components["schemas"]["SubscriptionPayment"][];
-            /** Features */
-            features?: string[];
-        };
-        /** SubscriptionPayment */
-        SubscriptionPayment: {
-            /** Publisher Id */
-            publisher_id: string;
-            /**
-             * Plan
-             * @enum {string}
-             */
-            plan: "open" | "team" | "enterprise";
-            /** Amount Usdc */
-            amount_usdc: string;
-            /** Tx Hash */
-            tx_hash: string;
-            /**
-             * Period Start
-             * Format: date-time
-             */
-            period_start: string;
-            /**
-             * Period End
-             * Format: date-time
-             */
-            period_end: string;
-            /**
-             * Paid At
-             * Format: date-time
-             */
-            paid_at: string;
         };
         /** TimelineEntry */
         TimelineEntry: {
@@ -3068,38 +2631,6 @@ export interface operations {
             };
         };
     };
-    loop_api_v1_loop_get: {
-        parameters: {
-            query?: {
-                /** @description owner/name; every repository if empty */
-                repo?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LoopOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     dispute_api_v1_issues__issue_id__dispute_post: {
         parameters: {
             query?: never;
@@ -3459,39 +2990,6 @@ export interface operations {
             };
         };
     };
-    spend_api_v1_publishers__publisher_id__spend_get: {
-        parameters: {
-            query?: {
-                year?: number | null;
-            };
-            header?: never;
-            path: {
-                publisher_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SpendOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     audit_api_v1_publishers__publisher_id__audit_get: {
         parameters: {
             query?: {
@@ -3526,37 +3024,6 @@ export interface operations {
             };
         };
     };
-    finance_api_v1_publishers__publisher_id__finance_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                publisher_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     repositories_api_v1_publishers__publisher_id__repositories_get: {
         parameters: {
             query?: never;
@@ -3575,158 +3042,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepositoriesOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_plans_api_v1_plans_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PlanOut"][];
-                };
-            };
-        };
-    };
-    subscription_api_v1_publishers__publisher_id__subscription_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                publisher_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubscriptionOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    subscribe_api_v1_publishers__publisher_id__subscription_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                publisher_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubscribeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubscriptionOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    confirm_payment_api_v1_publishers__publisher_id__subscription_payment_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                publisher_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PaymentConfirmation"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubscriptionOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    demo_pay_api_v1_demo_publishers__publisher_id__subscription_pay_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                publisher_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubscriptionOut"];
                 };
             };
             /** @description Validation Error */

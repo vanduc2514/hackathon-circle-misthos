@@ -17,7 +17,7 @@ export default function AccountPage() {
   const me = useMe()
   const [params] = useSearchParams()
   const qc = useQueryClient()
-  // Budgets, spend and every action depend on who is asking.
+  // Budgets and every action depend on who is asking.
   const changed = () => qc.invalidateQueries()
 
   const simulated = health.data?.simulated ?? false
@@ -113,9 +113,6 @@ export default function AccountPage() {
                   <>
                     <Link className="btn primary" to="/publish">
                       Publish an issue
-                    </Link>
-                    <Link className="btn" to={`/spend?publisher=${account.party_id}`}>
-                      Your spend
                     </Link>
                   </>
                 )}

@@ -936,20 +936,6 @@ a.chip:hover {
   line-height: 1.6;
 }
 
-/* ----------------------------------------------------------------- plans */
-
-/* Sentences, not hashes: wrap between words. */
-.kv.prose dd {
-  word-break: normal;
-}
-
-.plan-from,
-.plan-per {
-  font-family: var(--sans);
-  font-size: 13px;
-  letter-spacing: 0;
-}
-
 /* ----------------------------------------------------------- comparables */
 
 .comparables {

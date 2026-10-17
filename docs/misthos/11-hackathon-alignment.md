@@ -134,7 +134,7 @@ The brief is explicit that on a testnet, genuine usage still counts, and that re
 | Circle CLI | `npm install -g @circle-fin/cli`, requires Node v20.18.2 or later |
 | Testnet funds | The event points at TestMint for up to $10k in testnet USDC via x402 |
 
-Required reading the organisers flag: Agents and Ledgers in 2026, at https://thecanteenapp.com/analysis/2026/09/12/agents-and-ledgers.html. It is the source of the Firefly III caveats in our pricing document and it is worth an hour before anyone writes accounting logic.
+Required reading the organisers flag: Agents and Ledgers in 2026, at https://thecanteenapp.com/analysis/2026/09/12/agents-and-ledgers.html. It is worth an hour before anyone writes accounting logic.
 
 ## Prizes, for reference
 

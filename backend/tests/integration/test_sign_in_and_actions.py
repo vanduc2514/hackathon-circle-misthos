@@ -568,6 +568,22 @@ class TestTheSimulatedGitHubFromTheBrowser:
         released = cfo.post(f"{API}/issues/{held['id']}/approve-release").json()
         assert released["state"] == "PAID" and released["awaiting_approver"] is False
 
+    def test_a_publisher_reaches_its_own_controls_without_buying_a_plan(self) -> None:
+        """Nothing is gated by a plan: a publisher fresh from sign-in can set its
+        policy and read its audit record, and neither answers 402 (#183)."""
+        publisher = TestClient(app)
+        account = onboard(publisher, Wallet(69), "publisher", "Acme", "acme-69")
+        pid = account["party_id"]
+        policy = publisher.put(
+            f"{API}/publishers/{pid}/policy",
+            json={"approval_threshold_usdc": "1", "approvers": ["cfo-acme"]},
+        )
+        assert policy.status_code != 402
+        assert policy.status_code == 200, policy.text
+        audit = publisher.get(f"{API}/publishers/{pid}/audit")
+        assert audit.status_code != 402
+        assert audit.status_code == 200, audit.text
+
     def test_outside_the_simulation_github_is_real(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "simulated", False)
         client = TestClient(app)
@@ -578,15 +594,12 @@ class TestTheSimulatedGitHubFromTheBrowser:
 def held_release(
     publisher: TestClient, contributor: TestClient, *, seed: int, approvers: list[str]
 ) -> dict:
-    """Onboard a Team publisher whose policy holds every release for `approvers`, and
-    a contributor, and run one issue of theirs to the merge, where the payout waits."""
+    """Onboard a publisher whose policy holds every release for `approvers`, and a
+    contributor, and run one issue of theirs to the merge, where the payout waits."""
     account = onboard(publisher, Wallet(seed), "publisher", "Acme", f"acme-{seed}")
     onboard(contributor, Wallet(seed + 1), "contributor", "hal", f"hal-{seed}")
-    # Approval thresholds are in the Team plan, bought here without a conversation.
+    # The policy is the publisher's own control, with nothing to buy first.
     pid = account["party_id"]
-    assert publisher.post(f"{API}/publishers/{pid}/subscription", json={"plan": "team"})
-    paid = publisher.post(f"{API}/demo/publishers/{pid}/subscription/pay").json()
-    assert paid["plan"] == "team"
     policy = publisher.put(
         f"{API}/publishers/{pid}/policy",
         json={"approval_threshold_usdc": "1", "approvers": approvers},

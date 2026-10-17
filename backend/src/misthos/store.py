@@ -37,7 +37,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from misthos.config import settings
-from misthos.domain import comparables, compliance, ledger, plans, timers
+from misthos.domain import comparables, compliance, ledger, timers
 from misthos.domain import criteria as acceptance
 from misthos.domain import issue as lifecycle
 from misthos.domain.comparables import Comparable, SettledWork
@@ -61,7 +61,6 @@ from misthos.domain.policy import (
     committed_this_month,
     login,
     may_approve,
-    month_start,
     needs_approval,
 )
 from misthos.domain.pricing import (
@@ -95,7 +94,6 @@ from misthos.observability.metrics import (
 )
 from misthos.repositories import (
     MemoryRepository,
-    PaymentAlreadyUsed,
     Repository,
     Seed,
     StaleIssue,
@@ -107,28 +105,18 @@ from misthos.schemas import (
     Contributor,
     Decision,
     EscrowCommitment,
-    FileableItem,
     IssueOut,
     IssueSummaryOut,
-    LoopOut,
-    LoopSettlement,
     MetricsOut,
-    PaymentRequest,
     Publisher,
     RepoConnection,
     Review,
-    SpendCategory,
-    SpendOut,
     Submission,
-    Subscription,
-    SubscriptionOut,
-    SubscriptionPayment,
     TimelineEntry,
     Wallet,
     money,
 )
 from misthos.services import metrics, reputation
-from misthos.services.billing import PaymentRail, SimulatedRail, build_rail
 from misthos.services.chain import (
     ChainGateway,
     ChainRevert,
@@ -144,7 +132,6 @@ from misthos.services.compliance import (
     SimulatedScreening,
 )
 from misthos.services.coordination import ISSUE_LOCK_TTL, Busy, Coordinator, build_coordinator
-from misthos.services.finance import Finance, FinanceContext, FinanceError, build_finance
 from misthos.services.github import (
     GitHubError,
     GitHubGateway,
@@ -230,26 +217,6 @@ class AccountExists(Exception):
 
 class CriteriaNotApproved(Exception):
     """No funding before the publisher approves the acceptance criteria (#21)."""
-
-
-class PlanNotSelfServe(Exception):
-    """A plan that is agreed with us rather than bought from the web app."""
-
-
-class NoPaymentDue(Exception):
-    """Nothing is waiting to be paid for: choose a plan first, or the request expired."""
-
-
-class PaymentNotFound(Exception):
-    """The transaction does not pay what is due, from the publisher, to the platform."""
-
-
-class BillingUnavailable(Exception):
-    """Plans cannot be paid for here: no platform wallet is configured."""
-
-
-# Where the simulation's subscription payments go when no platform wallet is set.
-SIMULATED_PLATFORM_WALLET = "0x000000000000000000000000000000000000c0de"
 
 
 class UntestableCriteria(Exception):
@@ -341,14 +308,8 @@ class Store:
         github: GitHubGateway | None = None,
         reviewer: Reviewer | None = None,
         second_reviewer: Reviewer | None = None,
-        finance: Finance | None = None,
-        rail: PaymentRail | None = None,
     ) -> None:
         self.repo: Repository = repository or MemoryRepository()
-        # A publisher's books, read-only, where the operator connected them (#43).
-        self.finance: Finance = finance or build_finance()
-        # Where subscription payments are seen: Arc, or the simulation's own rail.
-        self.rail: PaymentRail = rail or build_rail()
         # The simulated escrow keeps its books beside the repository's tables when
         # there is a database, so a restart does not make every issue look divergent.
         # Outside the simulation it is the deployed MisthosEscrow (#69).
@@ -428,8 +389,6 @@ class Store:
                 migrate()  # the simulated chain keeps its books in the same database
             self.chain.reset()
             self.coordinator.reset()
-            if isinstance(self.rail, SimulatedRail):
-                self.rail.reset()
             reset_github = getattr(self.github, "reset", None)
             if reset_github is not None:
                 reset_github()  # the simulation's fixtures and sent posts
@@ -737,9 +696,7 @@ class Store:
         return lifecycle.FundingTerms(
             amount=check_price(rec.price),
             # The rate is fixed with the money. The escrow enforces the rate it was given
-            # on release, so reading the plan at settlement time instead would let a
-            # subscription that lapses mid-flight move the fee after the price was
-            # approved, and the record would stop matching the transfer (#32).
+            # on release, so the recorded fee always matches the transfer (#32).
             fee_bps=fee_bps(),
             # The wallet the publisher funds from, which is the one that signs in and
             # commits. A Circle wallet they set up never replaces it (#123).
@@ -780,9 +737,7 @@ class Store:
         # is bounded by what a person approved, on chain and not in this code.
         self.chain.set_ceiling(rec.id, terms.amount, at)
         # The rate is fixed here, with the money. The escrow enforces the rate it was
-        # given on release, so reading a plan at settlement time instead would let a
-        # subscription that lapses mid-flight move the fee after the price was approved,
-        # and the record would stop matching the transfer (#32, #142).
+        # given on release, so the record always matches the transfer (#32, #142).
         rate_bps = terms.fee_bps
         tx = self.chain.commit(rec.id, terms.wallet, committed, deadline, at, rate_bps)
         self._book(rec, MoneyEventKind.COMMITTED, committed, publisher.id, tx, at)
@@ -1794,305 +1749,6 @@ class Store:
             number = min(set(range(100, 101 + len(taken))) - taken)
         return number
 
-    # ------------------------------------------------------------- plans (#53)
-
-    def entitled(self, publisher_id: str, feature: plans.Feature) -> bool:
-        """Whether the publisher's plan includes the feature."""
-        self.ensure_ready()
-        publisher = self.repo.get_publisher(publisher_id)
-        if publisher is None:
-            raise KeyError(publisher_id)
-        return plans.allows(publisher.tier, feature)
-
-    def _pay_to(self) -> str:
-        if settings.platform_wallet:
-            return settings.platform_wallet
-        if settings.simulated:
-            return SIMULATED_PLATFORM_WALLET
-        raise BillingUnavailable("no platform wallet is configured, so plans cannot be paid for")
-
-    def subscription(self, publisher_id: str, now: datetime | None = None) -> SubscriptionOut:
-        """The plan in force, its period, what is waiting to be paid, and every payment."""
-        self.ensure_ready()
-        now = now or _now()
-        publisher = self.repo.get_publisher(publisher_id)
-        if publisher is None:
-            raise KeyError(publisher_id)
-        sub = self.repo.get_subscription(publisher_id)
-        pending = sub.pending if sub and sub.pending and sub.pending.expires_at > now else None
-        if sub is None:
-            status = "none" if publisher.tier == "open" else "contract"
-        else:
-            status = sub.status
-        grace_ends = None
-        if sub is not None and sub.status == "past_due" and sub.period_end is not None:
-            grace_ends = sub.period_end + plans.GRACE
-        return SubscriptionOut(
-            publisher_id=publisher_id,
-            plan=publisher.tier,
-            status=status,  # type: ignore[arg-type]
-            period_end=sub.period_end if sub else None,
-            grace_ends=grace_ends,
-            cancel_at_period_end=bool(sub and sub.cancel_at_period_end),
-            pending=pending,
-            payments=self.repo.list_subscription_payments(publisher_id),
-            features=sorted(plans.FEATURE_NAMES[f] for f in plans.PLANS[publisher.tier].features),
-        )
-
-    def _unfinished_payment(
-        self,
-        publisher_id: str,
-        attempted: SubscriptionPayment,
-        sub: Subscription,
-        request: PaymentRequest,
-    ) -> SubscriptionPayment | None:
-        """The recorded row that is *this* attempt's, when activation never ran.
-
-        The payment is written before the subscription is, so a crash in between leaves
-        a paid period that was never activated. Finishing that row is recovery. A hash
-        from an *earlier* period is a replay, and the difference is whether the
-        subscription has already moved past the row: if it has, the row was activated
-        once and the hash is spent.
-
-        Four things have to agree for it to be this attempt's own, and any of them
-        failing refuses rather than guesses: the hash, the plan and the amount, that the
-        subscription never reached the row's period start, and that the row was written
-        inside the window the caller is currently answering. Without the last one a
-        subscription that later lost its period end could be talked into re-activating a
-        long-spent hash.
-        """
-        for recorded in self.repo.list_subscription_payments(publisher_id):
-            if recorded.tx_hash != attempted.tx_hash:
-                continue
-            if recorded.plan != attempted.plan:
-                return None
-            # Numeric, not the formatted string: the row is written from the rail's
-            # amount and the attempt from the request, and the two spell 249.00 and
-            # 249.000000. Comparing the text would refuse a genuine recovery.
-            if Usdc.from_decimal(recorded.amount_usdc) != Usdc.from_decimal(
-                attempted.amount_usdc
-            ):
-                return None
-            if sub.period_end is not None and sub.period_end > recorded.period_start:
-                return None  # the subscription is already past it: spent
-            window_opened = request.expires_at - plans.PAYMENT_WINDOW
-            if recorded.paid_at < window_opened:
-                return None  # written for an earlier request, not this one
-            return recorded
-        return None
-
-    @staticmethod
-    def _refuse_self_serve_enterprise(publisher: Publisher, sub: Subscription | None) -> None:
-        """A contract plan is changed with us, not from the plan picker.
-
-        Applies to Open as well: ending an Enterprise plan is a change like any other,
-        and the plan picker is not where it happens.
-        """
-        if publisher.tier == "enterprise" and (sub is None or sub.plan == "enterprise"):
-            raise PlanNotSelfServe(
-                "this organisation's Enterprise plan is agreed with us, so it is changed "
-                "with us too"
-            )
-
-    def subscribe(
-        self, publisher_id: str, plan_id: str, now: datetime | None = None
-    ) -> SubscriptionOut:
-        """Choose a plan. A paid plan returns what to send; Open cancels at period end."""
-        self.ensure_ready()
-        now = now or _now()
-        plan = plans.PLANS[plan_id]
-        with self._exclusive(f"subscription:{publisher_id}"):
-            publisher = self.repo.get_publisher(publisher_id)
-            if publisher is None:
-                raise KeyError(publisher_id)
-            sub = self.repo.get_subscription(publisher_id)
-            if plan_id == "open":
-                # Open is self-serve too, and it used to return before this guard: a
-                # contract customer could end their own Enterprise plan by choosing
-                # Open, which is the downgrade the guard exists to refuse.
-                self._refuse_self_serve_enterprise(publisher, sub)
-                if sub is not None:
-                    sub.pending = None
-                    if sub.status in {"active", "past_due"}:
-                        # Paid for to the end of the period; Open from then on.
-                        sub.cancel_at_period_end = True
-                    sub.updated_at = now
-                    self.repo.save_subscription(sub)
-                log.info("%s chose Open", publisher_id)
-                return self.subscription(publisher_id, now)
-            if not plan.self_serve:
-                raise PlanNotSelfServe(
-                    f"{plan.name} starts at {plan.monthly} a month and is agreed with us, "
-                    "not bought here"
-                )
-            self._refuse_self_serve_enterprise(publisher, sub)
-            request = PaymentRequest(
-                plan=plan_id,  # type: ignore[arg-type]
-                amount_usdc=f"{plan.monthly.decimal:.2f}",
-                pay_to=self._pay_to(),
-                payer=publisher.wallet.address,
-                chain=settings.chain,
-                chain_id=settings.chain_id,
-                usdc_address=settings.usdc_address,
-                expires_at=now + plans.PAYMENT_WINDOW,
-            )
-            if sub is None:
-                sub = Subscription(
-                    publisher_id=publisher_id,
-                    plan=plan_id,  # type: ignore[arg-type]
-                    status="pending",
-                    updated_at=now,
-                )
-            sub.pending = request
-            sub.updated_at = now
-            self.repo.save_subscription(sub)
-            return self.subscription(publisher_id, now)
-
-    def confirm_payment(
-        self, publisher_id: str, tx_hash: str, now: datetime | None = None
-    ) -> SubscriptionOut:
-        """The publisher says it paid. The rail says whether it did; then the plan is on."""
-        self.ensure_ready()
-        now = now or _now()
-        with self._exclusive(f"subscription:{publisher_id}"):
-            publisher = self.repo.get_publisher(publisher_id)
-            if publisher is None:
-                raise KeyError(publisher_id)
-            sub = self.repo.get_subscription(publisher_id)
-            if sub is None or sub.pending is None or sub.pending.expires_at <= now:
-                raise NoPaymentDue("nothing is waiting to be paid for; choose a plan first")
-            request = sub.pending
-            seen = self.rail.received(tx_hash, payer=request.payer, payee=request.pay_to)
-            due = Usdc.from_decimal(request.amount_usdc)
-            if seen is None:
-                raise PaymentNotFound(
-                    f"{tx_hash} moved no USDC from {request.payer} to {request.pay_to}"
-                )
-            if seen.amount < due:
-                raise PaymentNotFound(f"{tx_hash} moved {seen.amount}, and {due} is due")
-            renewing = (
-                sub.status == "active"
-                and sub.plan == request.plan
-                and sub.period_end is not None
-                and sub.period_end > now
-            )
-            start = sub.period_end if renewing and sub.period_end else now
-            payment = SubscriptionPayment(
-                publisher_id=publisher_id,
-                plan=request.plan,
-                amount_usdc=str(seen.amount.decimal),
-                tx_hash=tx_hash.lower(),
-                period_start=start,
-                period_end=start + plans.PERIOD,
-                paid_at=now,
-            )
-            try:
-                # Claiming the transaction comes first, so it pays for one period only.
-                self.repo.add_subscription_payment(payment)
-            except PaymentAlreadyUsed:
-                recovery = self._unfinished_payment(publisher_id, payment, sub, request)
-                if recovery is None:
-                    # A hash that already paid for a period. Refusing is what the
-                    # constraint is for: the old code finished these either way, so a
-                    # stale hash copied out of wallet history overwrote an activated
-                    # period with an older one and reported success while doing it.
-                    raise PaymentAlreadyUsed(
-                        f"{tx_hash} has already paid for a period; "
-                        "one transaction pays for one period"
-                    ) from None
-                # The row is this attempt's own: it was recorded and the process died
-                # before the subscription was saved. Finish what it started.
-                payment = recovery
-            sub.plan = payment.plan
-            sub.period_start = sub.period_start if renewing else payment.period_start
-            sub.status = "active"
-            sub.period_end = payment.period_end
-            sub.pending = None
-            sub.cancel_at_period_end = False
-            sub.updated_at = now
-            self.repo.save_subscription(sub)
-            publisher.tier = payment.plan
-            self.repo.save_publisher(publisher)
-            log.info("%s is on %s until %s", publisher_id, payment.plan, payment.period_end)
-            return self.subscription(publisher_id, now)
-
-    def demo_pay(self, publisher_id: str, now: datetime | None = None) -> SubscriptionOut:
-        """Pay what is due from the publisher's wallet, on the simulation's rail."""
-        if not isinstance(self.rail, SimulatedRail):
-            raise NotSimulated("pay from your wallet on Arc, then confirm the transaction")
-        self.ensure_ready()
-        sub = self.repo.get_subscription(publisher_id)
-        if sub is None or sub.pending is None:
-            raise NoPaymentDue("nothing is waiting to be paid for; choose a plan first")
-        request = sub.pending
-        tx = self.rail.send(request.payer, request.pay_to, Usdc.from_decimal(request.amount_usdc))
-        return self.confirm_payment(publisher_id, tx, now)
-
-    def set_contract_plan(
-        self, publisher_id: str, plan_id: str, until: datetime, now: datetime | None = None
-    ) -> SubscriptionOut:
-        """A plan agreed with us, such as Enterprise, in force until the contract ends."""
-        self.ensure_ready()
-        now = now or _now()
-        with self._exclusive(f"subscription:{publisher_id}"):
-            publisher = self.repo.get_publisher(publisher_id)
-            if publisher is None:
-                raise KeyError(publisher_id)
-            sub = self.repo.get_subscription(publisher_id) or Subscription(
-                publisher_id=publisher_id,
-                plan=plan_id,  # type: ignore[arg-type]
-                status="active",
-                updated_at=now,
-            )
-            sub.plan = plan_id  # type: ignore[assignment]
-            sub.status = "active"
-            sub.period_start, sub.period_end = now, until
-            sub.pending, sub.cancel_at_period_end, sub.updated_at = None, False, now
-            self.repo.save_subscription(sub)
-            publisher.tier = plan_id  # type: ignore[assignment]
-            self.repo.save_publisher(publisher)
-        return self.subscription(publisher_id, now)
-
-    def sweep_subscriptions(self, now: datetime | None = None) -> list[str]:
-        """Periods that ended: past due with a grace period, then back on Open.
-
-        A cancelled plan ends at its period's end with no grace, because nothing is
-        owed. The organisation's spending policy stays in force either way.
-        """
-        self.ensure_ready()
-        now = now or _now()
-        changed: list[str] = []
-        for listed in self.repo.list_subscriptions():
-            if listed.period_end is None or listed.period_end > now:
-                continue
-            try:
-                with self._exclusive(f"subscription:{listed.publisher_id}"):
-                    # Read afresh under the lock: a payment may have just renewed it.
-                    sub = self.repo.get_subscription(listed.publisher_id)
-                    if sub is None or sub.period_end is None or sub.period_end > now:
-                        continue
-                    graced = sub.period_end + plans.GRACE <= now
-                    if sub.status == "active" and sub.cancel_at_period_end:
-                        sub.status = "cancelled"
-                    elif sub.status in {"active", "past_due"} and graced:
-                        sub.status = "lapsed"
-                    elif sub.status == "active":
-                        sub.status = "past_due"
-                    else:
-                        continue
-                    sub.updated_at = now
-                    self.repo.save_subscription(sub)
-                    if sub.status in {"cancelled", "lapsed"}:
-                        publisher = self.repo.get_publisher(sub.publisher_id)
-                        if publisher is not None and publisher.tier != "open":
-                            publisher.tier = "open"
-                            self.repo.save_publisher(publisher)
-            except Busy:
-                continue
-            changed.append(sub.publisher_id)
-            log.info("%s's %s plan is %s", sub.publisher_id, sub.plan, sub.status)
-        return changed
-
     # ------------------------------------------------------------- pricing
 
     def _settled_history(self) -> list[SettledWork]:
@@ -2127,20 +1783,6 @@ class Store:
             repo=repo,
             exclude=exclude,
         )
-
-    def finance_context(self, publisher_id: str) -> tuple[Publisher, FinanceContext | None, str]:
-        """The publisher's declared budget and what its books say, for its own eyes."""
-        self.ensure_ready()
-        publisher = self.repo.get_publisher(publisher_id)
-        if publisher is None:
-            raise KeyError(publisher_id)
-        source = self.finance(publisher_id)
-        if source is None:
-            return publisher, None, ""
-        try:
-            return publisher, source.read(_now()), ""
-        except FinanceError as exc:
-            return publisher, None, str(exc)
 
     # ------------------------------------------------------------- review
 
@@ -2493,100 +2135,6 @@ class Store:
             self.repo.save_issues(rec)
             return rec
 
-    def spend(
-        self, publisher_id: str, year: int | None = None, now: datetime | None = None
-    ) -> SpendOut:
-        """What a publisher budgeted, committed, released and refunded in a year, by
-        category, and the settled fixes a security review can file (#50).
-
-        Each category also carries what was committed this calendar month, counted by
-        the function funding checks the monthly limit with, so the panel answers the
-        question the limit asks.
-        """
-        self.ensure_ready()
-        publisher = self.repo.get_publisher(publisher_id)
-        if publisher is None:
-            raise KeyError(publisher_id)
-        now = now or _now()
-        year = year or now.year
-        policy = _policy(publisher)
-        mine = [r for r in self.repo.list_issues() if r.publisher_id == publisher_id]
-        this_month = committed_this_month(((r.labels, r.money_events) for r in mine), now)
-
-        def total(kind: MoneyEventKind) -> Usdc:
-            return Usdc(
-                sum(
-                    e.amount.base_units
-                    for r in mine
-                    for e in r.money_events
-                    if e.kind is kind and e.occurred_at.year == year
-                )
-            )
-
-        held = Usdc(
-            sum(
-                p.held.base_units
-                for r in mine
-                if (p := ledger.position(r.money_events)) is not None
-            )
-        )
-        labels = sorted({label for r in mine for label in r.labels} | set(policy.category_limits))
-        by_category = []
-        for label in labels:
-            tagged = [r for r in mine if label in r.labels]
-
-            def tagged_total(kind: MoneyEventKind, issues: list[IssueRecord] = tagged) -> int:
-                return sum(
-                    e.amount.base_units
-                    for r in issues
-                    for e in r.money_events
-                    if e.kind is kind and e.occurred_at.year == year
-                )
-
-            limit = policy.category_limits.get(label)
-            by_category.append(
-                SpendCategory(
-                    label=label,
-                    committed=money(Usdc(tagged_total(MoneyEventKind.COMMITTED))),
-                    released=money(Usdc(tagged_total(MoneyEventKind.RELEASED))),
-                    committed_this_month=money(this_month.get(label, Usdc(0))),
-                    limit=money(limit) if limit is not None else None,
-                )
-            )
-
-        fileable = [
-            FileableItem(
-                issue_id=r.id,
-                repo=r.repo,
-                number=r.number,
-                title=r.title,
-                labels=r.labels,
-                compliance_driven=r.compliance_driven,
-                acceptance_criteria=r.acceptance_criteria,
-                amount=money(e.amount),
-                settled_at=e.occurred_at,
-                github_url=r.github_url,
-            )
-            for r in mine
-            for e in r.money_events
-            if e.kind is MoneyEventKind.RELEASED
-            and e.occurred_at.year == year
-            and (r.compliance_driven or any(_security(label) for label in r.labels))
-        ]
-        return SpendOut(
-            publisher_id=publisher.id,
-            name=publisher.name,
-            year=year,
-            month=f"{month_start(now):%Y-%m}",
-            budget_remaining=money(_budget(publisher)),
-            committed_held=money(held),
-            committed=money(total(MoneyEventKind.COMMITTED)),
-            released=money(total(MoneyEventKind.RELEASED)),
-            refunded=money(total(MoneyEventKind.REFUNDED)),
-            by_category=by_category,
-            fileable=sorted(fileable, key=lambda f: f.settled_at),
-        )
-
     # ------------------------------------------------------------- standing
 
     def refresh_standing(self, contributor_id: str) -> None:
@@ -2619,51 +2167,6 @@ class Store:
             for e in reputation.events(self.repo.list_issues())
             if e.contributor_id == contributor_id
         ]
-
-    # ------------------------------------------------------------- the loop
-
-    def loop(self, repo: str | None = None, now: datetime | None = None) -> LoopOut:
-        """The loop in public: funded, settled and paid, for one repository or all."""
-        self.ensure_ready()
-        now = now or _now()
-        records = [
-            r for r in self.repo.list_issues() if repo is None or r.repo.lower() == repo.lower()
-        ]
-        handles = {c.id: c.handle for c in self.repo.list_contributors()}
-        settled = sorted(
-            (
-                (e, r)
-                for r in records
-                for e in r.money_events
-                if e.kind is MoneyEventKind.RELEASED
-            ),
-            key=lambda pair: pair[0].occurred_at,
-            reverse=True,
-        )
-        return LoopOut(
-            repo=repo,
-            funded_open=sum(
-                1 for r in records if r.escrow is not None and lifecycle.is_open(r.state)
-            ),
-            settled_issues=len(settled),
-            settled_issues_7d=sum(
-                1 for e, _ in settled if e.occurred_at >= now - metrics.WEEK
-            ),
-            matched_volume_usdc=f"{Usdc(sum(e.amount.base_units for e, _ in settled)).decimal:.2f}",
-            recent=[
-                LoopSettlement(
-                    issue_id=r.id,
-                    repo=r.repo,
-                    number=r.number,
-                    title=r.title,
-                    amount=money(e.amount),
-                    contributor=handles.get(e.counterparty_id, e.counterparty_id),
-                    settled_at=e.occurred_at,
-                    github_url=r.github_url,
-                )
-                for e, r in settled[:20]
-            ],
-        )
 
     def _demo_pull_request_number(self, rec: IssueRecord) -> int:
         """The number of the first pull request the simulation opens for an issue: its own
@@ -2774,7 +2277,6 @@ class Store:
                     id=party_id,
                     name=name,
                     kind="company",
-                    tier="open",
                     wallet=Wallet(address=address, chain=settings.chain),
                     budget_remaining_usdc=_display(budget),
                 )
@@ -3618,20 +3120,19 @@ def _review_comment(verdict: str, findings: list[str]) -> str:
 
 def _seed_publishers() -> dict[str, Publisher]:
     rows = [
-        ("PUB-1", "Acme Payments", "company", "enterprise", "48,500.00", "0xAcme00000000000000000000000000000000A1"),
-        ("PUB-2", "Northwind Data", "company", "team", "12,300.00", "0xN0rthw1nd0000000000000000000000000000b2"),
-        ("PUB-3", "R. Okafor", "maintainer", "open", "480.00", "0x0kaf0r000000000000000000000000000000c3"),
-        ("PUB-4", "Globex Logistics", "company", "enterprise", "91,000.00", "0xGl0bex00000000000000000000000000000004"),
-        ("PUB-5", "Contoso Tooling", "company", "team", "6,750.00", "0xC0nt0s000000000000000000000000000000d5"),
+        ("PUB-1", "Acme Payments", "company", "48,500.00", "0xAcme00000000000000000000000000000000A1"),
+        ("PUB-2", "Northwind Data", "company", "12,300.00", "0xN0rthw1nd0000000000000000000000000000b2"),
+        ("PUB-3", "R. Okafor", "maintainer", "480.00", "0x0kaf0r000000000000000000000000000000c3"),
+        ("PUB-4", "Globex Logistics", "company", "91,000.00", "0xGl0bex00000000000000000000000000000004"),
+        ("PUB-5", "Contoso Tooling", "company", "6,750.00", "0xC0nt0s000000000000000000000000000000d5"),
     ]
     return {
         r[0]: Publisher(
             id=r[0],
             name=r[1],
             kind=r[2],  # type: ignore[arg-type]
-            tier=r[3],  # type: ignore[arg-type]
-            wallet=Wallet(address=r[5], chain=settings.chain),
-            budget_remaining_usdc=r[4],
+            wallet=Wallet(address=r[4], chain=settings.chain),
+            budget_remaining_usdc=r[3],
         )
         for r in rows
     }

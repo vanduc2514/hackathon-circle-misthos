@@ -6,7 +6,7 @@ import { expect, test, type Page } from '@playwright/test'
  * A phone never scrolls the page sideways; a table scrolls inside its own panel.
  */
 
-const PAGES = ['/overview', '/issues', '/issues/ISS-1004', '/loop', '/spend', '/plans', '/account']
+const PAGES = ['/overview', '/issues', '/issues/ISS-1004', '/account']
 
 async function look(page: Page) {
   return page.evaluate(() => {

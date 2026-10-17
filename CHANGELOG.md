@@ -5,6 +5,24 @@ Notable changes to Misthos, newest first. The format follows
 
 ## Unreleased
 
+### Removed
+
+- **The Loop, Spend and Plans pages, and the subscription model behind them** (#183).
+  `/loop`, `/spend` and `/plans` are no longer routed and no link points at them; their
+  API endpoints, `domain/plans.py`, `api/v1/plans.py`, `services/billing/` and
+  `services/finance/` are gone, and a migration drops the `subscriptions` and
+  `subscription_payments` tables and the publisher's `tier` column.
+  - No endpoint answers 402 any more: nothing is gated by a plan. The release approval
+    gate and the audit export stay, ungated, because a money control and an auditor's
+    record are not tier features. A release over the publisher's approval threshold still
+    waits for one of the named approvers.
+  - The platform has one price discipline: the publisher names the price and the escrow
+    carves out a flat 10 percent on settlement. The pricing engine, its advice on the
+    issue page, the calibration corpus and `mise run pricing:calibrate` are untouched.
+  - `MISTHOS_PLATFORM_WALLET` and `MISTHOS_FINANCE_CONNECTIONS` are gone from the
+    configuration, `.env.example` and `compose.yaml`, and the documentation that priced a
+    plan or described the spend view and finance integration is removed.
+
 ### Changed
 
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:

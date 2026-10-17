@@ -79,7 +79,7 @@ That last category is our buyer, and it is also a category we should be careful 
 
 Paying contributors in USDC does not change the tax position of anyone involved. Contributors owe income tax. Publishers may have withholding or reporting obligations depending on jurisdiction and the contributor's status. What we can do is make the record easy: an exportable statement per contributor per year with amounts, dates, issue references, and the counterparty.
 
-Do not understate this. A platform that pays small amounts to many people across many jurisdictions is a reporting problem for its users, and the businesses we want as publishers will not use it if it creates work for their finance team. Producing the record is an Enterprise tier feature and it should be treated as table stakes rather than a nice extra.
+Do not understate this. A platform that pays small amounts to many people across many jurisdictions is a reporting problem for its users, and the businesses we want as publishers will not use it if it creates work for their finance team. Producing the record is table stakes rather than a nice extra, and it is not gated.
 
 ### Privacy
 
@@ -133,7 +133,7 @@ Agent-first from the start rather than bolted on, so pricing and review are the 
 
 ### Weaknesses
 
-No contributor network and no publisher relationships. Review quality is unproven and is the thing everything else depends on. The finance integration runs through tools that were not built for this use case, and Firefly III in particular is personal finance software rather than an enterprise ledger. The team is small, and the two sides of the market both need attention at once.
+No contributor network and no publisher relationships. Review quality is unproven and is the thing everything else depends on. The team is small, and the two sides of the market both need attention at once.
 
 ### Opportunities
 

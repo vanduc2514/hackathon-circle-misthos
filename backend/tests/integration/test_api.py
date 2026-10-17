@@ -368,7 +368,7 @@ class TestLifecycleThroughTheApi:
 
     def test_a_settlement_records_the_flat_platform_fee(self, client: TestClient) -> None:
         """Ten percent of the commitment, carved out rather than added, and the same
-        for every publisher and every plan (#142)."""
+        for every publisher (#142)."""
         client.post(f"{API}/issues/ISS-1002/complete")
         body = client.get(f"{API}/issues/ISS-1002").json()
         assert body["state"] == "PAID"

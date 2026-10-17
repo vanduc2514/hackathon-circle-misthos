@@ -9,42 +9,24 @@
 | Unique value proposition | Put a price on a GitHub issue and get it fixed, with the payment settled the moment the work is accepted |
 | Solution | Publisher-named prices, escrowed funds, automated review, USDC settlement on Arc |
 | Channels | GitHub itself, maintainer communities, open-source programme leads, security and compliance budgets |
-| Revenue | A flat 10 percent take rate on matched work, plus organisation subscriptions at $249 and from $2,000 per month |
+| Revenue | A flat 10 percent take rate on matched work |
 | Cost structure | Agent inference, engineering salaries, compliance and identity verification, community and content |
 | Unfair advantage | The settled-price dataset, which only exists once issues clear on the platform |
 | Key metrics | Matched volume, issues settled, repeat publisher rate, publisher overturn rate |
 
-## The three revenue lines, ranked by how much we believe in them
+## Revenue
 
-### Line one: take rate on matched work
+### Take rate on matched work
 
-The obvious one. A flat 10 percent of every settled issue, split between publisher and contributor, and the same on every plan. It scales with volume and costs nothing to sell once the marketplace works.
+The one revenue line. A flat 10 percent of every settled issue, split between publisher and contributor. It scales with volume and costs nothing to sell once the marketplace works.
 
 The problem with relying on it is in the market research. Algora, the best-funded attempt at open-source bounties, has moved its homepage to recruiting. Whatever the take rate on bounties is, it did not carry a company. Treating this as the primary revenue line repeats their experience.
 
-### Line two: organisation subscriptions
-
-Budget rules, approval thresholds, spend reporting, audit export. Sold to the person who owns the open-source programme rather than to the individual manager funding a fix. This is the persona we called Dev, and the reason he buys is that the compliance obligation lands on his desk and not on an engineer's.
-
-Priced at $249 a month for Team and from $2,000 a month for Enterprise, anchored against what a company already spends on adjacent tooling. A 300-engineer company already pays roughly $9,000 a month for AI code review alone at published rates. A compliance reporting line item at $2,000 is easy to justify inside a budget that already exists.
-
-We believe in this line more than the take rate, because it is recurring, it does not depend on marketplace liquidity, and it becomes harder to displace as the regulatory deadline approaches.
-
-### Line three: something we are not building yet
+### Something we are not building yet
 
 Once thousands of issues have settled, we know what a specific class of work costs in a specific codebase. That is a price index for software work, and nobody has one. It could be sold to insurers, to procurement teams benchmarking vendor quotes, or to platforms that want to price their own jobs.
 
 We are not building it, because a data product from a market you do not yet have is a story rather than a business. It is listed here so the team remembers to keep the data clean and the consent explicit, because the option is worth more than the feature would be today.
-
-## Revenue mix, illustrative
-
-```mermaid
-pie showData
-    title Illustrative revenue mix at year three
-    "Take rate on matched work" : 72
-    "Team subscriptions" : 12
-    "Enterprise subscriptions" : 16
-```
 
 ## Illustrative three-year model
 
@@ -57,20 +39,15 @@ Everything in this table is a projection built from the assumptions below it, no
 | Average issue price | $700 | $900 | $1,200 |
 | Matched volume, GMV | $280,000 | $2,700,000 | $21,600,000 |
 | Take rate | 10% | 10% | 10% |
-| Take-rate revenue | $28,000 | $270,000 | $2,160,000 |
-| Team subscriptions | 8 | 30 | 120 |
-| Enterprise subscriptions | 0 | 4 | 20 |
-| Subscription revenue | $23,900 | $185,600 | $838,560 |
-| Total revenue | $51,900 | $455,600 | $2,998,560 |
+| Revenue | $28,000 | $270,000 | $2,160,000 |
 | Headcount | 3 | 6 | 12 |
 | Net | Negative | Roughly breakeven | Positive |
 
 ### What has to be true for year three
 
 1. Average issue price rises from $700 to $1,200, which means buyers move from small fixes toward compliance-driven remediation. That is the whole bet.
-2. Twenty enterprises buy the top tier, which is a small number of the thousands of companies with open-source obligations, and a hard one because they buy on a quarterly cycle.
-3. The flat 10 percent take rate holds against competitors pricing at zero.
-4. Supply keeps up. 18,000 settled issues in a year means roughly 70 a week, which needs several hundred active contributors.
+2. The flat 10 percent take rate holds against competitors pricing at zero.
+3. Supply keeps up. 18,000 settled issues in a year means roughly 70 a week, which needs several hundred active contributors.
 
 Any one of these failing changes the shape of the business rather than the size of the number.
 
@@ -102,22 +79,20 @@ The take rate is charged on the price alone, which is the whole of what the publ
 
 ### Per publisher
 
-| | Team publisher | Enterprise publisher |
-| --- | --- | --- |
-| Subscription, annual | $2,988 | $24,000 |
-| Issues per year | 8 | 40 |
-| Average issue price | $650 | $1,800 |
-| Matched volume | $5,200 | $72,000 |
-| Take-rate contribution | $520 | $7,200 |
-| Gross revenue per year | $3,508 | $31,200 |
-| Assumed retention | 80% annually | 90% annually |
-| Implied lifetime value | About $7,000 | About $100,000 |
+| | Publisher |
+| --- | --- |
+| Issues per year | 8 |
+| Average issue price | $650 |
+| Matched volume | $5,200 |
+| Gross revenue per year | $520 |
+| Assumed retention | 80% annually |
+| Implied lifetime value | About $1,000 |
 
 ### Acquisition cost
 
-Founder-led sales into maintainer communities and open-source programme leads, plus content. There is no paid channel that makes sense at a $3,500 annual contract value, and there is unlikely to be one at $31,200 either, because the buyer population is small enough to reach directly.
+Founder-led sales into maintainer communities and open-source programme leads, plus content. There is no paid channel that makes sense at this contract value, because the buyer population is small enough to reach directly.
 
-Working estimate is $500 to $1,500 of mostly time cost per paying publisher in year one, which puts the payback period inside a year for Team and inside a quarter for Enterprise. Treat that as optimistic, because the whole cost sits on the founding team's calendar and stops being real the moment they stop working weekends.
+Working estimate is $500 to $1,500 of mostly time cost per paying publisher in year one, which is a payback period of several years at the take rate alone. Treat that as optimistic, because the whole cost sits on the founding team's calendar and stops being real the moment they stop working weekends.
 
 ## What we are not doing with money
 
@@ -131,7 +106,7 @@ No incentive tokens. The market research has a decade of bounty platforms that t
 
 The hackathon prize is $10,000 at the top end, which is a few months of agent inference and nothing else. The realistic path after the event is a pre-seed round sized for eighteen months of a three-person team, plus enough inference budget to run review on every submission without rationing it.
 
-The Tameion brief commits to follow-on funding and grant support for teams that keep building, and the Enterprise line is the one to raise against, because it is the revenue that does not depend on being right about marketplace liquidity.
+The Tameion brief commits to follow-on funding and grant support for teams that keep building. The take rate is the line to raise against, so the marketplace has to be right about liquidity before either number means anything.
 
 ## The assumption that decides everything
 

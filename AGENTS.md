@@ -18,10 +18,9 @@ reviews the pull request against the acceptance criteria, and payment settles in
   bounds in `domain/pricing.py` — a minimum of **$5**, which is an anti-typo and anti-spam
   floor rather than a break-even solve, and a maximum of $100,000. The publisher can move
   the price while the issue is unfunded and unclaimed, and no further.
-- **The fee is a flat 10 percent** of the committed amount, on every plan
-  (`PLATFORM_FEE_BPS = 1000`). It is carved out at settlement by `MisthosEscrow.release`,
-  bounded there at 15 percent, and refunded in full if the issue never settles. Plans gate
-  features, never the rate.
+- **The fee is a flat 10 percent** of the committed amount (`PLATFORM_FEE_BPS = 1000`).
+  It is carved out at settlement by `MisthosEscrow.release`, bounded there at 15 percent,
+  and refunded in full if the issue never settles. There is no plan and nothing is gated.
 - **The platform owns review.** There is no third-party reviewer and no review fee. The
   review agent's verdict is the verdict. The publisher's merge is the only human
   signature on release, with a seven-day grace period if they go quiet.

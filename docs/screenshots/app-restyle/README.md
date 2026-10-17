@@ -11,9 +11,6 @@ shots were taken at 1440px and are stored at two-thirds scale; phone shots are a
 | An issue, the publisher approving and funding it | [desktop-04-issue-approve-and-fund.png](desktop-04-issue-approve-and-fund.png) | |
 | An issue, a contributor about to claim it | [desktop-05-issue-claim.png](desktop-05-issue-claim.png) | |
 | An issue, accepted and waiting for the merge | [desktop-06-issue-accepted.png](desktop-06-issue-accepted.png) | |
-| Loop (`/loop`) | [desktop-07-loop.png](desktop-07-loop.png) | |
-| Spend (`/spend`) | [desktop-08-spend.png](desktop-08-spend.png) | |
-| Plans (`/plans`) | [desktop-09-plans.png](desktop-09-plans.png) | |
 | Publish (`/publish`) | [desktop-10-publish.png](desktop-10-publish.png) | |
 | Account (`/account`), a publisher | [desktop-11-account.png](desktop-11-account.png) | [phone-04-account.png](phone-04-account.png) |
 | A page that does not exist | [desktop-12-not-found.png](desktop-12-not-found.png) | |

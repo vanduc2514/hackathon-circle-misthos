@@ -10,7 +10,7 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **Acceptance criteria.** The written conditions a submission has to meet. Drafted by the agent from the issue and the project's test suite, edited and approved by the publisher, then shown to contributors before they start work. These are what the platform reviews the pull request against, and the publisher is not expected to read the diff themselves.
 
-**Minimum price.** The lowest price the platform will publish, $5, with $100,000 at the top. Both bounds live with the fee and are checked in one place; a price outside them is refused. The floor catches a typo and damps spam rather than covering the cost of review, so a price below break-even is accepted and the platform carries the loss on it. There is no per-tier minimum, and the take rate does not move with the plan.
+**Minimum price.** The lowest price the platform will publish, $5, with $100,000 at the top. Both bounds live with the fee and are checked in one place; a price outside them is refused. The floor catches a typo and damps spam rather than covering the cost of review, so a price below break-even is accepted and the platform carries the loss on it. There is no minimum other than that one, and the take rate does not move with what a publisher buys.
 
 **Claim.** A contributor's exclusive, time-boxed reservation of a funded issue. Expires if no pull request appears, so desirable work cannot be squatted on. First claim wins, and there is nothing to bid against because the price is already published.
 
@@ -76,7 +76,7 @@ Plain definitions of the terms used across these documents, in the order you are
 
 **Bounty platform.** A site where money is attached to a task and paid on completion. The category Misthos belongs to, and the category that has already produced one bankruptcy and two strategic pivots.
 
-**Take rate compression.** What happens when competitors price at zero and a platform's fee stops being defensible. Our answer is subscriptions that sell controls and compliance, since the rate itself is the same for everyone.
+**Take rate compression.** What happens when competitors price at zero and a platform's fee stops being defensible. Our answer is the same flat rate for everyone, plus the audit record a compliance obligation needs.
 
 ## Metrics terms
 

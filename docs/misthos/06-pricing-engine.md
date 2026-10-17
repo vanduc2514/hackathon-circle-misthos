@@ -24,13 +24,12 @@ number on the issue. The escrow carves the fee out on acceptance
 the fee in the same call, so the rate is a transfer rather than a reporting-layer number.
 The contract bounds it at 15 percent (`MAX_FEE_BPS`).
 
-**One rate for everyone.** It used to be 12 percent at the free tier, 10 at Team and 8 at
-Enterprise. That is a second price for the same service, and it had a second effect nobody
-wanted: because the published price floor was derived from the take rate, the plan a
-publisher bought decided the lowest price they were allowed to pay. The fee does not get
-cheaper because a company bought a subscription, so it no longer moves with one. Plans
-still exist and still gate what they always gated: budget rules, approval thresholds, spend
-reporting, the audit export, SSO and support.
+**One rate for everyone.** It used to move with a subscription tier, and that was a second
+price for the same service. It had a second effect nobody wanted: because the published
+price floor was derived from the take rate, a publisher's plan decided the lowest price
+they were allowed to pay. The fee does not get cheaper because a company bought a
+subscription, so there is no subscription and no plan-dependent rate: the platform takes
+a flat 10 percent on settlement.
 
 ### What a settled issue earns, and where it does not
 
@@ -206,9 +205,9 @@ is labelled a suggestion.
 
 | Removed | Why |
 | --- | --- |
-| The published price floor ($55/$65/$80) | A break-even solve dressed as a business rule. Every floor landed within 29 cents of zero margin, and the tier with the thinnest take rate got the highest floor. Nine of the thirty known prices in the calibration corpus would have been refused. |
+| The published price floor ($55/$65/$80) | A break-even solve dressed as a business rule. Every floor landed within 29 cents of zero margin, and the cheapest plan got the highest floor. Nine of the thirty known prices in the calibration corpus would have been refused. |
 | The affordability ceiling | It could only ever lower a price and never raise one, so the buyer's own budget was a one-way constraint on the buyer's own decision. |
-| Per-tier take rates (12/10/8) | A second price for the same service, and the reason the floor moved with a subscription. |
+| Take rates that moved with a plan (12/10/8) | A second price for the same service, and the reason the floor moved with what a publisher bought. |
 | The band as a validation window | A range is advice. Enforcing it is what made the engine the price-setter. |
 | The compliance multiplier, and the risk and urgency premiums | Premiums applied as coefficients rather than earned, and the buyer cannot check a coefficient. |
 | The automatic re-list uplift | Raising a price on the publisher's behalf is guessing at their budget. They can move the number themselves, and they can publish the issue again after a refund. |

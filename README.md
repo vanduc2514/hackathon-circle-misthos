@@ -205,15 +205,12 @@ in the browser, and GitHub is simulated, so the contributor opens their pull req
 and the publisher merges it with a button. Use two browsers, or a private window, to
 be both sides at once.
 
-### Pricing from history and from the publisher's books
+### Pricing from history
 
 The engine's suggestion moves toward what similar work settled at on the platform, and its
 confidence is only as high as that history allows. It is advice: the publisher names the
-price, and the only thing that refuses one is the $5 to $100,000 bound. A publisher's own
-books are still read for display rather than to cap a price: the operator connects Firefly
-III, or a beancount ledger with a Fava budget, in `MISTHOS_FINANCE_CONNECTIONS` (see
-`backend/.env.example`), and the publisher sees what is left. To check the weights
-against issues whose worth is known:
+price, and the only thing that refuses one is the $5 to $100,000 bound. To check the
+weights against issues whose worth is known:
 
 ```bash
 mise run pricing:calibrate                       # the corpus of real, scored issues
@@ -227,15 +224,6 @@ that priced those issues), and it fits nothing.
 ```bash
 cd backend && uv run python -m misthos.services.calibration --settled
 ```
-
-### Plans
-
-**Plans** in the web app lists Open, Team and Enterprise as 06 prices them. A
-publisher buys Team there without a conversation by sending 249 USDC on Arc from its
-wallet; the API reads the transfer from the chain before switching the plan on. Set
-`MISTHOS_PLATFORM_WALLET` to the platform's wallet so payments have somewhere to go.
-In the simulation, a button pays on a simulated rail. Enterprise is agreed with us and
-recorded by an operator with `python -m misthos.services.contracts`.
 
 ### The whole system
 
