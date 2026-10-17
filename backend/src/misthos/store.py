@@ -97,12 +97,16 @@ from misthos.schemas import (
     Account,
     Claim,
     Contributor,
+    ContributorDashboardOut,
+    DashboardAction,
+    DashboardIssueItem,
     Decision,
     EscrowCommitment,
     IssueOut,
     IssueSummaryOut,
     MetricsOut,
     Publisher,
+    PublisherDashboardOut,
     RepoConnection,
     Review,
     Submission,
@@ -2470,14 +2474,161 @@ class Store:
                 state=rec.state.value,
                 labels=rec.labels,
                 compliance_driven=rec.compliance_driven,
-                publisher_name=names[rec.publisher_id],
+                publisher_name=names.get(rec.publisher_id, rec.publisher_id),
                 price_usdc=_display_price(rec),
                 confidence=rec.proposal.confidence if rec.proposal else None,
                 deadline=rec.deadline,
                 github_url=rec.github_url,
+                awaiting_approver=rec.payout_hold if rec.payout_hold == PayoutGate.AWAIT_APPROVER.value else (
+                    getattr(rec, "awaiting_approver", None) if isinstance(getattr(rec, "awaiting_approver", None), str) else (
+                        "true" if getattr(rec, "awaiting_approver", False) else None
+                    )
+                ),
+                criteria_approved_at=rec.criteria_approved_at,
+                contributor_id=rec.contributor_id,
             )
             for rec in records
         ]
+
+    def publisher_dashboard(self, party_id: str, github_login: str | None = None) -> PublisherDashboardOut:
+        self.ensure_ready()
+        pub = self.get_publisher(party_id)
+        pub_name = pub.name if pub else party_id
+        budget_str = pub.budget_remaining_usdc if pub else "0.00"
+        try:
+            budget_remaining = float(budget_str.replace(",", "").strip())
+        except (ValueError, AttributeError):
+            budget_remaining = 0.0
+
+        all_records = [r for r in self.list_issues() if r.publisher_id == party_id]
+        all_records.sort(key=lambda r: getattr(r, "updated_at", None) or r.paid_at or r.created_at, reverse=True)
+
+        committed_escrow_usdc = 0.0
+        released_usdc = 0.0
+
+        items: list[DashboardIssueItem] = []
+        action_needed_items: list[DashboardIssueItem] = []
+
+        for rec in all_records:
+            price_val = float(rec.price.decimal) if rec.price else 0.0
+            if rec.state in (IssueState.FUNDED, IssueState.CLAIMED, IssueState.IN_REVIEW, IssueState.ACCEPTED, IssueState.REWORK):
+                committed_escrow_usdc += price_val
+            elif rec.state == IssueState.PAID:
+                released_usdc += price_val
+
+            code, label, needed = _publisher_next_action(rec)
+            item = _record_to_dashboard_item(rec, code, label, needed)
+            items.append(item)
+            if needed:
+                action_needed_items.append(item)
+
+        connections = self.connections_of(party_id)
+        connected_repos = sorted(list({c.repo for c in connections} | {r.repo for r in all_records}))
+
+        return PublisherDashboardOut(
+            party_id=party_id,
+            name=pub_name,
+            github_login=github_login or getattr(pub, "github_login", None),
+            budget_remaining_usdc=budget_remaining,
+            committed_escrow_usdc=round(committed_escrow_usdc, 2),
+            released_usdc=round(released_usdc, 2),
+            connected_repos=connected_repos,
+            action_needed=action_needed_items,
+            all_issues=items,
+        )
+
+    def contributor_dashboard(self, party_id: str, github_login: str | None = None) -> ContributorDashboardOut:
+        self.ensure_ready()
+        con = self.get_contributor(party_id)
+        handle = con.handle if con else party_id
+        reputation_val = float(con.reputation) if con else 0.0
+        settled_count = con.settled_issues if con else 0
+
+        payout_wallet_set = bool(con and con.wallet and con.wallet.address)
+        payout_address = con.wallet.address if payout_wallet_set else None
+
+        now = _now()
+        current_year = now.year
+
+        owed_in_flight_usdc = 0.0
+        about_to_release_usdc = 0.0
+        paid_this_year_usdc = 0.0
+        total_earned_usdc = 0.0
+        if con and con.earned_usdc:
+            try:
+                total_earned_usdc = float(con.earned_usdc.replace(",", "").strip())
+            except (ValueError, AttributeError):
+                total_earned_usdc = 0.0
+
+        items: list[DashboardIssueItem] = []
+        action_needed_items: list[DashboardIssueItem] = []
+        seen_issue_ids: set[str] = set()
+
+        all_records = self.list_issues()
+        for rec in all_records:
+            if rec.id in seen_issue_ids:
+                continue
+
+            claims = getattr(rec, "claims", None) or ([rec.claim] if rec.claim else [])
+            my_claim = next(
+                (c for c in reversed(claims) if getattr(c, "contributor_id", None) == party_id or (github_login and getattr(c, "github_login", None) == github_login)),
+                None,
+            )
+            submissions = getattr(rec, "submissions", None) or ([rec.submission] if rec.submission else [])
+            my_sub = next(
+                (
+                    s for s in reversed(submissions)
+                    if getattr(s, "contributor_id", None) == party_id
+                    or (github_login and getattr(s, "contributor_author", None) == github_login)
+                    or (rec.submission == s and (rec.contributor_id == party_id or (my_claim is not None)))
+                ),
+                None,
+            )
+            is_mine = bool(rec.contributor_id == party_id or my_claim is not None or my_sub is not None)
+            if not is_mine:
+                continue
+
+            seen_issue_ids.add(rec.id)
+            price_val = float(rec.price.decimal) if rec.price else 0.0
+
+            code, label, needed = _contributor_next_action(rec, party_id, github_login, now=now)
+
+            if code != "claim_expired":
+                if rec.state in (IssueState.FUNDED, IssueState.CLAIMED, IssueState.IN_REVIEW, IssueState.REWORK):
+                    owed_in_flight_usdc += price_val
+                elif rec.state == IssueState.ACCEPTED:
+                    about_to_release_usdc += price_val
+                elif rec.state == IssueState.PAID:
+                    paid_date = getattr(rec, "updated_at", None) or rec.paid_at or rec.created_at
+                    if paid_date and paid_date.year == current_year:
+                        paid_this_year_usdc += price_val
+
+            item = _record_to_dashboard_item(rec, code, label, needed, my_claim=my_claim, my_sub=my_sub)
+            items.append(item)
+            if needed:
+                action_needed_items.append(item)
+
+        items.sort(key=lambda r: getattr(r, "updated_at", None) or r.created_at, reverse=True)
+        action_needed_items.sort(key=lambda r: getattr(r, "updated_at", None) or r.created_at, reverse=True)
+
+        if total_earned_usdc == 0.0 and paid_this_year_usdc > 0:
+            total_earned_usdc = paid_this_year_usdc
+
+        return ContributorDashboardOut(
+            party_id=party_id,
+            handle=handle,
+            github_login=github_login,
+            reputation=reputation_val,
+            settled_count=settled_count,
+            owed_in_flight_usdc=round(owed_in_flight_usdc, 2),
+            about_to_release_usdc=round(about_to_release_usdc, 2),
+            paid_this_year_usdc=round(paid_this_year_usdc, 2),
+            total_earned_usdc=round(total_earned_usdc, 2),
+            payout_wallet_set=payout_wallet_set,
+            payout_address=payout_address,
+            action_needed=action_needed_items,
+            all_work=items,
+        )
 
     def timeline(self, rec: IssueRecord) -> list[TimelineEntry]:
         return [
@@ -2494,6 +2645,168 @@ class Store:
 
     def metrics(self, now: datetime | None = None) -> MetricsOut:
         return metrics.compute(self.list_issues(), now or _now())
+
+
+# ------------------------------------------------------- Dashboard Helpers (#182)
+
+def _publisher_next_action(rec: IssueRecord) -> tuple[DashboardAction, str, bool]:
+    is_awaiting_approver = bool(
+        rec.payout_hold == PayoutGate.AWAIT_APPROVER.value
+        or rec.payout_hold == "await_approver"
+        or getattr(rec, "awaiting_approver", False)
+    )
+    # 1. SETTLED / PAID
+    if rec.state in (IssueState.PAID, "SETTLED", "PAID"):
+        return ("settled", "Paid: see the record", False)
+    # 2. Terminal closed
+    if rec.state in (IssueState.REFUNDED, IssueState.REJECTED, "CLOSED", "CANCELLED", "EXPIRED"):
+        return ("closed", "Closed: see the record", False)
+    # 3. Approver required
+    if is_awaiting_approver:
+        return ("contact_approver", "Get one of the named approvers to approve", True)
+    # 4. In review / accepted / verdict ready
+    if rec.state in (IssueState.IN_REVIEW, IssueState.ACCEPTED) or (
+        rec.submission is not None and (getattr(rec, "review", None) is not None or getattr(rec, "verdict", None) is not None) and rec.state != IssueState.PAID
+    ):
+        return ("review_and_merge", "Read the verdict, then merge", True)
+    # 5. Awaiting criteria approval
+    has_criteria = bool(getattr(rec, "acceptance_criteria", None) or getattr(rec, "criteria", None))
+    if rec.state == IssueState.AWAITING_APPROVAL and not rec.criteria_approved_at and not has_criteria:
+        return ("approve_criteria", "Approve the acceptance criteria", True)
+    # 6. Criteria approved, needs funding commit
+    if rec.state in (IssueState.AWAITING_APPROVAL, IssueState.PRICED) and (
+        bool(rec.criteria_approved_at) or has_criteria
+    ):
+        return ("commit_funds", "Commit the funds", True)
+    # 7. Awaiting approval fallback
+    if rec.state == IssueState.AWAITING_APPROVAL:
+        return ("approve_criteria", "Approve the acceptance criteria", True)
+    # 8. Funded, no claim / waiting for contributors
+    if rec.state == IssueState.FUNDED and not (hasattr(rec, "claims") and rec.claims) and not rec.claim:
+        return ("watch_deadline", "Nothing yet: watch the deadline", False)
+    # 9. Fallback
+    return ("watch_deadline", "Nothing yet: watch the deadline", False)
+
+
+def _is_claim_expired(claim: Claim | None, now: datetime | None = None) -> bool:
+    if claim is None:
+        return False
+    if not getattr(claim, "active", True):
+        return True
+    expires_at = getattr(claim, "expires_at", None)
+    if expires_at is not None:
+        current = now or _now()
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=UTC)
+        return expires_at < current
+    return False
+
+
+def _contributor_next_action(
+    rec: IssueRecord,
+    party_id: str,
+    github_login: str | None = None,
+    now: datetime | None = None,
+) -> tuple[DashboardAction, str, bool]:
+    now = now or _now()
+    # 1. Settled / Paid
+    if rec.state in (IssueState.PAID, "SETTLED", "PAID"):
+        return ("settled", "Paid, and on your statement", False)
+    # 2. Accepted
+    if rec.state == IssueState.ACCEPTED:
+        return ("wait_merge", "The publisher merges; nothing for you to do", False)
+    # 3. Rework
+    rev = getattr(rec, "review", None)
+    is_rework_verdict = rev is not None and rev.verdict == "rework"
+    verdict = getattr(rec, "verdict", None)
+    is_verdict_failed = verdict is not None and getattr(verdict, "passed", True) is False
+    if rec.state == IssueState.REWORK or is_rework_verdict or (is_verdict_failed and rec.state != IssueState.PAID):
+        return ("rework", "Answer the findings and push", True)
+    # 4. In review / submitted waiting for verdict
+    submissions = getattr(rec, "submissions", None) or ([rec.submission] if rec.submission else [])
+    claims = getattr(rec, "claims", None) or ([rec.claim] if rec.claim else [])
+    my_claim = next(
+        (c for c in reversed(claims) if getattr(c, "contributor_id", None) == party_id or (github_login and getattr(c, "github_login", None) == github_login)),
+        None,
+    )
+    my_sub = next(
+        (
+            s for s in reversed(submissions)
+            if getattr(s, "contributor_id", None) == party_id
+            or (github_login and getattr(s, "contributor_author", None) == github_login)
+            or (rec.submission == s and (rec.contributor_id == party_id or my_claim is not None))
+        ),
+        None,
+    )
+    # Check expired claim without active submission
+    if my_claim and my_sub is None and _is_claim_expired(my_claim, now):
+        return ("claim_expired", "Claim expired: issue returned to pool", False)
+
+    if rec.state == IssueState.IN_REVIEW or (my_sub is not None and rec.state in (IssueState.FUNDED, IssueState.CLAIMED)):
+        return ("wait_verdict", "Wait for the verdict", False)
+    # 5. Claimed, no submission yet
+    return ("open_pr", "Open the pull request, or submit the one you opened", True)
+
+
+def _record_to_dashboard_item(
+    rec: IssueRecord,
+    next_action: DashboardAction,
+    next_action_label: str,
+    action_needed: bool,
+    my_claim: Claim | None = None,
+    my_sub: Submission | None = None,
+) -> DashboardIssueItem:
+    price_val = 0.0
+    if rec.price is not None:
+        price_val = float(rec.price.decimal)
+    elif rec.funding and rec.funding.amount is not None:
+        price_val = float(rec.funding.amount.decimal)
+
+    rev = getattr(rec, "review", None)
+    verdict = getattr(rec, "verdict", None)
+    verdict_summary = rev.verdict if rev else (getattr(verdict, "summary", None) if verdict else None)
+    verdict_passed = (rev.verdict == "accept") if rev else (getattr(verdict, "passed", None) if verdict else None)
+
+    sub = my_sub or rec.submission
+    pr_num = getattr(sub, "pr_number", None) or getattr(sub, "pull_request_number", None)
+    pr_url = getattr(sub, "pull_request_url", None)
+    if not pr_url and pr_num and rec.repo:
+        pr_url = f"https://github.com/{rec.repo}/pull/{pr_num}"
+
+    claim = my_claim or rec.claim
+    claim_id = getattr(claim, "id", None) or (f"{rec.id}-claim" if claim else None)
+    contributor_id = rec.contributor_id or (claim.contributor_id if claim else None)
+
+    return DashboardIssueItem(
+        id=rec.id,
+        github_issue_number=rec.number,
+        title=rec.title,
+        repo=rec.repo,
+        price_usdc=price_val,
+        state=rec.state.value if hasattr(rec.state, "value") else str(rec.state),
+        next_action=next_action,
+        next_action_label=next_action_label,
+        action_needed=action_needed,
+        awaiting_approver=rec.payout_hold if rec.payout_hold == PayoutGate.AWAIT_APPROVER.value else (
+            getattr(rec, "awaiting_approver", None) if isinstance(getattr(rec, "awaiting_approver", None), str) else (
+                "true" if getattr(rec, "awaiting_approver", False) else None
+            )
+        ),
+        criteria_approved_at=rec.criteria_approved_at,
+        contributor_id=contributor_id,
+        claim_id=claim_id,
+        pull_request_number=pr_num,
+        pull_request_url=pr_url,
+        verdict_summary=verdict_summary,
+        verdict_passed=verdict_passed,
+        created_at=rec.created_at,
+        updated_at=getattr(rec, "updated_at", None) or rec.created_at,
+    )
+
+
+
 
 
 # ------------------------------------------------------------------ policy

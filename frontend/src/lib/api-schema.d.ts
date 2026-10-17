@@ -197,6 +197,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Dashboard
+         * @description The signed-in user's personalized dashboard view.
+         *
+         *     Returns the publisher or contributor dashboard scoped to the authenticated party.
+         *     Anonymous requests are refused with 401; half-onboarded sessions without role or
+         *     party_id return 409.
+         */
+        get: operations["get_dashboard_api_v1_dashboard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -1039,6 +1063,35 @@ export interface components {
              */
             settled_at: string;
         };
+        /** ContributorDashboardOut */
+        ContributorDashboardOut: {
+            /** Party Id */
+            party_id: string;
+            /** Handle */
+            handle: string;
+            /** Github Login */
+            github_login?: string | null;
+            /** Reputation */
+            reputation: number;
+            /** Settled Count */
+            settled_count: number;
+            /** Owed In Flight Usdc */
+            owed_in_flight_usdc: number;
+            /** About To Release Usdc */
+            about_to_release_usdc: number;
+            /** Paid This Year Usdc */
+            paid_this_year_usdc: number;
+            /** Total Earned Usdc */
+            total_earned_usdc: number;
+            /** Payout Wallet Set */
+            payout_wallet_set: boolean;
+            /** Payout Address */
+            payout_address?: string | null;
+            /** Action Needed */
+            action_needed?: components["schemas"]["DashboardIssueItem"][];
+            /** All Work */
+            all_work?: components["schemas"]["DashboardIssueItem"][];
+        };
         /**
          * ContributorProfile
          * @description What anyone may see about a contributor: no wallet, no provider reference.
@@ -1061,6 +1114,66 @@ export interface components {
         CriteriaRequest: {
             /** Criteria */
             criteria: string[];
+        };
+        /** DashboardIssueItem */
+        DashboardIssueItem: {
+            /** Id */
+            id: string;
+            /** Github Issue Number */
+            github_issue_number: number;
+            /** Title */
+            title: string;
+            /** Repo */
+            repo: string;
+            /** Price Usdc */
+            price_usdc: number;
+            /** State */
+            state: string;
+            /**
+             * Next Action
+             * @enum {string}
+             */
+            next_action: "approve_criteria" | "commit_funds" | "watch_deadline" | "review_and_merge" | "contact_approver" | "open_pr" | "wait_verdict" | "rework" | "wait_merge" | "claim_expired" | "settled" | "closed";
+            /** Next Action Label */
+            next_action_label: string;
+            /** Action Needed */
+            action_needed: boolean;
+            /** Awaiting Approver */
+            awaiting_approver?: string | null;
+            /** Criteria Approved At */
+            criteria_approved_at?: string | null;
+            /** Contributor Id */
+            contributor_id?: string | null;
+            /** Claim Id */
+            claim_id?: string | null;
+            /** Pull Request Number */
+            pull_request_number?: number | null;
+            /** Pull Request Url */
+            pull_request_url?: string | null;
+            /** Verdict Summary */
+            verdict_summary?: string | null;
+            /** Verdict Passed */
+            verdict_passed?: boolean | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** DashboardOut */
+        DashboardOut: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "publisher" | "contributor";
+            publisher?: components["schemas"]["PublisherDashboardOut"] | null;
+            contributor?: components["schemas"]["ContributorDashboardOut"] | null;
         };
         /** Decision */
         Decision: {
@@ -1316,6 +1429,12 @@ export interface components {
             deadline?: string | null;
             /** Github Url */
             github_url: string;
+            /** Awaiting Approver */
+            awaiting_approver?: string | null;
+            /** Criteria Approved At */
+            criteria_approved_at?: string | null;
+            /** Contributor Id */
+            contributor_id?: string | null;
         };
         /**
          * MeOut
@@ -1520,6 +1639,27 @@ export interface components {
             category_limits?: {
                 [key: string]: string;
             };
+        };
+        /** PublisherDashboardOut */
+        PublisherDashboardOut: {
+            /** Party Id */
+            party_id: string;
+            /** Name */
+            name: string;
+            /** Github Login */
+            github_login?: string | null;
+            /** Budget Remaining Usdc */
+            budget_remaining_usdc: number;
+            /** Committed Escrow Usdc */
+            committed_escrow_usdc: number;
+            /** Released Usdc */
+            released_usdc: number;
+            /** Connected Repos */
+            connected_repos?: string[];
+            /** Action Needed */
+            action_needed?: components["schemas"]["DashboardIssueItem"][];
+            /** All Issues */
+            all_issues?: components["schemas"]["DashboardIssueItem"][];
         };
         /**
          * PublisherListing
@@ -2142,6 +2282,26 @@ export interface operations {
             };
         };
     };
+    get_dashboard_api_v1_dashboard_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardOut"];
+                };
+            };
+        };
+    };
     health_api_v1_health_get: {
         parameters: {
             query?: never;
@@ -2168,6 +2328,7 @@ export interface operations {
                 /** @description Filter by lifecycle state */
                 state?: string | null;
                 publisher_id?: string | null;
+                contributor_id?: string | null;
                 compliance_only?: boolean;
             };
             header?: never;
