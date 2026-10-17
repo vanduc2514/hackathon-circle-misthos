@@ -1377,6 +1377,40 @@ class Store:
             )
         return works
 
+    def _build(self, spec: dict) -> IssueRecord:
+        publisher = self.repo.get_publisher(spec["publisher_id"])
+        assert publisher is not None, spec["publisher_id"]
+        signals = ComplexitySignals(**spec["signals"])
+        proposal = propose(
+            signals,
+            compliance_driven=spec.get("compliance_driven", False),
+            comparables=self._comparables_for(signals, spec["repo"]),
+            urgency=Usdc.from_decimal(spec["urgency"]) if spec.get("urgency") else None,
+            risk_premium=Usdc.from_decimal(spec["risk"]) if spec.get("risk") else None,
+        )
+        target = IssueState(spec["state"])
+        now = _now()
+        if "price" in spec:
+            price = Usdc.from_decimal(spec["price"]) if spec["price"] else None
+        else:
+            price = proposal.recommended
+        return IssueRecord(
+            id=self._next_issue_id(),
+            repo=spec["repo"],
+            number=spec["number"],
+            title=spec["title"],
+            summary=spec["summary"],
+            state=target if target in _PRE_FUNDING else IssueState.AWAITING_APPROVAL,
+            labels=spec["labels"],
+            compliance_driven=spec.get("compliance_driven", False),
+            acceptance_criteria=spec["criteria"],
+            publisher_id=spec["publisher_id"],
+            created_at=now - timedelta(days=spec["age_days"]),
+            proposal=proposal,
+            price=price,
+            escrow_term=spec.get("escrow_term") or lifecycle.DEFAULT_ESCROW_TERM,
+        )
+
     def _comparables_for(
         self, signals: ComplexitySignals, repo: str, *, exclude: str | None = None
     ) -> list[Comparable]:

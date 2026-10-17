@@ -302,6 +302,7 @@ class SeededStore(Store):
             created_at=now - timedelta(days=spec["age_days"]),
             proposal=proposal,
             price=price,
+            escrow_term=spec.get("escrow_term") or lifecycle.DEFAULT_ESCROW_TERM,
         )
 
         if spec.get("signals_read"):

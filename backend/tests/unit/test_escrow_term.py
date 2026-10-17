@@ -25,17 +25,20 @@ from misthos.domain.issue import (
 )
 from misthos.repositories import MemoryRepository
 from misthos.schemas import PublishRequest
-from misthos.services.github import SimulatedGitHub
 from misthos.store import Store
+from tests.support.fake_chain import FakeChain
+from tests.support.fake_github import FakeGitHub
+from tests.support.seed_data import _seed_publishers
 
 REPO = "acme/ledger"
 PUBLISHER = "PUB-1"
 
 
 def make_store() -> Store:
-    store = Store(MemoryRepository(), github=SimulatedGitHub())
-    store.reset()
-    return store
+    repo = MemoryRepository()
+    for pub in _seed_publishers().values():
+        repo.save_publisher(pub)
+    return Store(repo, chain=FakeChain(), github=FakeGitHub())
 
 
 class TestEscrowTermValidation:
