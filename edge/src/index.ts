@@ -14,9 +14,10 @@
  * Python core.
  */
 
-import express, { type Request, type Response } from 'express'
+import express, { type NextFunction, type Request, type Response } from 'express'
 import { CATALOG } from './catalog.js'
 import { CORE_PAID_PREFIX, catalogOf, coreClient, freeApiKeys, paidRouter, prices } from './paid.js'
+import { sellerPage } from './seller-page.js'
 import { createRail } from './x402-gate.js'
 import { walletStatus, type WalletOp } from './circle-cli.js'
 import { createWalletService } from './circle-wallets.js'
@@ -72,10 +73,17 @@ async function certificateSigner(): Promise<string | null> {
   return signer.value
 }
 
-/** The seller page's data: every paid route, its price, how to pay, and who signs the
- * certificates it sells. Free. */
-app.get('/paid', async (_req: Request, res: Response) => {
-  res.json(await catalogOf(rail, CATALOG, priced, { certificate_signer: await certificateSigner() }))
+/** The seller page: every paid route, its price, how to pay, and who signs the
+ * certificates it sells. Free. JSON for an agent, HTML for a person. */
+app.get('/paid', async (req: Request, res: Response) => {
+  const catalog = await catalogOf(rail, CATALOG, priced, {
+    certificate_signer: await certificateSigner(),
+  })
+  if (req.accepts(['application/json', 'text/html']) === 'text/html') {
+    res.type('html').send(sellerPage(catalog as unknown as Parameters<typeof sellerPage>[0]))
+    return
+  }
+  res.json(catalog)
 })
 
 /**
@@ -125,6 +133,26 @@ app.post('/wallet/:op', async (req: Request, res: Response) => {
     return
   }
   res.json({ accepted: true, op, note: 'Circle CLI call would run here.' })
+})
+
+/** Anything else is not here, in JSON like every other answer. */
+app.use((_req: Request, res: Response) => {
+  res.status(404).json({ error: 'not_found' })
+})
+
+/**
+ * What a handler did not catch: a body that is not JSON, or a bug. The answer says
+ * which in a word and nothing more: no stack, no path, no address of anything behind
+ * the edge.
+ */
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  const parse = (err as { type?: string }).type === 'entity.parse.failed'
+  const tooLarge = (err as { type?: string }).type === 'entity.too.large'
+  if (!parse && !tooLarge) console.error(JSON.stringify({ event: 'edge.error', error: String(err) }))
+  if (res.headersSent) return
+  if (parse) res.status(400).json({ error: 'bad_json', charged: false })
+  else if (tooLarge) res.status(413).json({ error: 'too_large', charged: false })
+  else res.status(500).json({ error: 'internal_error', charged: false })
 })
 
 if (process.env.NODE_ENV !== 'test') {

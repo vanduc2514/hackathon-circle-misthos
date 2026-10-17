@@ -52,7 +52,7 @@ keys and rate limits are per process unless `MISTHOS_REDIS_URL` points at Redis.
 
 ## Project layout
 
-Four code folders, one per runtime boundary. State that crosses a boundary crosses over
+Five code folders, one per runtime boundary. State that crosses a boundary crosses over
 HTTP or a contract, never by importing across folders.
 
 ```
@@ -62,7 +62,8 @@ backend/     Python 3.11: FastAPI API, pure domain, agents, workers
              tests/{unit,integration}/
 frontend/    Vite + React SPA, typed client generated from the API schema
              src/{routes,components,lib}/
-edge/        Node + Express: x402 payment gate and Circle CLI wallet bridge
+edge/        Node + Express: the x402 seller (the paid API) and Circle wallet bridge
+mcp/         Node: the buyer-side MCP server that pays for the paid API, with a cap
 contracts/   Foundry: MisthosEscrow on Arc
              src/ test/ script/
 docs/        Business documentation (misthos/) and architecture
@@ -104,27 +105,29 @@ mise run dev             # FastAPI :8000 + Vite :5173
 mise run dev:api         # backend only
 mise run dev:web         # frontend only
 mise run dev:edge        # edge service :8080
-mise run test            # backend + web + contracts
+mise run dev:mcp         # the buyer-side MCP server, over stdio
+mise run test            # every suite
 mise run test:backend    # pytest
 mise run test:web        # vitest
 mise run test:edge       # node --test
+mise run test:mcp        # node --test
 mise run test:contracts  # forge test
-mise run lint            # ruff + tsc for both TS packages + stale-ABI check
+mise run lint            # ruff + tsc for every TS package + stale-ABI check
 mise run abi:contracts   # re-export MisthosEscrow's ABI after a contract change
 mise run codegen         # regenerate frontend API types from the live schema
 ```
 
 `setup:<runtime>`, `lint:<runtime>` and `test:<runtime>` exist for one runtime at a
-time; the unqualified tasks are the four of them together.
+time; the unqualified tasks are all of them together.
 
 Prefer the `mise run` task over the underlying command so the tool versions match. Run
 `mise run lint` and the relevant `mise run test:*` before calling a change done.
 
 ## Continuous integration
 
-[.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every pull request, in four
-jobs, one per runtime: `ruff` and `pytest`, then `tsc` and `vitest`, then the edge
-`tsc` and `node --test`, then `forge test`. Each job installs only its own dependencies through
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every pull request, in one
+job per runtime: `ruff` and `pytest`, then `tsc` and `vitest`, then the edge's and the
+MCP server's `tsc` and `node --test`, then `forge test`. Each job installs only its own dependencies through
 `mise run setup:<runtime>`, so a failure names the runtime it came from.
 
 `mise run ci` is the same thing locally. CI never reaches a chain, Circle or GitHub:
@@ -190,6 +193,11 @@ trim trailing whitespace (Markdown excluded).
   Circle CLI bridge). Business logic belongs in the Python backend.
 - Local `node --test` for tests. Return the module's `app` as a default export and only
   `listen()` when `NODE_ENV !== 'test'`.
+
+### TypeScript — MCP server (`mcp/`)
+
+- The edge's conventions. It is a buyer, not a service: it never imports from `edge/`,
+  and its tests run against a fake seller, never the network.
 
 ### Solidity (`contracts/`)
 

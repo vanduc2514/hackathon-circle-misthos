@@ -202,6 +202,35 @@ describe('the running edge', () => {
     assert.equal(catalog.routes.find((r) => r.id === 'screen')?.available, false)
   })
 
+  it('shows a person the seller page, from the same catalog', async () => {
+    const res = await fetch(`${base}/paid`, { headers: { Accept: 'text/html' } })
+    const html = await res.text()
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-type') ?? '', /text\/html/)
+    assert.match(html, /Misthos paid API/)
+    assert.match(html, /Arc testnet/)
+    assert.match(html, new RegExp(ARC_USDC))
+    assert.match(html, /POST \/paid\/review/)
+    assert.match(html, /\$2\.00/)
+    assert.match(html, new RegExp(SIGNER))
+    assert.ok(!html.includes(coreAt))
+  })
+
+  it('answers a body that is not JSON, and a path that is not here, in JSON and no more', async () => {
+    const bad = await fetch(`${base}/paid/price`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{not json',
+    })
+    const text = await bad.text()
+    assert.equal(bad.status, 400)
+    assert.deepEqual(JSON.parse(text), { error: 'bad_json', charged: false })
+    assert.doesNotMatch(text, /at |node_modules|\/src\//)
+    const missing = await fetch(`${base}/api/v1/auth/me`)
+    assert.equal(missing.status, 404)
+    assert.deepEqual(await missing.json(), { error: 'not_found' })
+  })
+
   it('no longer sells the free metrics, and sells nothing it does not list', async () => {
     for (const path of ['/paid/pricing-report', '/paid/api/v1/metrics', '/paid/anything']) {
       const res = await fetch(`${base}${path}`)

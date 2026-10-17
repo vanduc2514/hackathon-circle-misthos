@@ -327,6 +327,25 @@ its terms and a legal review, so until `EDGE_PAID_SCREENING=true` on the edge an
 `MISTHOS_PAID_SCREENING_ENABLED=true` on the core, it answers `503
 route_unavailable` before any price is named, and nobody signs a payment for it.
 
+## Distribution (#205)
+
+- **The seller page.** `GET /paid` on the edge answers HTML to a browser and JSON to an
+  agent, from the same catalog, so the page cannot disagree with what is charged: every
+  route, its price, the network and asset, the seller's address, the certificate signer,
+  and a call that works.
+- **The MCP server.** [mcp/](../mcp/README.md) offers one tool per paid route, reads the
+  prices from `GET /paid`, does the 402 handshake from the agent's own Gateway balance,
+  and keeps every call inside a spend cap and a per-call cap. A review's price is held
+  until it is collected, then counted once.
+- **Buyers.** [BUYING.md](./BUYING.md): an EOA, the faucet, a Gateway deposit, a call.
+- **Listings.** [LISTING.md](./LISTING.md) has the copy for Circle's Agent Marketplace
+  and an x402 directory, and the checks to run before listing. Listing itself is done
+  by whoever holds those accounts.
+
+Every error the edge gives is JSON, `{"error": "<code>", …, "charged": false}`: a body
+that is not JSON is `400 bad_json`, a path that is not here `404 not_found`, and a bug
+`500 internal_error`, with no stack, path or internal address in any of them.
+
 ## The core's side
 
 The core's paid routes are internal: every request must carry `X-Misthos-Core-Token`

@@ -67,6 +67,16 @@ Notable changes to Misthos, newest first. The format follows
     receipt only.
   - `POST /paid/screen`: off until the provider's terms and a legal review clear it,
     and until then a 503 before any price.
+- **Distribution for the paid API** (#205).
+  - `mcp/`, a new runtime folder: an MCP server with one tool per paid route, priced
+    from the seller's catalog, that pays each 402 from the agent's own Gateway balance
+    inside a spend cap and a per-call cap, waits for a review and collects it, and
+    answers every error as a code with nothing internal in it. `npm run wallet` funds
+    the Gateway balance. Its own CI job runs `tsc` and its tests.
+  - `GET /paid` is also the seller page, in HTML for a browser.
+  - The edge answers every error in JSON, without a stack or an address.
+  - [docs/BUYING.md](docs/BUYING.md) for buyers, [docs/LISTING.md](docs/LISTING.md) for
+    the marketplace listings, which are done by hand.
 
 ### Removed
 

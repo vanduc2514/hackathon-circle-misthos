@@ -71,9 +71,14 @@ description = "x402 gate and Circle CLI bridge on :8080"
 dir = "edge"
 run = "npm run dev"
 
+[tasks."dev:mcp"]
+description = "The buyer-side MCP server for the paid API, over stdio"
+dir = "mcp"
+run = "npm run dev"
+
 [tasks.setup]
 description = "Install every runtime's dependencies"
-depends = ["setup:backend", "setup:web", "setup:edge", "setup:contracts"]
+depends = ["setup:backend", "setup:web", "setup:edge", "setup:mcp", "setup:contracts"]
 
 [tasks."setup:backend"]
 description = "Install the backend's Python dependencies"
@@ -90,6 +95,11 @@ description = "Install the edge service's npm dependencies"
 dir = "edge"
 run = "npm install"
 
+[tasks."setup:mcp"]
+description = "Install the MCP server's npm dependencies"
+dir = "mcp"
+run = "npm install"
+
 [tasks."setup:contracts"]
 description = "Clone the Foundry dependencies"
 dir = "contracts"
@@ -97,7 +107,7 @@ run = "test -d lib/forge-std || git clone --depth 1 https://github.com/foundry-r
 
 [tasks.test]
 description = "Run every test suite"
-run = "mise run test:backend && mise run test:web && mise run test:edge && mise run test:contracts"
+run = "mise run test:backend && mise run test:web && mise run test:edge && mise run test:mcp && mise run test:contracts"
 
 [tasks."test:backend"]
 dir = "backend"
@@ -112,13 +122,18 @@ description = "Run the edge service's tests"
 dir = "edge"
 run = "npm test"
 
+[tasks."test:mcp"]
+description = "Run the MCP server's tests"
+dir = "mcp"
+run = "npm test"
+
 [tasks."test:contracts"]
 dir = "contracts"
 run = "forge test -vvv"
 
 [tasks.lint]
 description = "Lint and typecheck"
-depends = ["lint:backend", "lint:web", "lint:edge", "lint:contracts"]
+depends = ["lint:backend", "lint:web", "lint:edge", "lint:mcp", "lint:contracts"]
 
 [tasks."lint:backend"]
 description = "Ruff over the backend"
@@ -144,6 +159,11 @@ run = "mise run abi:contracts && git diff --exit-code contracts/deployments/"
 [tasks."lint:edge"]
 description = "Typecheck the edge service"
 dir = "edge"
+run = "npx tsc --noEmit"
+
+[tasks."lint:mcp"]
+description = "Typecheck the MCP server"
+dir = "mcp"
 run = "npx tsc --noEmit"
 
 [tasks.ci]

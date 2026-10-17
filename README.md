@@ -301,9 +301,11 @@ mise run review:harness
 
 Agents can buy read-only views of what Misthos knows, one call at a time, over x402:
 the edge answers `402` with the price in Arc testnet USDC, and a call paid through
-Circle Gateway Nanopayments gets its answer. A call that fails is not charged. `GET
-/paid` on the edge lists what is for sale. [docs/PAID-API.md](docs/PAID-API.md) covers
-how a call is paid, the free tier, and reconciling the books.
+Circle Gateway Nanopayments gets its answer. A call that fails is not charged.
+`GET /paid` on the edge lists what is for sale, as a page in a browser.
+[docs/PAID-API.md](docs/PAID-API.md) covers how a call is paid, the free tier, and
+reconciling the books; [docs/BUYING.md](docs/BUYING.md) how to pay; and
+[mcp/](mcp/README.md) is an MCP server that pays for an agent, within a spend cap.
 
 ## License
 

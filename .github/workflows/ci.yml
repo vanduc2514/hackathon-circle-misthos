@@ -86,6 +86,16 @@ jobs:
       - run: mise run lint:edge
       - run: mise run test:edge
 
+  mcp:
+    name: mcp - tsc and node test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - run: mise run setup:mcp
+      - run: mise run lint:mcp
+      - run: mise run test:mcp
+
   contracts:
     name: contracts - abi and forge test
     runs-on: ubuntu-latest

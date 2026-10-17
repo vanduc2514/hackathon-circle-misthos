@@ -299,6 +299,17 @@ export function settlementLog(core: Core): SettlementLog {
   }
 }
 
+/** A handler that fails answers a plain error and charges nothing; what failed stays
+ * in the log, never in the answer. */
+function safe(handler: (req: Request, res: Response) => Promise<void>) {
+  return (req: Request, res: Response) => {
+    handler(req, res).catch((err: unknown) => {
+      console.error(JSON.stringify({ event: 'paid.error', path: req.path, error: String(err) }))
+      if (!res.headersSent) res.status(500).json({ error: 'internal_error', charged: false })
+    })
+  }
+}
+
 export function paidRouter(opts: PaidRouterOptions): Router {
   const { rail, routes, core } = opts
   const priced = opts.prices ?? prices(routes)
@@ -406,6 +417,10 @@ export function paidRouter(opts: PaidRouterOptions): Router {
         return { kind: 'failed', status: 502, body: { error: 'core_did_not_queue_the_job', charged: false } } as const
       }
       const receipt = randomBytes(24).toString('base64url')
+      for (const [id, job] of jobs) {
+        // A job nobody collected in time is dropped with its payment, never settled.
+        if (Date.now() - job.at > jobTtl) jobs.delete(id)
+      }
       jobs.set(jobId, {
         route: route.id,
         request,
@@ -536,11 +551,11 @@ export function paidRouter(opts: PaidRouterOptions): Router {
       }
     }
 
-    if (route.method === 'GET') router.get(route.path, handle)
-    else router.post(route.path, handle)
+    if (route.method === 'GET') router.get(route.path, safe(handle))
+    else router.post(route.path, safe(handle))
 
     if (route.async) {
-      router.get(`${route.path}/jobs/:jobId`, async (req: Request, res: Response) => {
+      router.get(`${route.path}/jobs/:jobId`, safe(async (req: Request, res: Response) => {
         const jobId = String(req.params.jobId)
         const held = jobs.get(jobId)
         const given = (req.header('authorization') ?? '').replace(/^receipt\s+/i, '')
@@ -572,7 +587,7 @@ export function paidRouter(opts: PaidRouterOptions): Router {
         }
         if (paymentResponse) res.setHeader('PAYMENT-RESPONSE', paymentResponse)
         res.status(status).json(body)
-      })
+      }))
     }
   }
 
