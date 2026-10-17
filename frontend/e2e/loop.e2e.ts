@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { signInThroughTheGate } from './gate'
+import { connectRepository, createIssue } from './publish'
 
 /**
  * #73's definition of done: a publisher and a contributor complete the loop from
@@ -51,10 +52,13 @@ test('a publisher and a contributor take an issue from publication to payment', 
 
   await test.step('the publisher signs in and publishes an issue', async () => {
     await onboard(publisher, 'publisher', 'Acme Ledger Co', 'acme-ledger')
-    await publisher.getByRole('link', { name: 'Publish', exact: true }).click()
-    await publisher.getByLabel('Repository').fill('acme/ledger-core')
-    await publisher.getByLabel('Title').fill('Retry idempotently when settlement returns 503')
-    await publisher.getByLabel('Labels, comma separated').fill('bug, reliability')
+    await connectRepository(request, 'acme-ledger', 'acme/ledger-core')
+    await createIssue(
+      publisher,
+      'acme/ledger-core',
+      'Retry idempotently when settlement returns 503',
+      'bug, reliability',
+    )
     await publisher.getByLabel('What the work is worth, in USDC').fill('250')
     await publisher.getByRole('button', { name: 'Publish at this price' }).click()
     await expect(publisher).toHaveURL(/\/issues\/ISS-\d+$/)

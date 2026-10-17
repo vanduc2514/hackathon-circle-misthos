@@ -232,6 +232,38 @@ class TestReadPath:
         tree = github.last("GET", f"/repos/{REPO}/git/trees/trunk")
         assert tree.url.params["recursive"] == "1"
 
+    def test_open_issues_are_listed_without_pull_requests(
+        self, app: GitHubApp, github: FakeGitHub
+    ) -> None:
+        github.on(
+            "GET",
+            f"/repos/{REPO}/issues",
+            [
+                {
+                    "number": 7,
+                    "title": "Locales",
+                    "labels": [{"name": "bug"}],
+                    "html_url": f"https://github.com/{REPO}/issues/7",
+                },
+                {
+                    "number": 8,
+                    "title": "A pull request",
+                    "labels": [],
+                    "html_url": f"https://github.com/{REPO}/pull/8",
+                    "pull_request": {},
+                },
+            ],
+        )
+
+        found = app.open_issues(REPO)
+
+        assert [(i.number, i.title, i.labels, i.url) for i in found] == [
+            (7, "Locales", ("bug",), f"https://github.com/{REPO}/issues/7")
+        ]
+        asked = github.last("GET", f"/repos/{REPO}/issues")
+        assert asked.url.params["state"] == "open"
+        assert asked.url.params["per_page"] == "100"
+
     def test_a_pull_request_is_not_an_issue(self, app: GitHubApp, github: FakeGitHub) -> None:
         github.on("GET", f"/repos/{REPO}/issues/88", {"title": "x", "pull_request": {}})
         with pytest.raises(GitHubError, match="is a pull request"):
@@ -308,6 +340,30 @@ class TestWritePath:
     def test_the_simulation_opens_nothing(self) -> None:
         with pytest.raises(GitHubError):
             SimulatedGitHub().create_issue(REPO, "Pin the parser", "", [])
+
+    def test_a_label_is_created_when_missing_and_then_added_to_the_issue(
+        self, app: GitHubApp, github: FakeGitHub
+    ) -> None:
+        github.on("POST", f"/repos/{REPO}/labels", {"message": "Validation Failed"}, status=422)
+        github.on("POST", f"/repos/{REPO}/issues/87/labels", [{"name": "misthos"}])
+
+        app.add_labels(REPO, 87, ["misthos"])
+
+        created = json.loads(github.last("POST", f"/repos/{REPO}/labels").content)
+        added = json.loads(github.last("POST", f"/repos/{REPO}/issues/87/labels").content)
+        assert created["name"] == "misthos"
+        assert added == {"labels": ["misthos"]}
+
+    def test_a_label_that_cannot_be_created_is_a_github_error(
+        self, app: GitHubApp, github: FakeGitHub
+    ) -> None:
+        github.on(
+            "POST", f"/repos/{REPO}/labels", {"message": "Resource not accessible"}, status=403
+        )
+
+        with pytest.raises(GitHubError, match="Resource not accessible"):
+            app.add_labels(REPO, 87, ["misthos"])
+        assert not any(r.url.path.endswith("/issues/87/labels") for r in github.requests)
 
     def test_a_review_is_pinned_to_the_reviewed_commit(
         self, app: GitHubApp, github: FakeGitHub

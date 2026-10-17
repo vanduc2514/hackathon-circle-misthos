@@ -1,11 +1,12 @@
 import { expect, test } from '@playwright/test'
 import { signInThroughTheGate } from './gate'
+import { connectRepository } from './publish'
 
 /**
  * #120: a double click on "Publish at this price" published the same GitHub issue
  * twice, and so did publishing it again later, which let one pull request be paid on
- * both. The button sends the form once, and a second publish of an open issue is
- * refused with a link to the listing it already has.
+ * both. The button sends the form once, and the picker no longer offers an issue that
+ * already has a listing (#199), so the second attempt cannot even be made.
  */
 test('a GitHub issue is published once, and publishing it again links to it', async ({
   page,
@@ -22,28 +23,28 @@ test('a GitHub issue is published once, and publishing it again links to it', as
   })
 
   await signInThroughTheGate(page, 'publisher', 'acme-widgets', 'Acme Widgets')
+  await connectRepository(request, 'acme-widgets', 'acme/widgets')
 
-  const fill = async (repo: string) => {
+  const fill = async () => {
     await page.getByRole('link', { name: 'Publish', exact: true }).click()
-    await page.getByLabel('Repository').fill(repo)
-    await page.getByLabel('Issue number').fill('77')
-    await page.getByLabel('Title').fill('Retry on 503')
+    await page.getByLabel('Repository').selectOption('acme/widgets')
+    await page.getByLabel('Issue', { exact: true }).selectOption('77')
     await page.getByLabel('What the work is worth, in USDC').fill('250')
   }
 
-  await fill('acme/widgets')
+  await fill()
   await page.getByRole('button', { name: 'Publish at this price' }).dblclick()
   await expect(page).toHaveURL(/\/issues\/ISS-\d+$/)
-  const first = page.url()
   expect(published).toHaveLength(1)
 
-  await fill('Acme/Widgets')
-  await page.getByRole('button', { name: 'Publish at this price' }).click()
-  const refused = page.locator('.error-box')
-  await expect(refused).toContainText(/acme\/widgets#77 is already on Misthos as ISS-\d+/)
-  await refused.getByRole('link', { name: /^Open ISS-\d+$/ }).click()
-  await expect(page).toHaveURL(first)
-  expect(published).toHaveLength(2)
+  // Back at the form the issue is still on GitHub, but it already has a listing, so
+  // the picker says so and keeps it out of reach.
+  await page.getByRole('link', { name: 'Publish', exact: true }).click()
+  await page.getByLabel('Repository').selectOption('acme/widgets')
+  const listed = page.getByLabel('Issue', { exact: true }).locator('option[value="77"]')
+  await expect(listed).toContainText('already on Misthos')
+  await expect(listed).toHaveAttribute('disabled', '')
+  expect(published).toHaveLength(1)
 
   expect(errors).toEqual([])
 })

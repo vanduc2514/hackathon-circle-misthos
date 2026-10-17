@@ -9,16 +9,37 @@ the signals it was given, which is how the seeded demo stays as it was.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from misthos.domain.review import ChangedFile
 from misthos.domain.signals import IssueFacts
 from misthos.services.github.base import (
     GitHubError,
     Installation,
+    OpenIssue,
     PullRequest,
     ReviewEvent,
     StatusState,
+)
+
+# The demo's GitHub has a couple of open issues, so the picker has something to show
+# after the App is installed in the simulation (#199). They belong to a repository the
+# seed does not use, so no listed fixture is offered twice.
+_DEMO_ISSUES = (
+    IssueFacts(
+        repo="acme/widgets",
+        number=77,
+        title="Retry on 503",
+        body="The retry budget ignores jitter, so a cold cache exhausts it.",
+        labels=("bug",),
+    ),
+    IssueFacts(
+        repo="acme/widgets",
+        number=78,
+        title="Show the fee split before funding",
+        body="A publisher should see what the contributor receives before committing.",
+        labels=("feature",),
+    ),
 )
 
 
@@ -59,6 +80,8 @@ class SimulatedGitHub:
             self.installations: list[Installation] = []
             self.sent = []
             self.fail_writes = False
+            for facts in _DEMO_ISSUES:
+                self.issues[(facts.repo.lower(), facts.number)] = facts
 
     # --------------------------------------------------------- installations
 
@@ -76,6 +99,28 @@ class SimulatedGitHub:
 
     def read_issue(self, repo: str, number: int) -> IssueFacts | None:
         return self.issues.get((repo.lower(), number))
+
+    def open_issues(self, repo: str, limit: int = 100) -> list[OpenIssue]:
+        wanted = repo.lower()
+        with self._guard:
+            found = sorted(
+                (
+                    facts
+                    for (name, _), facts in self.issues.items()
+                    if name == wanted
+                ),
+                key=lambda facts: facts.number,
+            )
+        return [
+            OpenIssue(
+                repo=facts.repo,
+                number=facts.number,
+                title=facts.title,
+                labels=facts.labels,
+                url=f"https://github.com/{facts.repo}/issues/{facts.number}",
+            )
+            for facts in found[:limit]
+        ]
 
     def read_pull_request(self, repo: str, number: int) -> PullRequest:
         found = self.pulls.get((repo.lower(), number))
@@ -100,6 +145,17 @@ class SimulatedGitHub:
     def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> int:
         """Refused: the simulation has no repository of its own to open one in."""
         raise GitHubError(f"the simulated GitHub holds no repository {repo} to open an issue in")
+
+    def add_labels(self, repo: str, number: int, labels: list[str]) -> None:
+        if not labels:
+            return
+        self._send(Sent("labels", repo, str(number), ",".join(labels)))
+        key = (repo.lower(), number)
+        with self._guard:
+            facts = self.issues.get(key)
+            if facts is not None:
+                merged = tuple(dict.fromkeys([*facts.labels, *labels]))
+                self.issues[key] = replace(facts, labels=merged)
 
     def review(self, repo: str, number: int, head_sha: str, event: ReviewEvent, body: str) -> None:
         self._send(Sent("review", repo, str(number), body, state=event.value))

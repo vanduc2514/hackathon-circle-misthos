@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { signInThroughTheGate } from './gate'
+import { connectRepository, createIssue } from './publish'
 
 /**
  * The acceptance-criteria box belongs to the issue it is showing.
@@ -33,12 +34,10 @@ test('the criteria box follows the issue, not the previous page', async ({ page,
 
   // Two of this publisher's issues, each with its own drafted criteria.
   await onboardPublisher(page, 'Acme Ledger Co', 'acme-ledger')
+  await connectRepository(request, 'acme-ledger', 'acme/ledger-core')
   const published: string[] = []
   for (const title of ['Reject the unterminated locale string', 'Bound the retry backoff']) {
-    await page.getByRole('link', { name: 'Publish', exact: true }).click()
-    await page.getByLabel('Repository').fill('acme/ledger-core')
-    await page.getByLabel('Title').fill(title)
-    await page.getByLabel('Labels, comma separated').fill('bug')
+    await createIssue(page, 'acme/ledger-core', title, 'bug')
     await page.getByLabel('What the work is worth, in USDC').fill('250')
     await page.getByRole('button', { name: 'Publish at this price' }).click()
     await expect(page).toHaveURL(/\/issues\/ISS-\d+$/)

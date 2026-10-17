@@ -8,6 +8,8 @@ put on the issue that now exists.
 
 from __future__ import annotations
 
+import pytest
+
 from misthos.domain.signals import IssueFacts
 from misthos.repositories import MemoryRepository
 from misthos.schemas import PublishRequest
@@ -63,8 +65,10 @@ class TestPublishingDescription:
         github = CreatingGitHub()
         rec = publish(store_with(github))
 
+        # The platform label goes on with the publisher's, so the issue it creates is
+        # visible to the label-driven flow as well as to this form (#199).
         assert github.created == [
-            (REPO, "Retry on 503", "The retry budget ignores jitter.", ["bug"])
+            (REPO, "Retry on 503", "The retry budget ignores jitter.", ["bug", "misthos"])
         ]
         # The number is GitHub's, and the issue that was priced is the one created.
         assert rec.number == 901
@@ -86,6 +90,26 @@ class TestPublishingDescription:
             assert "Issues are disabled" in str(exc)
         else:  # pragma: no cover - the refusal is the point of the test
             raise AssertionError("publishing invented a number instead of reporting the refusal")
+
+    def test_linking_an_existing_issue_adds_the_platform_label(self) -> None:
+        github = CreatingGitHub()
+        store = store_with(github)
+
+        publish(store, number=412)
+
+        assert [(sent.kind, sent.repo, sent.target, sent.body) for sent in github.sent] == [
+            ("labels", REPO, "412", "misthos")
+        ]
+
+    def test_a_label_that_cannot_be_added_refuses_the_link(self) -> None:
+        github = CreatingGitHub()
+        store = store_with(github)
+        github.fail_writes = True
+
+        with pytest.raises(UnreadableIssue, match="misthos"):
+            publish(store, number=412)
+
+        assert store.find_open(REPO, 412) is None
 
     def test_the_simulation_still_makes_a_number_up(self) -> None:
         """Its GitHub holds no repository to open an issue in, so nothing is created."""

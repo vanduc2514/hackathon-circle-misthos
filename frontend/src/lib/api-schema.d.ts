@@ -836,6 +836,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/publishers/{publisher_id}/github/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connected Issues
+         * @description The open issues in one of the publisher's connected repositories (#199).
+         *
+         *     The picker offers these instead of asking for a number. An issue already open on
+         *     Misthos is returned with the listing it has, so the form can point at it rather
+         *     than let a second publish be refused after the fact.
+         */
+        get: operations["connected_issues_api_v1_publishers__publisher_id__github_issues_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/webhooks/github": {
         parameters: {
             query?: never;
@@ -1338,6 +1362,27 @@ export interface components {
          *     with `PATCH /issues/{issue_id}/price` until someone claims the issue (#142).
          */
         FundRequest: Record<string, never>;
+        /**
+         * GitHubIssueOut
+         * @description One open issue in a connected repository, for the publisher's picker (#199).
+         */
+        GitHubIssueOut: {
+            /** Number */
+            number: number;
+            /** Title */
+            title: string;
+            /** Labels */
+            labels: string[];
+            /** Html Url */
+            html_url: string;
+            /** Listed Issue Id */
+            listed_issue_id?: string | null;
+        };
+        /** GitHubIssuesOut */
+        GitHubIssuesOut: {
+            /** Issues */
+            issues: components["schemas"]["GitHubIssueOut"][];
+        };
         /** GitHubLinkStart */
         GitHubLinkStart: {
             /** Authorize Url */
@@ -3400,6 +3445,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepositoriesOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    connected_issues_api_v1_publishers__publisher_id__github_issues_get: {
+        parameters: {
+            query: {
+                /** @description owner/name, as the connection lists it */
+                repo: string;
+            };
+            header?: never;
+            path: {
+                publisher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubIssuesOut"];
                 };
             };
             /** @description Validation Error */

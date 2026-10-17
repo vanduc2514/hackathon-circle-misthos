@@ -718,6 +718,21 @@ class RepoConnection(BaseModel):
     connected_at: datetime
 
 
+class GitHubIssueOut(BaseModel):
+    """One open issue in a connected repository, for the publisher's picker (#199)."""
+
+    number: int
+    title: str
+    labels: list[str]
+    html_url: str
+    listed_issue_id: str | None = None
+    """The Misthos listing that already prices this issue, if one is open."""
+
+
+class GitHubIssuesOut(BaseModel):
+    issues: list[GitHubIssueOut]
+
+
 class RepositoriesOut(BaseModel):
     """A publisher's connected repositories, and how to connect more."""
 

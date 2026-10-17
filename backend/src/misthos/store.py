@@ -1653,13 +1653,18 @@ class Store:
         started = time.perf_counter()
         facts = None
         number = payload.number
+        platform_label = settings.github_label
         if number is None and not payload.signals and self.github.creates_issues:
             # The publisher is describing work GitHub does not hold yet, so the issue
             # is opened first and the price is put on the issue that now exists. A
             # number of our own would price something no contributor could open.
+            labels = list(payload.labels)
+            named = {name.lower() for name in labels}
+            if platform_label and platform_label.lower() not in named:
+                labels.append(platform_label)
             try:
                 number = self.github.create_issue(
-                    payload.repo, payload.title, payload.summary, list(payload.labels)
+                    payload.repo, payload.title, payload.summary, labels
                 )
             except GitHubError as exc:
                 raise UnreadableIssue(
@@ -1671,6 +1676,19 @@ class Store:
             except GitHubError as exc:
                 raise UnreadableIssue(
                     f"could not read {payload.repo}#{number} from GitHub: {exc}"
+                ) from exc
+        if payload.number is not None and not payload.signals and platform_label:
+            # Linking an issue that already exists puts the platform label on it, so
+            # the label-driven flow and the web app price the same issue (#199). The
+            # add is idempotent, and a failure aborts before anything is listed. It
+            # happens after the read so the listing keeps the labels the issue had
+            # when the publisher chose it.
+            try:
+                self.github.add_labels(payload.repo, payload.number, [platform_label])
+            except GitHubError as exc:
+                raise UnreadableIssue(
+                    f"could not add the {platform_label} label to "
+                    f"{payload.repo}#{payload.number}: {exc}"
                 ) from exc
         # The publisher's price, and the only thing that bounds what the escrow commits
         # (#142). Absent on an issue the GitHub flow listed, which is priced later by

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { signInThroughTheGate } from './gate'
+import { connectRepository, createIssue } from './publish'
 
 /**
  * #142: the publisher names the price, and the number they name is committed.
@@ -21,9 +22,12 @@ test('a publisher names the price, and that is what the escrow commits', async (
 
   // A price the engine would not have suggested: the form takes it, and says what the
   // split will be before anything is published.
-  await page.getByRole('link', { name: 'Publish', exact: true }).click()
-  await page.getByLabel('Repository').fill('acme/ledger-core')
-  await page.getByLabel('Title').fill('Retry idempotently when settlement returns 503')
+  await connectRepository(request, 'acme-ledger', 'acme/ledger-core')
+  await createIssue(
+    page,
+    'acme/ledger-core',
+    'Retry idempotently when settlement returns 503',
+  )
   await page.getByLabel('What the work is worth, in USDC').fill('40')
   await expect(page.getByText(/The contributor receives \$36\.00/)).toBeVisible()
   await page.getByRole('button', { name: 'Publish at this price' }).click()
@@ -80,9 +84,12 @@ test('a price below the platform minimum is refused before anything is published
 
   await signInThroughTheGate(page, 'publisher', 'acme-ledger', 'Acme Ledger Co')
 
-  await page.getByRole('link', { name: 'Publish', exact: true }).click()
-  await page.getByLabel('Repository').fill('acme/ledger-core')
-  await page.getByLabel('Title').fill('Retry idempotently when settlement returns 503')
+  await connectRepository(request, 'acme-ledger', 'acme/ledger-core')
+  await createIssue(
+    page,
+    'acme/ledger-core',
+    'Retry idempotently when settlement returns 503',
+  )
   await page.getByLabel('What the work is worth, in USDC').fill('1')
   await expect(page.getByText(/Any amount from \$5/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Publish at this price' })).toBeDisabled()

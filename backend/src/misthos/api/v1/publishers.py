@@ -19,11 +19,14 @@ from misthos.domain.policy import PolicyRefusal
 from misthos.schemas import (
     Account,
     AuditExport,
+    GitHubIssueOut,
+    GitHubIssuesOut,
     PolicyRequest,
     Publisher,
     RepositoriesOut,
 )
 from misthos.services.audit import export, to_csv
+from misthos.services.github import GitHubError
 from misthos.store import store
 
 router = APIRouter(prefix="/publishers", tags=["publishers"])
@@ -105,3 +108,42 @@ async def repositories(publisher_id: str, account: Account | None = SIGNED_IN) -
             else None
         ),
     )
+
+
+@router.get("/{publisher_id}/github/issues", response_model=GitHubIssuesOut)
+async def connected_issues(
+    publisher_id: str,
+    repo: str = Query(min_length=3, description="owner/name, as the connection lists it"),
+    account: Account | None = SIGNED_IN,
+) -> GitHubIssuesOut:
+    """The open issues in one of the publisher's connected repositories (#199).
+
+    The picker offers these instead of asking for a number. An issue already open on
+    Misthos is returned with the listing it has, so the form can point at it rather
+    than let a second publish be refused after the fact.
+    """
+    require_owner_or_simulation(account, publisher_id, "see issues in this repository")
+    if await run_in_threadpool(store.get_publisher, publisher_id) is None:
+        raise HTTPException(status_code=404, detail=f"no publisher {publisher_id}")
+    connection = await run_in_threadpool(store.connection, repo)
+    if connection is None or connection.publisher_id != publisher_id:
+        raise HTTPException(
+            status_code=404, detail=f"{repo} is not a repository this publisher connected"
+        )
+    try:
+        found = await run_in_threadpool(store.github.open_issues, connection.repo)
+    except GitHubError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    issues = []
+    for issue in found:
+        listed = await run_in_threadpool(store.find_open, connection.repo, issue.number)
+        issues.append(
+            GitHubIssueOut(
+                number=issue.number,
+                title=issue.title,
+                labels=list(issue.labels),
+                html_url=issue.url,
+                listed_issue_id=listed.id if listed is not None else None,
+            )
+        )
+    return GitHubIssuesOut(issues=issues)

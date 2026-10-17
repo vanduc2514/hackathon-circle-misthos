@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { signInThroughTheGate } from './gate'
+import { connectRepository, createIssue } from './publish'
 
 /**
  * #119: after the publisher declines, the contributor could submit the same commit
@@ -24,9 +25,12 @@ test('after a decline the same commit is not offered for review again; a new one
   for (const page of [publisher, contributor]) page.on('pageerror', (e) => errors.push(e.message))
 
   await onboard(publisher, 'publisher', 'Acme Ledger Co', 'acme-ledger')
-  await publisher.getByRole('link', { name: 'Publish', exact: true }).click()
-  await publisher.getByLabel('Repository').fill('acme/ledger-core')
-  await publisher.getByLabel('Title').fill('Retry idempotently when settlement returns 503')
+  await connectRepository(request, 'acme-ledger', 'acme/ledger-core')
+  await createIssue(
+    publisher,
+    'acme/ledger-core',
+    'Retry idempotently when settlement returns 503',
+  )
   await publisher.getByLabel('What the work is worth, in USDC').fill('250')
   await publisher.getByRole('button', { name: 'Publish at this price' }).click()
   await expect(publisher).toHaveURL(/\/issues\/ISS-\d+$/)

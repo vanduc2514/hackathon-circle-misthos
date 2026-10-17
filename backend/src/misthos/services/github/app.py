@@ -29,6 +29,7 @@ from misthos.services.github.base import (
     STATUS_CONTEXT,
     GitHubError,
     Installation,
+    OpenIssue,
     PullRequest,
     ReviewEvent,
     StatusState,
@@ -49,6 +50,10 @@ MAX_FILE_PAGES = 30
 # GitHub lists an installation's repositories 100 to a page. An account with more than
 # this many is past what one reconcile pass should read.
 MAX_REPOSITORY_PAGES = 30
+# A label created only so an issue can carry it; the platform's own label means
+# something, and GitHub needs some colour for the chip.
+LABEL_COLOR = "ededed"
+MAX_OPEN_ISSUES = 100
 
 
 @dataclass
@@ -238,6 +243,27 @@ class GitHubApp:
             prior_attempts=abandoned_attempts(timeline or []),
         )
 
+    def open_issues(self, repo: str, limit: int = MAX_OPEN_ISSUES) -> list[OpenIssue]:
+        """Open issues, one bounded page, without the pull requests GitHub mixes in."""
+        found = self._get(
+            repo,
+            f"/repos/{repo}/issues",
+            state="open",
+            per_page=str(min(limit, MAX_OPEN_ISSUES)),
+        )
+        issues = [
+            OpenIssue(
+                repo=repo,
+                number=int(raw["number"]),
+                title=str(raw.get("title") or ""),
+                labels=tuple(label["name"] for label in raw.get("labels", [])),
+                url=str(raw.get("html_url") or ""),
+            )
+            for raw in found or []
+            if "pull_request" not in raw
+        ]
+        return issues[:limit]
+
     def read_pull_request(self, repo: str, number: int) -> PullRequest:
         return pull_request_from(repo, self._get(repo, f"/repos/{repo}/pulls/{number}"))
 
@@ -288,6 +314,24 @@ class GitHubApp:
             {"title": title, "body": body, "labels": labels},
         )
         return int(opened["number"])
+
+    def add_labels(self, repo: str, number: int, labels: list[str]) -> None:
+        """Create any label the repository lacks, then add them all to the issue.
+
+        GitHub refuses to attach a label that does not exist yet with 422, which is
+        the same answer it gives for one that already does when it is created. Only
+        that refusal is swallowed: a permissions failure must surface, because an
+        unlabelled link is invisible to the label-driven flow.
+        """
+        if not labels:
+            return
+        for name in labels:
+            try:
+                self._post(repo, f"/repos/{repo}/labels", {"name": name, "color": LABEL_COLOR})
+            except GitHubError as exc:
+                if ": 422 " not in str(exc):
+                    raise
+        self._post(repo, f"/repos/{repo}/issues/{number}/labels", {"labels": list(labels)})
 
     def review(self, repo: str, number: int, head_sha: str, event: ReviewEvent, body: str) -> None:
         self._post(
