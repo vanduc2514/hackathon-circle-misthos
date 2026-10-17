@@ -45,7 +45,7 @@ If you only read one thing, read [05 How it works](./05-how-it-works.md). The di
 | Product flow | Decided at the level of who decides what |
 | Assignment model | Decided. The publisher names a fixed price before publication, first claim takes the work. No bidding, no auction, no negotiation. |
 | Pricing engine | Decided (#142). The estimate is advice: comparables, an effort estimate and a range, none of which bound a price. The publisher names the price, bounded only by the platform's $5 minimum and $100,000 maximum. |
-| Revenue model | One line: a flat 10 percent of every settlement. Plans still exist and gate features, never the rate. Proposed, not validated with a paying customer |
+| Revenue model | One line: a flat 10 percent of every settlement. Proposed, not validated with a paying customer |
 | Regulatory position | Understood well enough to know it is not a blocker, not engineered |
 | Traction | One design partner conversation, nothing more. Be honest about this in any pitch. |
 

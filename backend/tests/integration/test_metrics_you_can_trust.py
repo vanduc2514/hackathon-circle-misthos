@@ -237,24 +237,3 @@ class TestStanding:
         assert rows[-1]["issue_id"] == "ISS-1006"
         assert rows[-1]["points"] >= reputation.POINTS_PER_SETTLED_ISSUE
         assert client.get(f"{API}/contributors/NOPE/reputation").status_code == 404
-
-
-class TestTheLoopInPublic:
-    def test_the_loop_reports_what_settled_without_wallets_or_transfers(
-        self, client: TestClient
-    ) -> None:
-        paid = store.approve_and_accept("ISS-1006")
-        body = client.get(f"{API}/loop").json()
-
-        assert body["settled_issues"] == len(released())
-        assert body["recent"][0]["issue_id"] == "ISS-1006"
-        text = str(body).lower()
-        assert paid.payout_tx_hash is not None and paid.payout_tx_hash.lower() not in text
-        assert all(c.wallet.address.lower() not in text for c in store.list_contributors())
-
-    def test_one_repositorys_watchers_see_their_repository(self, client: TestClient) -> None:
-        rec = store.approve_and_accept("ISS-1006")
-        body = client.get(f"{API}/loop", params={"repo": rec.repo}).json()
-        assert body["repo"] == rec.repo
-        assert {s["repo"] for s in body["recent"]} == {rec.repo}
-        assert client.get(f"{API}/loop", params={"repo": "nobody/here"}).json()["recent"] == []

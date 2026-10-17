@@ -86,9 +86,6 @@ export default function AccountPage() {
                     <Link className="btn primary" to="/publish">
                       Publish an issue
                     </Link>
-                    <Link className="btn" to={`/spend?publisher=${account.party_id}`}>
-                      Your spend
-                    </Link>
                   </>
                 )}
                 {account.role === 'contributor' && (

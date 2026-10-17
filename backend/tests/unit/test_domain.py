@@ -172,7 +172,7 @@ class TestPricing:
         assert p.band_low < p.recommended < p.band_high
 
     def test_the_platform_fee_is_ten_percent_of_the_commitment(self) -> None:
-        """One rate for everyone, whatever plan the publisher is on (#142)."""
+        """One rate for everyone, fixed by the escrow (#142)."""
         price = Usdc.from_decimal("500")
         assert platform_fee(price) == Usdc.from_decimal("50")
         assert contributor_share(price) == Usdc.from_decimal("450")

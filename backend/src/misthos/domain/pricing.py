@@ -25,9 +25,9 @@ from misthos.domain.money import Usdc
 
 # What the platform keeps of every settlement, in the basis points the escrow takes
 # and enforces (`MisthosEscrow.release`, bounded there at MAX_FEE_BPS = 1500).
-# One rate for everyone: a rate that moves with a subscription is a second price for
-# the same service, and it made what a publisher could spend depend on which plan
-# they happened to be on.
+# One rate for everyone: a rate that moves with what a publisher buys is a second
+# price for the same service, and it made what a publisher could spend depend on
+# which plan they happened to be on.
 PLATFORM_FEE_BPS = 1_000
 
 

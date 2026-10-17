@@ -36,7 +36,6 @@ These come from the business documents and are treated as fixed. Every decision 
 | C3 | Fixed price set before publication, no bidding, no auction, no negotiation | [06 The pricing engine](./misthos/06-pricing-engine.md) |
 | C4 | GitHub is the only forge integration | [02 Problem and vision](./misthos/02-problem-and-vision.md) |
 | C5 | Agent budgets enforced somewhere the agent cannot reach | [08 Trust, compliance and risk](./misthos/08-trust-compliance-and-risk.md) |
-| C6 | Finance integration is read-only | [06 The pricing engine](./misthos/06-pricing-engine.md) |
 | C7 | Settlement cost must stay viable for a $50 issue | [07 Business model and economics](./misthos/07-business-model-and-economics.md) |
 
 C1 and C5 pull in opposite directions and set the shape of the whole system. C1 says the money cannot sit with us. C5 says a limit must bind an agent that we do not fully trust. The resolution is that the money sits in a contract and the limit lives in the same contract, so enforcement is a property of the chain rather than of our application code.
@@ -149,7 +148,7 @@ The Circle box is a platform dependency rather than a library. Three things in t
 | Component | Responsibility | Notes |
 | --- | --- | --- |
 | `frontend/` | The interface for publishers and contributors | Vite 6, React 19, TypeScript. An SPA, so no server rendering and no SEO to lose behind a login |
-| Routing | `react-router-dom` | The public landing page at `/`, then the app under its own nav: overview (`/overview`), issues, issue detail with its actions, loop, spend, plans, publish, account |
+| Routing | `react-router-dom` | The public landing page at `/`, then the app under its own nav: overview (`/overview`), issues, issue detail with its actions, publish, account |
 | Server state | TanStack Query | Caching and invalidation. A lifecycle action invalidates the issue, its timeline, the list and the metrics in one go |
 | API access | `openapi-typescript` plus `openapi-fetch` | The client is generated from the API's OpenAPI schema, so backend and frontend drift is a compile error rather than a runtime surprise |
 
@@ -172,12 +171,11 @@ This process exists for exactly two reasons and both are Node-only dependencies.
 | `backend/src/misthos/api/` | HTTP surface under `/api/v1` | FastAPI. Sign-in, issues, proposals, lifecycle actions, metrics, decisions, webhook receiver. `api/session.py` decides who may do what |
 | `backend/src/misthos/domain/` | Lifecycle state machine, money units, pricing engine | Deliberately IO-free, so the two places a bug costs real funds are testable without a database |
 | `backend/src/misthos/store.py` | The lifecycle's single writer, and the seeded simulation | Every move is checked against the transition table and saved through a repository |
-| `backend/src/misthos/services/metrics.py` | Every dashboard number | Computed from money events and lifecycle records, so each one is reproducible from the database alone. `/loop` is the public view of the same numbers |
+| `backend/src/misthos/services/metrics.py` | Every dashboard number | Computed from money events and lifecycle records, so each one is reproducible from the database alone |
 | `backend/src/misthos/repositories/` | Persistence behind one protocol | Memory by default and as the test double; Postgres, or a SQLite file, when `MISTHOS_DATABASE_URL` is set. Alembic migrations in `migrations/` |
 | Pricing engine | Produces the suggested band, recommendation and justification | Scores six signals, then anchors them to settled comparables. Advice only: the publisher names the price, and nothing here refuses or caps it |
 | Review service | `backend/src/misthos/services/review/`: judges each criterion against the diff, and the verdict follows by fixed rules (`domain/review.py`) | The verdict is the decision. Only a merge or the grace period moves money |
 | Settlement orchestrator | Commits, releases, refunds, reconciles | The only component that can move money, and it moves it by calling a contract |
-| Finance adapter | Reads budget and cash context, read-only | Pluggable. Firefly III first, then beancount, Odoo, ERPNext, Invoice Ninja |
 
 The lifecycle is the single writer of issue state. Letting the pricing engine or the webhook handler write state directly is the fastest way to get an issue that is both funded and refunded.
 
@@ -421,7 +419,6 @@ flowchart LR
     I["Issue from GitHub"] --> C["Complexity signals"]
     I --> S["Semantic scoping"]
     O["Prior settled issues"] --> M["Market comparables"]
-    F["Publisher finance context<br/>read-only, display only,<br/>not in the price path"]
     C --> A["Advisory band, recommendation<br/>and justification"]
     M --> A
     S --> A
@@ -435,14 +432,7 @@ flowchart LR
 How it is built today (epic #11):
 
 - **Comparables are the platform's own settled issues** (`domain/comparables.py`, #42). An issue is compared with work settled in the last year whose signals are within three quarters of a point, as a weighted root mean square, with the same repository ranked first. Each settled price is scaled by how much more or less effort this issue is. The median of those moves the formula's price a quarter of the way for one comparable, and at most half of the way however many there are. Confidence follows them and nothing else: low with none, high with three or more that agree within a factor of 1.5, medium otherwise. The proposal keeps the three closest, and the issue page shows them.
-- **The books inform, they do not bind** (`services/finance`, #43). The declared budget and what a connected books say are shown to the publisher alone (`/publishers/{id}/finance`, `FinanceOut`). The reader used to supply the ceiling the engine could not exceed; since #142 it is out of the price path entirely, and publishing is never refused on budget grounds. When the operator connects a publisher's books in `MISTHOS_FINANCE_CONNECTIONS` (Firefly III, or a beancount ledger with a Fava budget), the adapter still reads them, and a connection stays configured by the operator rather than through the API, because it carries a credential or a server path.
 - **The weights are calibrated by a harness, not by the engine itself** (`python -m misthos.services.calibration`, #41). It replays the engine over issues whose worth is known and reports how often the worth falls inside the band. It fits the rate, and the weights once there are twenty issues. The corpus holds real issues only, and it is empty until the team scores them. `--settled` runs the harness on the platform's own settlements instead. Now that the publisher names the price, a settled amount is what a buyer paid rather than an independent valuation, so the report stays a self-consistency check rather than a calibration, and nothing is fitted from it. The harness tunes the advice only: no fitted value refuses or caps a price.
-
-The finance adapter is read-only by design. It answers two questions: what is left in the relevant budget, and what the cash position looks like. It never writes.
-
-Firefly III is the first adapter because the hackathon brief points at it, and it comes with limits worth recording. It is a personal finance manager with no chart of accounts, its own documentation refuses programmatic write access as unreliable, and its rules engine can delete a journal. That is why the adapter interface exists rather than a Firefly integration: the first customer running Odoo should be a new adapter, not a rewrite.
-
-The adapter falls back to a declared budget when no finance system is connected. That fallback has to work well, because most early publishers will use it, and it is a figure for the publisher to read rather than an input to any price.
 
 ## The review pipeline
 
@@ -502,7 +492,7 @@ erDiagram
 
 | Entity | Key fields | Notes |
 | --- | --- | --- |
-| Publisher | GitHub org or user id, wallet address, tier, budget rules | Identity is the GitHub account |
+| Publisher | GitHub org or user id, wallet address, budget rules | Identity is the GitHub account |
 | Issue | Repo, number, acceptance criteria, state, deadline | State owned by the lifecycle service |
 | PriceProposal | Band low, band high, recommended, signals, justification, confidence, fundable | The engine's suggestion on the issue, surfaced as `IssueOut.proposal`. `fundable` is always true: it never refuses or caps the price the publisher names |
 | EscrowCommitment | Issue id, amount, chain, tx hash, deadline | Mirrors on-chain state. The chain is the source of truth |
@@ -545,7 +535,7 @@ Every key is prefixed `misthos:`. The sweeper's single-runner lock is a Postgres
 
 A `released` money event is written with the transfer the chain returned, and the transaction hash is unique. A retry that tries to write the same hash fails on the constraint rather than paying twice, which is the failure the market research warns about: an agent that retries after a timeout can pay an invoice twice and the books will still balance. The idempotency key stops the retry before it reaches the chain, and the contract's `NotHeld` check stops a second release if one somehow did.
 
-## The organisation tier
+## The organisation's own controls
 
 An organisation sets its own spending policy, and the store enforces it at the two moments money moves, out of the agent's reach (`domain/policy.py`, #51):
 
@@ -553,18 +543,9 @@ An organisation sets its own spending policy, and the store enforces it at the t
 - **A release threshold with named approvers.** A payout above it is held as `await_approver` until one of them approves, whether the merge or the grace period triggered it. The approval is required, not requested.
 - **Approvers are GitHub logins, and the approval is the session's.** A login is what a session proves: the wallet signs in, and GitHub's OAuth links the login to it. So `POST /issues/{id}/approve-release` takes the approver from the signed-in account's linked login, never from the request, and the organisation must have named it. Holding the organisation's wallet confers nothing: its own account approves only if its own login is named. The contributor being paid never approves their own payout. A policy naming something that cannot be a login, such as an e-mail address, is refused, because no session could ever satisfy it. Only the simulation, for a visitor who is not signed in, accepts a name in the request, as it does for a claim.
 
-`/publishers/{id}/spend` reports what was budgeted, committed, released and refunded in the year, by category, and beside each limit what was committed this calendar month, counted by the same function funding checks the limit with (#50). It also lists the settled compliance and security fixes a security review can file. `/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). All three are the organisation's alone: a signed-in publisher sees and sets its own, and only the simulation serves any.
+`/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). It is the organisation's alone: a signed-in publisher reads its own, and only the simulation serves any.
 
 Every CSV the platform serves, the audit export and a contributor's statement alike, carries other people's words: issue titles, repository and organisation names, reasons. A cell a spreadsheet would run as a formula, one starting with `=`, `+`, `-`, `@`, a tab or a carriage return, is written as text with a leading apostrophe. A plain number keeps its sign (`services/spreadsheet.py`).
-
-**Plans** (`domain/plans.py`, `api/v1/plans.py`, #53) follow the tier table in 06. Open costs nothing. Team costs $249 a month, and adds budget rules, approval thresholds and spend reporting. Enterprise starts at $2,000 a month, and adds the audit export, SSO and a support commitment. The take rate and the minimum price are the same on every plan, and a plan changes neither: the platform keeps a flat 10 percent (`PLATFORM_FEE_BPS`), and $5 is the lowest price any plan may publish. A subscription buys controls, reporting and support, not a different rate.
-
-- **What a plan unlocks.** Each of those routes answers 402, naming the plan that includes it. Enforcement of a policy already set never stops, even when a plan lapses, because a limit that protects an organisation's money is not a feature to switch off for non-payment.
-- **Buying Team.** Team is bought from the web app without a conversation. The publisher chooses it and is told what to send: USDC on Arc, from its own wallet, to `MISTHOS_PLATFORM_WALLET`. It confirms the transaction, and the server reads the USDC `Transfer` log from the receipt over JSON-RPC (`services/billing/arc.py`) before switching the plan on. We never hold a key that moves a publisher's money, and one transaction pays for one period.
-- **When a period ends.** The sweeper marks a period that ended unpaid as past due, gives it seven days' grace, and then moves the organisation back to Open. A cancelled plan ends at its period end.
-- **Enterprise** is agreed in a contract and recorded by an operator (`python -m misthos.services.contracts`).
-- **The simulation** has its own rail, so the demo can buy Team with a button.
-- **Not built yet:** SSO, which needs organisation membership beyond one wallet per party.
 
 ## Trust boundaries
 
@@ -605,7 +586,7 @@ The line between T1 and T2 is a wallet signature. A wallet signs in with a Sign-
 | Publish, approve criteria, fund, decline, approve a release, set policy | The publishing organisation, linked to GitHub | 401 signed out, 403 anyone else |
 | Claim, submit, dispute | A contributor linked to GitHub; a submission must be a pull request it opened | 401 signed out, 403 anyone else |
 | Ask for a review now | The publisher or the claimant | 401, 403 |
-| Spend, audit export, statements, a publisher's budget and policy | The party itself | 401, 403 |
+| Audit export, statements, a publisher's budget and policy | The party itself | 401, 403 |
 | Everything else read-only | Anyone | |
 
 Criteria are approved before the price, and funding is refused until they are (#21), so the contract a contributor claims is the one the publisher read. The simulation still lets an anonymous visitor drive the seeded demo, and only the simulation serves the demo stepper, which fabricates a pull request and a merge. It also serves the simulated GitHub's side to the web app: `/demo/issues/{id}/pull-request` opens the claimant's pull request and `/demo/issues/{id}/merge` merges it, handled exactly as the real merge's webhook is, so the browser can run the loop with every other step real. Its reset, `/demo/reset`, needs no sign-in and deletes every row, so it is refused wherever a database is configured unless the operator sets `MISTHOS_ALLOW_DEMO_RESET` for a demo they mean to throw away.
@@ -683,7 +664,6 @@ Inference is roughly nine hundred times the settlement cost. Any optimisation ef
 | ADR-3 | Fixed price set before publication, no bidding | See [06 The pricing engine](./misthos/06-pricing-engine.md). A price round rewards the least careful bidder | Medium |
 | ADR-4 | The review agent decides, and the publisher's merge is the only human signature on release | C2, and the hackathon's own framing of where an agent's authority must stop | Superseded: the human second opinion was a third party with a fee, and it cost more than it bought |
 | ADR-5 | GitHub only | One integration done deeply beats three done shallowly. Acceptance criteria can read the project's own test suite | Medium |
-| ADR-6 | Finance integration is read-only and adapter-shaped | Writing to a customer's ledger inherits liability with no product benefit. Firefly III is too narrow to be the only shape | Easy |
 | ADR-7 | Identity verification at payout, not signup | Verification at signup is the largest contributor drop-off cause | Easy |
 | ADR-8 | Arc is the only settlement chain | Sub-second deterministic finality and cent-level fees are the reason the product is viable at small amounts | Hard while the cost advantage holds |
 | ADR-9 | Decision log is append-only | Delegated authority requires a record that can be replayed. A mutable log is not evidence | Hard |

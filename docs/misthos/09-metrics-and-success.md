@@ -22,7 +22,7 @@ Why this one:
 | Vision alignment | The vision is that any dependency defect should be fundable, and this is the count of times that happened |
 | Quantitative | A countable integer, from a ledger rather than an estimate |
 | Actionable | Supply, pricing accuracy, review speed and publisher activation all move it |
-| Leading indicator | Growing settled issues precedes subscription revenue by two quarters, because Enterprise buyers start as per-issue users |
+| Leading indicator | Growing settled issues and a rising repeat publisher rate precede matched volume |
 
 ### The alternatives we rejected
 
@@ -101,7 +101,7 @@ Where it breaks: agreement on easy patches is easy. Report it by complexity band
 
 Retention on the demand side. The share of publishers who fund a second issue within 60 days.
 
-Why it matters: a marketplace where every transaction is a first transaction has no business underneath it. This is the leading indicator for subscription revenue.
+Why it matters: a marketplace where every transaction is a first transaction has no business underneath it. This is the leading indicator for matched volume.
 
 Where it breaks: one large publisher can dominate the number, so report the distribution as well as the average.
 

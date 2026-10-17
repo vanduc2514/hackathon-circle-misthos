@@ -16,7 +16,7 @@ import {
 import { api, type MetricsOut } from '../lib/client'
 import { useHealth, useMe } from '../lib/session'
 import LandingIssues from '../components/LandingIssues'
-import { GateLink, useGate } from '../components/SignInGate'
+import { useGate } from '../components/SignInGate'
 import '../landing.css'
 
 /**
@@ -239,7 +239,6 @@ export default function Landing() {
           <nav className="main-nav" aria-label="Main navigation">
             <a href="#how-it-works">How it works</a>
             <a href="#why-misthos">Why Misthos</a>
-            <GateLink to="/plans">Plans</GateLink>
             <a href="#current-issues">Current issues</a>
           </nav>
           <HeaderAction />

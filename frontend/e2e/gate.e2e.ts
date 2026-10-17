@@ -32,7 +32,6 @@ test('every way in from the landing page opens the gate while it is unfinished',
 
   const ways = [
     () => header.getByRole('button', { name: 'Sign in' }),
-    () => page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Plans' }),
     () => page.locator('.issue-table tbody tr').first().getByRole('link'),
     () => page.getByRole('link', { name: /See every issue/ }),
   ]

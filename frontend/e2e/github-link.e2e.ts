@@ -27,7 +27,7 @@ test('without an OAuth App the gate offers no GitHub button and links by login',
   for (const needed of [
     'MISTHOS_GITHUB_OAUTH_CLIENT_ID',
     'MISTHOS_GITHUB_OAUTH_CLIENT_SECRET',
-    'http://localhost:5173/api/v1/auth/github/callback',
+    health.github_oauth_callback_url,
   ]) {
     await expect(note).toContainText(needed)
   }

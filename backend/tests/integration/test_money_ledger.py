@@ -70,27 +70,6 @@ class TestBooking:
         assert rec.paid + rec.platform_fee == committed
         assert rec.platform_fee.base_units == committed.base_units * rec.escrow.fee_bps // 10_000
 
-    def test_a_plan_that_lapses_after_the_commitment_does_not_move_the_fee(self) -> None:
-        """#53 lets a tier move mid-flight. The escrow holds this issue's rate from the
-        commitment, so a settlement cannot charge a rate the publisher never approved."""
-        rec = store.approve_and_accept("ISS-1006")
-        assert rec.escrow is not None
-        assert rec.platform_fee is not None
-        rate = rec.escrow.fee_bps
-        fee = rec.platform_fee
-
-        # Put the publisher on a different tier after the money is in.
-        publisher = store.get_publisher(rec.publisher_id)
-        assert publisher is not None
-        other = "enterprise" if publisher.tier != "enterprise" else "open"
-        store.set_contract_plan(rec.publisher_id, other, _now() + timedelta(days=30))
-
-        again = get(rec.id)
-        assert again.escrow is not None
-        assert again.escrow.fee_bps == rate
-        assert again.platform_fee == fee
-        assert again.received == again.paid
-
     def test_a_refund_returns_the_commitment_to_the_publisher(self) -> None:
         funded = get("ISS-1001")
         assert funded.deadline is not None

@@ -32,9 +32,9 @@ def upgrade() -> None:
     op.add_column("issues", sa.Column("terms_amount_base_units", sa.BigInteger(), nullable=True))
     op.add_column("issues", sa.Column("terms_fee_bps", sa.Integer(), nullable=True))
     op.add_column("issues", sa.Column("terms_wallet", sa.String(length=64), nullable=True))
-    op.add_column("issues", sa.Column("terms_deadline", sa.TIMESTAMP(timezone=True), nullable=True))
+    op.add_column("issues", sa.Column("terms_deadline", sa.DateTime(timezone=True), nullable=True))
     op.add_column(
-        "issues", sa.Column("terms_approved_at", sa.TIMESTAMP(timezone=True), nullable=True)
+        "issues", sa.Column("terms_approved_at", sa.DateTime(timezone=True), nullable=True)
     )
 
 

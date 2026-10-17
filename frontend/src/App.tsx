@@ -9,10 +9,7 @@ import Dashboard from './routes/Dashboard'
 import Issues from './routes/Issues'
 import IssueDetail from './routes/IssueDetail'
 import Landing from './routes/Landing'
-import Loop from './routes/Loop'
-import Plans from './routes/Plans'
 import Publish from './routes/Publish'
-import Spend from './routes/Spend'
 
 // The profile loads on demand, as the sign-in gate's dialog does (components/SignInGate).
 const AccountPage = lazy(() => import('./routes/Account'))
@@ -49,15 +46,6 @@ function Layout() {
           </NavLink>
           <NavLink to="/issues" className={({ isActive }) => (isActive ? 'active' : '')}>
             Issues
-          </NavLink>
-          <NavLink to="/loop" className={({ isActive }) => (isActive ? 'active' : '')}>
-            Loop
-          </NavLink>
-          <NavLink to="/spend" className={({ isActive }) => (isActive ? 'active' : '')}>
-            Spend
-          </NavLink>
-          <NavLink to="/plans" className={({ isActive }) => (isActive ? 'active' : '')}>
-            Plans
           </NavLink>
           {account?.role === 'publisher' && (
             <NavLink to="/publish" className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -137,10 +125,7 @@ export default function App() {
           <Route path="/overview" element={<Dashboard />} />
           <Route path="/issues" element={<Issues />} />
           <Route path="/issues/:issueId" element={<IssueDetail />} />
-          <Route path="/loop" element={<Loop />} />
-          <Route path="/spend" element={<Spend />} />
           <Route path="/publish" element={<Publish />} />
-          <Route path="/plans" element={<Plans />} />
           <Route
             path="/account"
             element={

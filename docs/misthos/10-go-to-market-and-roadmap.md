@@ -48,7 +48,7 @@ The honest weakness is the loop coefficient. One settled issue does not produce 
 
 | Loop | Why not now |
 | --- | --- |
-| Collaboration | Inviting a teammate into a funded issue is a later feature. There is no team until the Enterprise tier exists. |
+| Collaboration | Inviting a teammate into a funded issue is a later feature. There is no team concept yet. |
 | Referral with a cash incentive | Paying contributors to recruit publishers looks like a bounty on signups and attracts the wrong behaviour. |
 | User-generated price index | Genuinely useful and impossible before there is transaction history. Keep the data clean and ship it in year two. |
 
@@ -128,7 +128,6 @@ Each of these is cheap, and each one can kill an assumption that the whole busin
 | 3 | Is the review agent good enough to be the only review? | Run it over ten historical pull requests where a human already decided | 85 percent agreement with the human verdict, and findings a maintainer calls useful | Three days |
 | 4 | Does the advice beside the price change what a buyer would have paid? | Show ten buyers the comparables and the effort estimate, then ask what they would pay. Compare against the same buyers' guess with no advice. | The advice moves the median price, in either direction, on at least four of ten | Two days |
 | 5 | Will a contributor claim a funded issue? | Publish one real funded issue and wait 72 hours | One claim, one pull request | One day |
-| 6 | Is finance context useful to a buyer for anything? | Read Firefly III budgets for two partners and compare them against what they actually fund | The budget matches their spending, or tells them something they did not know | Three days |
 
 Experiment 1 matters more than the other five combined. It is also the one most likely to be skipped, because it requires talking to a company and the others only require a keyboard.
 
