@@ -33,6 +33,16 @@ def every_store(request: pytest.FixtureRequest, tmp_path: Path) -> Store:
         if not url.startswith(("postgres://", "postgresql")):
             pytest.skip("set MISTHOS_DATABASE_URL to a Postgres database to run against it")
         repo = SqlRepository(url)
+    if isinstance(repo, SqlRepository):
+        # The CI Postgres database is shared by the whole run. Start each test from
+        # empty tables, the way the memory repository starts empty.
+        from misthos.models.tables import metadata
+
+        repo.migrate()
+        with repo.engine.begin() as conn:
+            for table in reversed(metadata.sorted_tables):
+                conn.execute(table.delete())
+
     store: Store = SeededStore(
         repository=repo,
         chain=FakeChain(),
