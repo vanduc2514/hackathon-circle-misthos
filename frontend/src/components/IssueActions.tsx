@@ -96,12 +96,17 @@ export async function perform(issueId: string, act: Act): Promise<IssueOut> {
 export function roleOn(issue: IssueOut, me: MeOut | null | undefined) {
   const account = me?.account ?? null
   const linked = Boolean(account?.github_login)
+  const isClaimant = linked && (
+    (Boolean(issue.contributor_id) && account?.party_id === issue.contributor_id) ||
+    Boolean(account?.party_id && issue.contributor_ids?.includes(account.party_id)) ||
+    Boolean(account?.party_id && issue.claims?.some(c => c.contributor_id === account.party_id && c.active))
+  )
   return {
     signedIn: Boolean(me),
     account,
     linked,
     publisher: linked && account?.party_id === issue.publisher_id,
-    claimant: linked && Boolean(issue.contributor_id) && account?.party_id === issue.contributor_id,
+    claimant: isClaimant,
     contributor: linked && account?.role === 'contributor',
   }
 }
