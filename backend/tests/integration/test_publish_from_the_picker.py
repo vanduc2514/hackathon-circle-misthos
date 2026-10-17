@@ -10,21 +10,19 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from test_api import API, sign_in
 
 from misthos.config import settings
+from misthos.domain.signals import IssueFacts
 from misthos.main import app
 from misthos.store import store
+from tests.support.fake_github import FakeGitHub
 
-LOGIN = "acme-widgets"
+API = "/api/v1"
 REPO = "acme/widgets"
+OTHER_REPO = "acme/gadgets"
+PUBLISHER = "PUB-1"
+OTHER_PUBLISHER = "PUB-2"
 INSTALLATION = 4242
-
-
-@pytest.fixture(autouse=True)
-def fresh_store() -> None:
-    store.reset()
-    yield
 
 
 @pytest.fixture
@@ -32,23 +30,47 @@ def client() -> TestClient:
     return TestClient(app)
 
 
-def connected(client: TestClient, *, seed: int = 11) -> dict:
-    account = sign_in(client, seed, "publisher", "Acme Widgets", LOGIN)
-    store.connect_repositories(INSTALLATION, LOGIN, [REPO])
-    return account
+def github() -> FakeGitHub:
+    assert isinstance(store.github, FakeGitHub)
+    return store.github
 
 
-def issues(client: TestClient, publisher_id: str, repo: str = REPO) -> dict:
-    return client.get(
-        f"{API}/publishers/{publisher_id}/github/issues", params={"repo": repo}
+def with_open_issues() -> None:
+    github().put_issue(
+        IssueFacts(
+            repo=REPO,
+            number=77,
+            title="Retry on 503",
+            body="The retry budget ignores jitter.",
+            labels=("bug",),
+        )
     )
+    github().put_issue(
+        IssueFacts(
+            repo=REPO,
+            number=78,
+            title="Show the fee split before funding",
+            body="A publisher should see what the contributor receives.",
+            labels=("feature",),
+        )
+    )
+
+
+def connect(publisher: str = PUBLISHER) -> None:
+    with_open_issues()
+    login = f"{publisher.lower()}-login"
+    store.connect_repositories(INSTALLATION, login, [REPO])
+
+
+def issues(client: TestClient, publisher: str = PUBLISHER, repo: str = REPO) -> dict:
+    return client.get(f"{API}/publishers/{publisher}/github/issues", params={"repo": repo})
 
 
 class TestListingConnectedIssues:
     def test_a_connected_repository_lists_its_open_issues(self, client: TestClient) -> None:
-        account = connected(client)
+        connect()
 
-        answer = issues(client, account["party_id"])
+        answer = issues(client)
 
         assert answer.status_code == 200, answer.text
         found = answer.json()["issues"]
@@ -61,17 +83,17 @@ class TestListingConnectedIssues:
     def test_a_repository_the_publisher_has_not_connected_is_refused(
         self, client: TestClient
     ) -> None:
-        account = connected(client)
+        connect()
 
-        answer = issues(client, account["party_id"], repo="other/thing")
+        answer = issues(client, repo="other/thing")
 
         assert answer.status_code == 404, answer.text
 
     def test_another_publishers_connection_is_not_listed(self, client: TestClient) -> None:
-        connected(client)
-        other = sign_in(client, 12, "publisher", "Other Co", "other-dev")
+        connect(PUBLISHER)
+        store.connect_repositories(INSTALLATION + 1, "pub-2-login", [OTHER_REPO])
 
-        answer = issues(client, other["party_id"])
+        answer = issues(client, OTHER_PUBLISHER)
 
         assert answer.status_code == 404, answer.text
 
@@ -80,7 +102,7 @@ class TestPublishingAListedIssue:
     def test_the_chosen_issue_is_listed_and_labelled_on_github(
         self, client: TestClient
     ) -> None:
-        account = connected(client)
+        connect()
 
         published = client.post(
             f"{API}/issues",
@@ -90,7 +112,7 @@ class TestPublishingAListedIssue:
                 "title": "",
                 "summary": "",
                 "labels": [],
-                "publisher_id": account["party_id"],
+                "publisher_id": PUBLISHER,
                 "price": "250",
             },
         )
@@ -98,13 +120,13 @@ class TestPublishingAListedIssue:
         assert published.status_code == 201, published.text
         listing = published.json()
         assert listing["number"] == 77
-        assert settings.github_label in store.github.issues[(REPO, 77)].labels
+        assert settings.github_label in github().issues[(REPO, 77)].labels
         assert any(
             sent.kind == "labels"
             and sent.target == "77"
             and sent.body == settings.github_label
-            for sent in store.github.sent
+            for sent in github().sent
         )
 
-        found = issues(client, account["party_id"]).json()["issues"]
+        found = issues(client).json()["issues"]
         assert found[0]["listed_issue_id"] == listing["id"]

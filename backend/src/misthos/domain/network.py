@@ -1,9 +1,9 @@
 """Which network this is, and whether its money is real.
 
 The label used to be a free-text setting that could say "arc-testnet" while the
-chain id pointed at mainnet. Judges and users weigh real usage differently from a
-demo, so the label is derived from the chain id and nothing else, and the money is
-described by the one fact that matters: can it be lost.
+chain id pointed at mainnet. Users weigh test usage differently from real, so the
+label is derived from the chain id and nothing else, and the money is described by
+the one fact that matters: can it be lost.
 
 Only the two Arc networks are known. Any other chain id is named by its id and its
 money is "unknown": this module will not call USDC on a chain it does not know
@@ -18,7 +18,7 @@ from typing import Literal
 ARC_MAINNET = 5042
 ARC_TESTNET = 5042002
 
-MoneyKind = Literal["simulated", "test", "real", "unknown"]
+MoneyKind = Literal["test", "real", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,6 @@ class Network:
     @property
     def description(self) -> str:
         return {
-            "simulated": "Simulation: no chain is contacted and no money moves.",
             "test": f"{self.label}: test USDC from a faucet, with no real value.",
             "real": f"{self.label}: real USDC. Settlement is irreversible.",
             "unknown": (
@@ -42,13 +41,12 @@ class Network:
         }[self.money]
 
 
-def network_for(chain_id: int, *, simulated: bool) -> Network:
+def network_for(chain_id: int) -> Network:
     """Describe the network from its chain id alone."""
     if chain_id == ARC_MAINNET:
-        name, label, live = "arc-mainnet", "Arc mainnet", "real"
+        name, label, money = "arc-mainnet", "Arc mainnet", "real"
     elif chain_id == ARC_TESTNET:
-        name, label, live = "arc-testnet", "Arc testnet", "test"
+        name, label, money = "arc-testnet", "Arc testnet", "test"
     else:
-        name, label, live = f"chain-{chain_id}", f"Chain {chain_id}", "unknown"
-    money: MoneyKind = "simulated" if simulated else live  # type: ignore[assignment]
+        name, label, money = f"chain-{chain_id}", f"Chain {chain_id}", "unknown"
     return Network(name=name, label=label, chain_id=chain_id, money=money)

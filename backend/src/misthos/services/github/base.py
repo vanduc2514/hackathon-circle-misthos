@@ -81,8 +81,7 @@ class GitHubGateway(Protocol):
     def list_installations(self) -> list[Installation]:
         """Every installation of the App, with the repositories each one covers.
 
-        Empty when the gateway cannot know: the simulation holds only what a test or a
-        demo put in it.
+        Empty when the gateway cannot know.
         """
 
     def installation_for(self, repo: str) -> Installation | None:
@@ -93,7 +92,7 @@ class GitHubGateway(Protocol):
 
     def read_issue(self, repo: str, number: int) -> IssueFacts | None:
         """The issue and what its repository says about the work, or None when this
-        gateway has nothing to read (the simulation without a fixture)."""
+        gateway has nothing to read."""
 
     def open_issues(self, repo: str, limit: int = 100) -> list[OpenIssue]:
         """The repository's open issues, without its pull requests, newest first.
@@ -117,7 +116,7 @@ class GitHubGateway(Protocol):
 
     creates_issues: bool
     """Whether publishing may open an issue. Only a gateway acting as the App can;
-    the simulation keeps its own GitHub and opens none there."""
+    a fake used by a test opens none there."""
 
     def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> int:
         """Open an issue and return the number GitHub gave it.

@@ -167,7 +167,7 @@ export default function LandingIssues() {
             )}
           </table>
         </div>
-        <p className="issues-demo-note">
+        <p className="issues-note">
           <GateLink to="/issues">See every issue, with its price and its record →</GateLink>
         </p>
       </div>

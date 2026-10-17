@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { siweMessage, toChecksumAddress, type SignInTerms } from './siwe'
-import { addressOf, demoWallet, personalDigest, signPersonal } from './wallet'
-import { secp256k1 } from '@noble/curves/secp256k1.js'
-import { keccak_256 } from '@noble/hashes/sha3.js'
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
+import { addressOf, signPersonal } from './wallet'
 
 const terms: SignInTerms = {
   nonce: '0123456789abcdef01234567',
@@ -68,16 +65,4 @@ describe('signing', () => {
     )
   })
 
-  it('gives a demo wallet a key that signs for its own address', async () => {
-    const wallet = demoWallet('contributor')
-    const raw = hexToBytes((await wallet.sign('hello')).slice(2))
-    const publicKey = secp256k1.Signature.fromBytes(
-      Uint8Array.of(raw[64] - 27, ...raw.slice(0, 64)),
-      'recovered',
-    )
-      .recoverPublicKey(personalDigest('hello'))
-      .toBytes(false)
-    const signer = '0x' + bytesToHex(keccak_256(publicKey.slice(1)).slice(-20))
-    expect(toChecksumAddress(signer)).toBe(wallet.address)
-  })
 })

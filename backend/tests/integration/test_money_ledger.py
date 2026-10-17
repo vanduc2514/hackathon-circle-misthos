@@ -22,10 +22,6 @@ API = "/api/v1"
 A_MINUTE = timedelta(minutes=1)
 
 
-@pytest.fixture(autouse=True)
-def fresh_store():
-    store.reset()
-    yield
 
 
 def get(issue_id: str) -> IssueRecord:
@@ -244,6 +240,9 @@ class TestRefusals:
         rec = get("ISS-1006")
         store.chain.set_ceiling("ISS-1006", Usdc(1), rec.created_at)
         store.chain.commit("ISS-1006", "0xelse", Usdc(1), rec.created_at, rec.created_at)
-        r = TestClient(app).post(f"{API}/issues/ISS-1006/advance")
+        client = TestClient(app)
+        criteria = client.get(f"{API}/issues/ISS-1006").json()["acceptance_criteria"]
+        client.post(f"{API}/issues/ISS-1006/criteria", json={"criteria": criteria})
+        r = client.post(f"{API}/issues/ISS-1006/fund")
         assert r.status_code == 409
         assert "escrow refused" in r.json()["detail"]

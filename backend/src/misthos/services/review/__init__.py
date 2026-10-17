@@ -1,8 +1,8 @@
 """The review agent: judges a pull request against the published acceptance criteria.
 
 `ClaudeReviewer` reads the diff and is used once `MISTHOS_ANTHROPIC_API_KEY` is set.
-`RuleReviewer` judges only what the file list proves, costs nothing, and is what the
-simulation and the regression corpus run. Either way the verdict follows from the
+`RuleReviewer` judges only what the file list proves, costs nothing, and is what a
+run without a model key and the regression corpus use. Either way the verdict follows from the
 judgement by the rules in domain/review.py.
 """
 

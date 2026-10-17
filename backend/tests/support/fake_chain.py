@@ -32,8 +32,8 @@ def _tx() -> str:
     return "0x" + secrets.token_hex(32)
 
 
-class SimulatedChain:
-    name = "simulated"
+class FakeChain:
+    name = "fake"
 
     def __init__(self, engine: Engine | None = None) -> None:
         self._engine = engine

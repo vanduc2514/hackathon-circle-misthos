@@ -40,6 +40,8 @@ class IdentityStatus(StrEnum):
 class ScreeningOutcome(StrEnum):
     CLEAR = "clear"
     HIT = "hit"
+    UNAVAILABLE = "unavailable"
+    """The list could not be read. Not a hit, but never a clear: money stays put."""
 
 
 class ScreeningReason(StrEnum):
@@ -97,6 +99,8 @@ SCREENING_RETENTION = timedelta(days=5 * 365)
 def payout_gate(screening: ScreeningOutcome, identity: IdentityStatus) -> PayoutGate:
     """Whether a payout may leave the escrow now, and if not, why."""
     if screening is ScreeningOutcome.HIT:
+        return PayoutGate.BLOCKED_SANCTIONS
+    if screening is ScreeningOutcome.UNAVAILABLE:
         return PayoutGate.BLOCKED_SANCTIONS
     match identity:
         case IdentityStatus.VERIFIED:

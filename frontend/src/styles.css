@@ -1069,14 +1069,7 @@ input[type='checkbox'] {
   align-self: flex-end;
 }
 
-.demo-shortcuts {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px dashed var(--line-strong);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
+
 
 /* Keyboard focus is always visible, in the ink colour. */
 a:focus-visible,

@@ -19,11 +19,23 @@ import { walletStatus, type WalletOp } from './circle-cli.js'
 import { createWalletService } from './circle-wallets.js'
 import { walletRouter } from './wallet-routes.js'
 
+let warnedLegacySwitch = false
+
+/** Name the removed switch once; a deployment that still sets it runs live anyway. */
+function warnLegacySwitch(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.MISTHOS_SIMULATED === undefined || warnedLegacySwitch) return
+  warnedLegacySwitch = true
+  console.warn(
+    'MISTHOS_SIMULATED is set but simulation has been removed; the edge runs live and ignores it',
+  )
+}
+
 const app = express()
 app.use(express.json({ limit: '512kb' }))
 
 const PORT = Number(process.env.EDGE_PORT ?? 8080)
 const CORE_URL = process.env.CORE_API_URL ?? 'http://127.0.0.1:8000'
+warnLegacySwitch()
 const gate = createGate()
 
 /** Health, used by the compose file and by `mise run dev` sanity checks. */
@@ -33,9 +45,8 @@ app.get('/health', (_req: Request, res: Response) => {
     service: 'misthos-edge',
     role: 'x402-gate',
     core: CORE_URL,
-    simulated: gate.config.simulated,
     networks: gate.config.networks,
-    facilitator: gate.config.simulated ? null : gate.config.facilitatorUrl,
+    facilitator: gate.config.facilitatorUrl,
   })
 })
 
@@ -56,8 +67,19 @@ app.get('/paid/pricing-report', gate.require('0.25'), (_req: Request, res: Respo
     )
 })
 
-/** Circle user-controlled wallets for publishers and contributors. Core only. */
-app.use('/wallets', walletRouter(createWalletService()))
+/**
+ * Circle user-controlled wallets for publishers and contributors. Core only.
+ *
+ * The x402 gate does not need Circle, and the wallet routes are a separate concern on
+ * the same service, so they are mounted only when Circle is configured. Without the
+ * credentials the gate still runs and the routes are absent rather than half-working.
+ */
+const circleConfigured = Boolean(process.env.CIRCLE_API_KEY && process.env.CIRCLE_APP_ID)
+if (circleConfigured) {
+  app.use('/wallets', walletRouter(createWalletService()))
+} else {
+  console.warn('CIRCLE_API_KEY and CIRCLE_APP_ID are unset; Circle wallet routes are not mounted')
+}
 
 /** Wallet operations the Python core delegates here because the CLI is Node. */
 app.get('/wallet/status', async (_req: Request, res: Response) => {
@@ -71,7 +93,7 @@ app.post('/wallet/:op', async (req: Request, res: Response) => {
     res.status(400).json({ error: `unsupported operation ${op}`, allowed })
     return
   }
-  res.json({ accepted: true, op, simulated: true, note: 'Circle CLI call would run here.' })
+  res.json({ accepted: true, op, note: 'Circle CLI call would run here.' })
 })
 
 if (process.env.NODE_ENV !== 'test') {
@@ -79,9 +101,7 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`misthos-edge listening on http://localhost:${PORT}`)
     console.log(`  core: ${CORE_URL}`)
     console.log(
-      gate.config.simulated
-        ? '  simulated: no chain is contacted'
-        : `  x402 settles through ${gate.config.facilitatorUrl} on ${gate.config.networks.join(', ')}`,
+      `  x402 settles through ${gate.config.facilitatorUrl} on ${gate.config.networks.join(', ')}`,
     )
   })
 }

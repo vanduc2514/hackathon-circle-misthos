@@ -2,10 +2,8 @@
  * Wallet routes the Python core calls.
  *
  * The edge is public because x402 buyers reach it, but these routes hand out
- * Circle user tokens, so only the core may call them: every request must carry
- * the shared EDGE_CORE_TOKEN. Simulated, there is nothing to protect, and
- * simulated means what MISTHOS_SIMULATED means to the API (simulated.ts): whenever
- * the API is live, these routes are Circle's and refuse a caller without the token.
+ * Circle user tokens, so only the core may call them: every request must carry the
+ * shared EDGE_CORE_TOKEN.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express'
@@ -21,13 +19,12 @@ function sameSecret(a: string, b: string): boolean {
 }
 
 export function walletRouter(service: WalletService, coreToken = process.env.EDGE_CORE_TOKEN ?? '') {
-  if (!service.config.simulated && !coreToken) {
+  if (!coreToken) {
     throw new Error('EDGE_CORE_TOKEN is required before the edge hands out Circle user tokens')
   }
   const router = Router()
 
   router.use((req: Request, res: Response, next: NextFunction) => {
-    if (service.config.simulated) return next()
     if (!sameSecret(req.header('X-Misthos-Core-Token') ?? '', coreToken)) {
       res.status(401).json({ error: 'core token required' })
       return

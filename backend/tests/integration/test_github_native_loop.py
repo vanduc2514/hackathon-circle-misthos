@@ -25,23 +25,20 @@ from misthos.domain.review import ChangedFile
 from misthos.domain.signals import IssueFacts
 from misthos.main import app
 from misthos.services.coordination import Busy
-from misthos.services.github import Installation, PullRequest, SimulatedGitHub
+from misthos.services.github import Installation, PullRequest
 from misthos.store import store
 from misthos.workers.sweeper import sweep_once
+from tests.support.fake_github import FakeGitHub
 
 API = "/api/v1"
 REPO = "acme/widgets"
 
 
-@pytest.fixture(autouse=True)
-def fresh_store():
-    store.reset()
-    yield
 
 
 @pytest.fixture
-def github() -> SimulatedGitHub:
-    assert isinstance(store.github, SimulatedGitHub)
+def github() -> FakeGitHub:
+    assert isinstance(store.github, FakeGitHub)
     return store.github
 
 
@@ -51,9 +48,9 @@ def onboard(seed: int, side: str, login: str) -> str:
     nonce = client.post(f"{API}/auth/nonce").json()["nonce"]
     message = wallet.message(nonce)
     client.post(f"{API}/auth/verify", json={"message": message, "signature": wallet.sign(message)})
-    party = client.post(f"{API}/auth/role", json={"role": side, "name": login}).json()["party_id"]
-    client.post(f"{API}/auth/github/simulate", json={"login": login})
-    return party
+    created = client.post(f"{API}/auth/role", json={"role": side, "name": login}).json()
+    store.link_github(created["address"], login)
+    return created["party_id"]
 
 
 def deliver(event: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -98,12 +95,12 @@ def commented(number: int, login: str, body: str, *, bot: bool = False, on_pr: b
     })  # fmt: skip
 
 
-def comments(github: SimulatedGitHub, number: int) -> list[str]:
+def comments(github: FakeGitHub, number: int) -> list[str]:
     return [s.body for s in github.sent if s.kind == "comment" and s.target == str(number)]
 
 
 class TestFromALabelToAPayout:
-    def test_the_whole_loop_runs_on_github_events(self, github: SimulatedGitHub) -> None:
+    def test_the_whole_loop_runs_on_github_events(self, github: FakeGitHub) -> None:
         publisher = onboard(81, "publisher", "acme-maint")
         contributor = onboard(82, "contributor", "dev-ana")
         github.put_issue(IssueFacts(repo=REPO, number=12, title="Retry on 503",
@@ -172,7 +169,7 @@ class TestFromALabelToAPayout:
 
 
 class TestConnections:
-    def test_an_installer_who_signs_in_later_is_picked_up(self, github: SimulatedGitHub) -> None:
+    def test_an_installer_who_signs_in_later_is_picked_up(self, github: FakeGitHub) -> None:
         installed("late-maint")
         labelled(5)
         assert store.find_open(REPO, 5) is None
@@ -182,7 +179,7 @@ class TestConnections:
         assert store.find_open(REPO, 5) is not None
 
     def test_an_unconnected_repository_is_told_what_the_label_needs(
-        self, github: SimulatedGitHub, caplog: pytest.LogCaptureFixture
+        self, github: FakeGitHub, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A refused label answers on the issue and says so in the log.
 
@@ -197,7 +194,7 @@ class TestConnections:
         assert any("no publisher" in r.getMessage() for r in caplog.records)
 
     def test_a_repository_the_app_is_on_is_connected_from_its_installation(
-        self, github: SimulatedGitHub
+        self, github: FakeGitHub
     ) -> None:
         """GitHub is asked which installation covers the repository, and it is recorded.
 
@@ -217,7 +214,7 @@ class TestConnections:
         assert connection is not None and connection.publisher_id == publisher
 
     def test_the_sweeper_records_a_connection_no_delivery_wrote(
-        self, github: SimulatedGitHub
+        self, github: FakeGitHub
     ) -> None:
         """The missing row heals on its own, without anyone labelling an issue.
 
@@ -261,7 +258,7 @@ class TestConnections:
 
 class TestCommands:
     @pytest.fixture
-    def listed(self, github: SimulatedGitHub) -> str:
+    def listed(self, github: FakeGitHub) -> str:
         onboard(87, "publisher", "acme-maint")
         installed("acme-maint")
         labelled(12)
@@ -270,7 +267,7 @@ class TestCommands:
         return rec.id
 
     def test_the_publisher_can_replace_the_criteria(
-        self, listed: str, github: SimulatedGitHub
+        self, listed: str, github: FakeGitHub
     ) -> None:
         commented(12, "acme-maint", "/misthos criteria\n- A test reproduces the 503 from "
                   "`src/retry.py`.\n- The changelog records the change.")  # fmt: skip
@@ -282,14 +279,14 @@ class TestCommands:
         assert store.get(listed).acceptance_criteria == rec.acceptance_criteria  # type: ignore[union-attr]
 
     def test_uncheckable_criteria_are_refused_with_reasons(
-        self, listed: str, github: SimulatedGitHub
+        self, listed: str, github: FakeGitHub
     ) -> None:
         commented(12, "acme-maint", "/misthos criteria\n- It works properly.")
         assert "cannot be judged" in comments(github, 12)[-1]
         assert store.get(listed).criteria_approved_at is None  # type: ignore[union-attr]
 
     def test_strangers_and_unlinked_logins_are_told_what_to_do(
-        self, listed: str, github: SimulatedGitHub
+        self, listed: str, github: FakeGitHub
     ) -> None:
         commented(12, "nobody-here", "/misthos claim")
         assert "sign in" in comments(github, 12)[-1]
@@ -297,7 +294,7 @@ class TestCommands:
         assert "is not a command" in comments(github, 12)[-1]
 
     def test_bots_pull_requests_and_chatter_are_ignored(
-        self, listed: str, github: SimulatedGitHub
+        self, listed: str, github: FakeGitHub
     ) -> None:
         before = len(github.sent)
         assert commented(12, "misthos[bot]", "/misthos approve", bot=True)["handled"] is False
@@ -306,7 +303,7 @@ class TestCommands:
         assert len(github.sent) == before
         assert store.get(listed).state is IssueState.AWAITING_APPROVAL  # type: ignore[union-attr]
 
-    def test_help_lists_the_commands(self, github: SimulatedGitHub) -> None:
+    def test_help_lists_the_commands(self, github: FakeGitHub) -> None:
         commented(99, "anyone", "/misthos help")
         assert "/misthos claim" in comments(github, 99)[-1]
 
@@ -316,7 +313,7 @@ class TestCommandsInCodeAndQuotes:
     publisher, an accidental `/misthos approve` commits escrow funds."""
 
     @pytest.fixture
-    def listed(self, github: SimulatedGitHub) -> str:
+    def listed(self, github: FakeGitHub) -> str:
         onboard(89, "publisher", "acme-maint")
         installed("acme-maint")
         labelled(12)
@@ -344,7 +341,7 @@ class TestCommandsInCodeAndQuotes:
         ],
     )  # fmt: skip
     def test_a_command_in_code_a_quote_or_a_comment_does_not_run(
-        self, listed: str, github: SimulatedGitHub, body: str
+        self, listed: str, github: FakeGitHub, body: str
     ) -> None:
         before = len(comments(github, 12))
         out = commented(12, "acme-maint", body)
@@ -363,7 +360,7 @@ class TestCommandsInCodeAndQuotes:
 
 class TestSeveralCommandsInOneComment:
     @pytest.fixture
-    def listed(self, github: SimulatedGitHub) -> str:
+    def listed(self, github: FakeGitHub) -> str:
         onboard(90, "publisher", "acme-maint")
         installed("acme-maint")
         labelled(12)
@@ -377,7 +374,7 @@ class TestSeveralCommandsInOneComment:
         "- The changelog records the change.\n"
     )
 
-    def test_every_command_line_runs_in_order(self, listed: str, github: SimulatedGitHub) -> None:
+    def test_every_command_line_runs_in_order(self, listed: str, github: FakeGitHub) -> None:
         commented(12, "acme-maint", self.CRITERIA + "/misthos price 250\n/misthos approve")
         rec = store.get(listed)
         assert rec is not None and rec.state is IssueState.FUNDED
@@ -390,14 +387,14 @@ class TestSeveralCommandsInOneComment:
         assert "Criteria approved by @acme-maint" in comments(github, 12)[-1]
 
     def test_a_busy_issue_stops_the_comment_without_running_it_twice(
-        self, listed: str, github: SimulatedGitHub, monkeypatch: pytest.MonkeyPatch
+        self, listed: str, github: FakeGitHub, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Failing the delivery for GitHub to retry would approve the criteria again."""
 
         def busy(issue_id: str, by: str) -> None:
             raise Busy(issue_id)
 
-        monkeypatch.setattr(store, "approve_price", busy)
+        monkeypatch.setattr(store.current(), "approve_price", busy)
         out = commented(12, "acme-maint", self.CRITERIA + "/misthos approve")
         rec = store.get(listed)
         assert rec is not None and rec.state is IssueState.AWAITING_APPROVAL
@@ -406,7 +403,7 @@ class TestSeveralCommandsInOneComment:
         assert "/misthos approve did not run" in out["outcome"]
 
     def test_a_refused_criteria_never_falls_through_to_approve(
-        self, listed: str, github: SimulatedGitHub
+        self, listed: str, github: FakeGitHub
     ) -> None:
         drafted = store.get(listed).acceptance_criteria  # type: ignore[union-attr]
         commented(12, "acme-maint", "/misthos criteria\n- It works properly.\n/misthos approve")
@@ -418,7 +415,7 @@ class TestSeveralCommandsInOneComment:
         assert "The rest of this comment was not run" in reply and "/misthos approve" in reply
 
     def test_a_comment_gets_one_reply_for_all_its_commands(
-        self, listed: str, github: SimulatedGitHub
+        self, listed: str, github: FakeGitHub
     ) -> None:
         before = len(comments(github, 12))
         out = commented(12, "acme-maint", "/misthos help\n" + self.CRITERIA)
@@ -428,7 +425,7 @@ class TestSeveralCommandsInOneComment:
         assert "/misthos help ran" in out["outcome"] and "/misthos criteria ran" in out["outcome"]
 
     def test_only_the_first_five_commands_in_a_comment_run(
-        self, listed: str, github: SimulatedGitHub
+        self, listed: str, github: FakeGitHub
     ) -> None:
         commented(12, "acme-maint", "/misthos help\n" * 6)
         reply = comments(github, 12)[-1]
@@ -492,9 +489,10 @@ class TestThePublishersView:
         client.post(
             f"{API}/auth/verify", json={"message": message, "signature": wallet.sign(message)}
         )
-        publisher = client.post(
+        created = client.post(
             f"{API}/auth/role", json={"role": "publisher", "name": "late-maint"}
-        ).json()["party_id"]
+        ).json()
+        publisher = created["party_id"]
 
         # Linked to nothing: the installation is invisible to this publisher, and so
         # there is no installation to manage yet.
@@ -502,7 +500,7 @@ class TestThePublishersView:
         assert before["repositories"] == []
         assert before["settings_url"] is None
 
-        client.post(f"{API}/auth/github/simulate", json={"login": "late-maint"})
+        store.link_github(created["address"], "late-maint")
 
         after = client.get(f"{API}/publishers/{publisher}/repositories").json()
         assert [r["repo"] for r in after["repositories"]] == [REPO]

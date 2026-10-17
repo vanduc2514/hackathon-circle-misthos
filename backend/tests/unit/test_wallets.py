@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 
 import httpx
 import pytest
-from pydantic import ValidationError
 
 from misthos.config import Settings
 from misthos.domain.network import ARC_MAINNET, ARC_TESTNET
@@ -18,10 +16,9 @@ from misthos.services.wallets import (
     WalletSession,
     WalletUnavailable,
     circle_blockchain,
-    simulated_address,
 )
 
-LIVE = Settings(simulated=False, edge_url="http://edge", edge_core_token="secret")
+LIVE = Settings(edge_url="http://edge", edge_core_token="secret")
 
 
 def _edge(handler):
@@ -38,7 +35,6 @@ def _reply(**changes: object) -> dict:
         "challengeId": None,
         "address": "0x00000000000000000000000000000000000000b0",
         "blockchain": "ARC-TESTNET",
-        "simulated": False,
     }
     return body | changes
 
@@ -49,23 +45,6 @@ async def _ask(cfg: Settings, op: str, body: dict) -> WalletSession | PartyWalle
         if op == "session":
             return await wallets.session("contributor", "CON-1")
         return await wallets.wallet("contributor", "CON-1")
-
-
-class TestSimulated:
-    async def test_no_request_leaves_the_process(self) -> None:
-        def refuse(_: httpx.Request) -> httpx.Response:
-            raise AssertionError("simulated wallets must not call the edge")
-
-        async with _edge(refuse) as client:
-            wallets = Wallets(Settings(simulated=True), client)
-            session = await wallets.session("contributor", "CON-1")
-        assert session.simulated and session.challenge_id is None
-        assert session.address == simulated_address("contributor", "CON-1")
-
-    def test_the_simulated_address_matches_the_edge_derivation(self) -> None:
-        # sha256("misthos-contributor-CON-1")[:40], as edge/src/circle-wallets.ts derives it.
-        digest = hashlib.sha256(b"misthos-contributor-CON-1").hexdigest()
-        assert simulated_address("contributor", "CON-1") == "0x" + digest[:40]
 
 
 class TestLive:
@@ -85,8 +64,7 @@ class TestLive:
                     "challengeId": "ch-1",
                     "address": None,
                     "blockchain": "ARC-TESTNET",
-                    "simulated": False,
-                },
+                            },
             )
 
         async with _edge(answer) as client:
@@ -113,8 +91,7 @@ class TestLive:
             "circleUserId": "misthos-publisher-PUB-1",
             "address": "0xB0B",
             "blockchain": "ARC-TESTNET",
-            "simulated": False,
-        }
+            }
         async with _edge(lambda _: httpx.Response(200, content=json.dumps(body))) as client:
             wallet = await Wallets(LIVE, client).wallet("publisher", "PUB-1")
         assert wallet.address == "0xB0B"
@@ -123,10 +100,9 @@ class TestLive:
 class TestWhatALiveApiKeeps:
     """A live API keeps only a live wallet on its own chain (#124).
 
-    The edge used to read `MISTHOS_SIMULATED=0` as the simulation while the API read it
-    as live, and the API kept the edge's made-up address as the party's payout wallet:
-    it ignored the reply's `simulated: true` and never compared its `blockchain` with
-    the chain it settles on. A payout there goes to an address nobody holds a key for.
+    The API refuses a reply that says it is not a real wallet, and compares the reply's
+    `blockchain` with the chain it settles on. A payout to an address nobody holds a key
+    for would be lost.
     """
 
     def test_circle_names_the_two_arc_networks_and_nothing_else(self) -> None:
@@ -137,15 +113,8 @@ class TestWhatALiveApiKeeps:
 
     @pytest.mark.parametrize("op", ["session", "wallet"])
     async def test_a_wallet_the_edge_made_up_is_refused(self, op: str) -> None:
-        with pytest.raises(WalletRefused, match="simulated"):
+        with pytest.raises(WalletRefused, match="did not create"):
             await _ask(LIVE, op, _reply(simulated=True))
-
-    @pytest.mark.parametrize("op", ["session", "wallet"])
-    async def test_a_reply_that_does_not_say_it_is_live_is_refused(self, op: str) -> None:
-        body = _reply()
-        del body["simulated"]
-        with pytest.raises(WalletRefused, match="simulated"):
-            await _ask(LIVE, op, body)
 
     @pytest.mark.parametrize("op", ["session", "wallet"])
     @pytest.mark.parametrize(
@@ -175,56 +144,6 @@ class TestWhatALiveApiKeeps:
         cfg = LIVE.model_copy(update={"chain_id": chain_id})
         found = await _ask(cfg, op, _reply(blockchain=blockchain))
         assert found.address == "0x00000000000000000000000000000000000000b0"
-        assert found.blockchain == blockchain and found.simulated is False
+        assert found.blockchain == blockchain
 
 
-class TestTheFlagTheEdgeReads:
-    """edge/src/simulated.ts reads MISTHOS_SIMULATED with exactly these spellings, so the
-    edge and the API cannot run in different modes. If pydantic ever reads them
-    differently, this fails first: change the edge's table to match."""
-
-    @pytest.mark.parametrize(
-        ("value", "simulated"),
-        [(v, True) for v in ("1", "true", "t", "yes", "y", "on", "TRUE", "On", "tRuE")]
-        + [(v, False) for v in ("0", "false", "f", "no", "n", "off", "FALSE", "Off", "fAlSe")],
-    )
-    def test_the_api_reads_the_spellings_the_edge_reads(
-        self, value: str, simulated: bool, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("MISTHOS_SIMULATED", value)
-        assert Settings(_env_file=None).simulated is simulated  # type: ignore[call-arg]
-
-    @pytest.mark.parametrize(
-        "value", ["", " ", " On ", "0 ", "2", "00", "1.0", "maybe", "\uff54rue"]
-    )
-    def test_the_api_refuses_what_the_edge_refuses(
-        self, value: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("MISTHOS_SIMULATED", value)
-        with pytest.raises(ValidationError):
-            Settings(_env_file=None)  # type: ignore[call-arg]
-
-
-class TestTheSimulatedCircleSignIn:
-    """The simulation's Circle sign-in wallet (#181) is derived the same way on both
-    sides, so a session the edge starts and a signature the API makes name one wallet.
-    edge/src/circle-wallets.test.ts pins the same address."""
-
-    SIGN_IN_ID = "browser-7f3a9c2e5b1d4e8f"
-
-    def test_the_api_derives_the_address_the_edge_derives(self) -> None:
-        from misthos.services.wallets import simulated_sign_in_address
-
-        assert simulated_sign_in_address(self.SIGN_IN_ID) == (
-            "0x6ac2b2e73846a141f2cb8885b54e777ccb5a1b7d"
-        )
-
-    def test_what_it_signs_recovers_to_that_address(self) -> None:
-        from misthos.auth.siwe import recover
-        from misthos.services.wallets import (
-            simulated_sign_in_address,
-            simulated_sign_in_signature,
-        )
-
-        signature = simulated_sign_in_signature(self.SIGN_IN_ID, "any message")
-        assert recover("any message", signature) == simulated_sign_in_address(self.SIGN_IN_ID)

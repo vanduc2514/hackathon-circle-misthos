@@ -28,10 +28,11 @@ from misthos.main import app
 from misthos.models.records import IssueRecord
 from misthos.schemas import PublishRequest
 from misthos.services.coordination import Busy
-from misthos.services.github import PullRequest, SimulatedGitHub
+from misthos.services.github import PullRequest
 from misthos.services.github.events import dispatch
 from misthos.store import AlreadyListed, NotTheSubmission, Store, store
 from misthos.workers.sweeper import sweep_once
+from tests.support.fake_github import FakeGitHub
 
 API = "/api/v1"
 REPO = "acme/widgets"
@@ -275,15 +276,14 @@ class TestOnePullRequestCountsOnce:
 
 
 @pytest.fixture
-def fresh_api_store() -> SimulatedGitHub:
-    store.reset()
-    assert isinstance(store.github, SimulatedGitHub)
+def fresh_api_store() -> FakeGitHub:
+    assert isinstance(store.github, FakeGitHub)
     return store.github
 
 
 class TestTheApi:
     def test_publishing_an_open_issue_again_is_a_409_naming_it(
-        self, fresh_api_store: SimulatedGitHub
+        self, fresh_api_store: FakeGitHub
     ) -> None:
         client = TestClient(app)
         body = {
@@ -334,7 +334,7 @@ def _labelled(action: str) -> dict[str, Any]:
 
 class TestTheLabelOnGitHub:
     @pytest.fixture
-    def connected(self, fresh_api_store: SimulatedGitHub) -> SimulatedGitHub:
+    def connected(self, fresh_api_store: FakeGitHub) -> FakeGitHub:
         client = TestClient(app)
         wallet = Wallet(91)
         nonce = client.post(f"{API}/auth/nonce").json()["nonce"]
@@ -342,22 +342,24 @@ class TestTheLabelOnGitHub:
         client.post(
             f"{API}/auth/verify", json={"message": message, "signature": wallet.sign(message)}
         )
-        client.post(f"{API}/auth/role", json={"role": "publisher", "name": "Acme"})
-        client.post(f"{API}/auth/github/simulate", json={"login": "acme-maint"})
+        created = client.post(
+            f"{API}/auth/role", json={"role": "publisher", "name": "Acme"}
+        ).json()
+        store.link_github(created["address"], "acme-maint")
         _deliver("installation", {
             "action": "created", "installation": {"id": 42}, "sender": {"login": "acme-maint"},
             "repositories": [{"full_name": REPO}],
         })  # fmt: skip
         return fresh_api_store
 
-    def listed(self, github: SimulatedGitHub) -> list[str]:
+    def listed(self, github: FakeGitHub) -> list[str]:
         return [
             s.body for s in github.sent
             if s.kind == "comment" and s.target == "12" and "Listed on Misthos" in s.body
         ]  # fmt: skip
 
     def test_labelling_a_listed_issue_again_does_not_list_it_twice(
-        self, connected: SimulatedGitHub
+        self, connected: FakeGitHub
     ) -> None:
         assert _deliver("issues", _labelled("labeled"))["handled"] is True
         again = _deliver("issues", _labelled("labeled"))
@@ -367,7 +369,7 @@ class TestTheLabelOnGitHub:
         assert len(self.listed(connected)) == 1
 
     def test_opened_and_labeled_arriving_together_list_the_issue_once(
-        self, connected: SimulatedGitHub, monkeypatch: pytest.MonkeyPatch
+        self, connected: FakeGitHub, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """GitHub sends both for an issue created with the label."""
         slow_github(monkeypatch, connected)

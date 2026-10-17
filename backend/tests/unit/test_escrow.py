@@ -26,10 +26,10 @@ from misthos.services.chain import (
     ChainUnavailable,
     EscrowDeployment,
     EscrowNotDeployed,
-    SimulatedChain,
     load_deployment,
 )
 from misthos.services.chain.deployment import DEPLOYMENTS_DIR
+from tests.support.fake_chain import FakeChain
 
 # `cast abi-encode "f(address,uint96,uint64,uint8)" 0x...0B0B 180000000 1800000000 1`
 HELD_180 = (
@@ -110,13 +110,9 @@ class TestDeployment:
             load_deployment(cfg)
 
     def test_real_settlement_without_a_deployment_is_refused(self, tmp_path: Path) -> None:
-        cfg = Settings(simulated=False, escrow_deployment_file=str(tmp_path / "none.json"))
+        cfg = Settings(escrow_deployment_file=str(tmp_path / "none.json"))
         with pytest.raises(EscrowNotDeployed):
             load_deployment(cfg)
-
-    def test_the_simulation_labels_its_placeholder(self, tmp_path: Path) -> None:
-        cfg = Settings(simulated=True, escrow_deployment_file=str(tmp_path / "none.json"))
-        assert load_deployment(cfg).source == "simulation"
 
     def test_the_default_record_lives_with_the_contracts(self) -> None:
         assert DEPLOYMENTS_DIR.parts[-2:] == ("contracts", "deployments")
@@ -286,29 +282,29 @@ class TestEscrowCeiling:
         assert escrow.escrow_ceiling("ISS-1001") == Usdc.from_decimal("55")
 
 
-class TestSimulatedChain:
+class TestFakeChain:
     NOW = datetime(2026, 10, 8, tzinfo=UTC)
 
     def test_a_commitment_without_a_ceiling_is_refused(self) -> None:
-        chain = SimulatedChain()
+        chain = FakeChain()
         with pytest.raises(ChainRevert, match="NoCeiling"):
             chain.commit("ISS-1", "0xB0B", Usdc(1), self.NOW, self.NOW)
         assert chain.commitment("ISS-1") is None
 
     def test_a_commitment_above_the_ceiling_is_refused(self) -> None:
-        chain = SimulatedChain()
+        chain = FakeChain()
         chain.set_ceiling("ISS-1", Usdc(100), self.NOW)
         with pytest.raises(ChainRevert, match="ExceedsCeiling"):
             chain.commit("ISS-1", "0xB0B", Usdc(101), self.NOW, self.NOW)
 
     def test_the_ceiling_itself_is_committable(self) -> None:
-        chain = SimulatedChain()
+        chain = FakeChain()
         chain.set_ceiling("ISS-1", Usdc(100), self.NOW)
         chain.commit("ISS-1", "0xB0B", Usdc(100), self.NOW, self.NOW)
         assert chain.commitment("ISS-1") is not None
 
     def test_clearing_the_ceiling_makes_the_issue_unfundable_again(self) -> None:
-        chain = SimulatedChain()
+        chain = FakeChain()
         chain.set_ceiling("ISS-1", Usdc(100), self.NOW)
         chain.set_ceiling("ISS-1", Usdc(0), self.NOW)
         assert chain.escrow_ceiling("ISS-1") is None
@@ -316,13 +312,13 @@ class TestSimulatedChain:
             chain.commit("ISS-1", "0xB0B", Usdc(1), self.NOW, self.NOW)
 
     def test_a_reset_forgets_ceilings_with_the_books(self) -> None:
-        chain = SimulatedChain()
+        chain = FakeChain()
         chain.set_ceiling("ISS-1", Usdc(100), self.NOW)
         chain.reset()
         assert chain.escrow_ceiling("ISS-1") is None
 
     def test_one_commitment_reads_back_with_its_publisher(self) -> None:
-        chain = SimulatedChain()
+        chain = FakeChain()
         now = datetime.now(UTC)
         chain.set_ceiling("ISS-1", Usdc.from_decimal("55"), now)
         chain.commit("ISS-1", "0xB0B", Usdc.from_decimal("55"), now, now)

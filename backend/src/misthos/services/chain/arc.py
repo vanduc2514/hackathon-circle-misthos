@@ -286,9 +286,6 @@ class ArcEscrow:
     def refund(self, issue_id: str, at: datetime) -> str:
         return self._signer(self._attestor, "attestor").send(self.address, refund_call(issue_id))
 
-    def reset(self) -> None:
-        raise ChainUnavailable("a real chain cannot be reset")
-
     # ------------------------------------------------------------- internals
 
     @staticmethod

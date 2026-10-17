@@ -33,69 +33,29 @@ async function serve(gate: ReturnType<typeof createGate>) {
 }
 
 describe('gate configuration', () => {
-  it('stays simulated unless told otherwise', () => {
-    assert.equal(gateConfig({}).simulated, true)
-  })
-
-  // The API's `simulated` is a pydantic bool, so the two services have to read one
-  // variable the same way (simulated.test.ts has every spelling). `0` used to mean live
-  // to the API and simulated here, which handed out metered endpoints free to anyone
-  // who sent a header.
-  it('turns the simulation off for a spelling pydantic also reads as false', () => {
-    const config = gateConfig({ MISTHOS_SIMULATED: '0', MISTHOS_SELLER_ADDRESS: SELLER })
-    assert.equal(config.simulated, false)
-  })
-
   it('defaults to the testnet facilitator, because the SDK defaults to mainnet', () => {
-    const config = gateConfig({ MISTHOS_SIMULATED: 'false', MISTHOS_SELLER_ADDRESS: SELLER })
+    const config = gateConfig({ MISTHOS_SELLER_ADDRESS: SELLER })
     assert.equal(config.facilitatorUrl, TESTNET_FACILITATOR)
     assert.deepEqual(config.networks, [ARC_TESTNET])
   })
 
-  it('refuses to take real payments without a seller address', () => {
-    assert.throws(() => gateConfig({ MISTHOS_SIMULATED: 'false' }), /MISTHOS_SELLER_ADDRESS/)
+  it('refuses to take payments without a seller address', () => {
+    assert.throws(() => gateConfig({}), /MISTHOS_SELLER_ADDRESS/)
   })
 
   it('refuses mainnet until the confirmation names chain 5042', () => {
     const env = {
-      MISTHOS_SIMULATED: 'false',
       MISTHOS_SELLER_ADDRESS: SELLER,
       GATEWAY_FACILITATOR_URL: MAINNET_FACILITATOR,
     }
     assert.throws(() => gateConfig(env), /EDGE_CONFIRM_MAINNET/)
     assert.throws(() => gateConfig({ ...env, EDGE_CONFIRM_MAINNET: 'true' }), /EDGE_CONFIRM_MAINNET/)
-    assert.equal(gateConfig({ ...env, EDGE_CONFIRM_MAINNET: '5042' }).simulated, false)
-  })
-})
-
-describe('simulated gate', () => {
-  const config = gateConfig({})
-
-  it('answers an unpaid request with 402 and a price in 6-decimal USDC', async () => {
-    const app = await serve(createGate(config))
-    const res = await fetch(app.url)
-    const body = (await res.json()) as { accepts: { maxAmountRequired: string; network: string }[] }
-    await app.close()
-
-    assert.equal(res.status, 402)
-    assert.equal(body.accepts[0].maxAmountRequired, '250000')
-    assert.equal(body.accepts[0].network, ARC_TESTNET)
-  })
-
-  it('lets a paid request through and says the settlement was simulated', async () => {
-    const app = await serve(createGate(config))
-    const res = await fetch(app.url, { headers: { 'X-PAYMENT': 'proof' } })
-    const body = (await res.json()) as { rail: string }
-    await app.close()
-
-    assert.equal(res.status, 200)
-    assert.equal(body.rail, 'simulated')
+    assert.equal(gateConfig({ ...env, EDGE_CONFIRM_MAINNET: '5042' }).networks[0], ARC_TESTNET)
   })
 })
 
 describe('live gate', () => {
   const live: GateConfig = {
-    simulated: false,
     sellerAddress: SELLER,
     facilitatorUrl: TESTNET_FACILITATOR,
     networks: [ARC_TESTNET],

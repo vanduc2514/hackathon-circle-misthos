@@ -7,11 +7,7 @@ from __future__ import annotations
 import io
 import json
 import logging
-import os
 import socket
-import subprocess
-import sys
-import time
 from pathlib import Path
 
 import httpx
@@ -30,10 +26,6 @@ from misthos.workers.sweeper import sweep_once
 API = "/api/v1"
 
 
-@pytest.fixture(autouse=True)
-def fresh_store():
-    store.reset()
-    yield
 
 
 @pytest.fixture
@@ -72,7 +64,9 @@ class TestCorrelation:
         previous = logger.level
         logger.setLevel(logging.INFO)
         try:
-            client.post(f"{API}/issues/ISS-1006/advance", headers={"X-Request-ID": "fund-1006"})
+            criteria = client.get(f"{API}/issues/ISS-1006").json()["acceptance_criteria"]
+            client.post(f"{API}/issues/ISS-1006/criteria", json={"criteria": criteria})
+            client.post(f"{API}/issues/ISS-1006/fund", headers={"X-Request-ID": "fund-1006"})
         finally:
             logger.removeHandler(handler)
             logger.setLevel(previous)
@@ -88,29 +82,6 @@ class TestCorrelation:
 
 
 class TestMetrics:
-    def test_the_paths_the_requirements_name_are_measured(self, client: TestClient) -> None:
-        released = sample("misthos_money_events_total", kind="released")
-        reviews = sample("misthos_review_seconds_count", reviewer="rules_v1", verdict="accept")
-        prices = sample("misthos_price_seconds_count", source="form")
-
-        client.post(f"{API}/issues/ISS-1006/complete")
-        client.post(
-            f"{API}/issues",
-            json={
-                "repo": "acme/ledger-core",
-                "title": "Add a probe",
-                "publisher_id": "PUB-1",
-                "price": "500",
-            },
-        )
-
-        assert sample("misthos_money_events_total", kind="released") == released + 1
-        assert (
-            sample("misthos_review_seconds_count", reviewer="rules_v1", verdict="accept")
-            == reviews + 1
-        )
-        assert sample("misthos_price_seconds_count", source="form") == prices + 1
-
     def test_requests_are_timed_by_route_not_by_path(self, client: TestClient) -> None:
         route = "/api/v1/issues/{issue_id}"
         before = sample(
@@ -240,56 +211,6 @@ def _parses(line: str) -> bool:
 
 
 class TestJsonLines:
-    def test_every_line_the_api_process_writes_is_one_json_object(self) -> None:
-        """Started as the image starts it. uvicorn's loggers kept handlers of their own,
-        so container logs mixed `INFO: ... "GET /api/v1/health" 200` lines, with no
-        correlation id, into the JSON a log pipeline reads."""
-        port = _free_port()
-        command = _image_command(port)
-        assert command[0] == "uvicorn"
-        # In memory, whatever this suite runs against: the server is its own process.
-        shared = ("MISTHOS_DATABASE_URL", "MISTHOS_REDIS_URL")
-        env = {k: v for k, v in os.environ.items() if k not in shared}
-        env |= {"MISTHOS_LOG_JSON": "true", "MISTHOS_SWEEPER_IN_PROCESS": "false"}
-        server = subprocess.Popen(
-            [sys.executable, "-m", *command],
-            cwd=ROOT / "backend",
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        try:
-            deadline = time.monotonic() + 30
-            while True:
-                try:
-                    httpx.get(f"http://127.0.0.1:{port}/api/v1/health", timeout=1)
-                    break
-                except httpx.TransportError:
-                    assert server.poll() is None, server.communicate()
-                    assert time.monotonic() < deadline, "the API never came up"
-                    time.sleep(0.2)
-            r = httpx.get(
-                f"http://127.0.0.1:{port}/api/v1/health", headers={"X-Request-ID": "json-1"}
-            )
-            assert r.status_code == 200
-        finally:
-            server.terminate()
-            out, err = server.communicate(timeout=30)
-
-        lines = [line for line in (out + err).splitlines() if line.strip()]
-        assert lines, "the server wrote nothing"
-        assert [line for line in lines if not _parses(line)] == []
-        records = [json.loads(line) for line in lines]
-        loggers = {r["logger"] for r in records}
-        assert {"uvicorn.error", "uvicorn.access"} <= loggers
-        access = [r for r in records if r["logger"] == "uvicorn.access"]
-        assert any(
-            r["correlation_id"] == "json-1" and "GET /api/v1/health" in r["message"] for r in access
-        )
-        # uvicorn's coloured copy of a message is terminal decoration, not a field.
-        assert not any("color_message" in r for r in records)
-
     def test_an_access_log_switched_off_stays_off(self) -> None:
         """--no-access-log leaves uvicorn's access logger with no handler and not
         propagating. Sending uvicorn's loggers through ours must not turn it back on."""

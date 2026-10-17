@@ -5,7 +5,7 @@ when the pull request changes a test, and one that asks for documentation or a
 changelog entry is met when it changes one. Everything else needs someone to read
 the code, so it is left unjudged and the findings say so. It never calls anything,
 costs nothing, and gives the same answer every time, which makes it the baseline
-the regression corpus pins and the reviewer the simulation runs.
+the regression corpus pins.
 """
 
 from __future__ import annotations

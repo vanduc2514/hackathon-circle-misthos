@@ -11,7 +11,7 @@ const CIRCLE = { CIRCLE_API_KEY: 'TEST_API_KEY:x:y', CIRCLE_APP_ID: 'app-1' }
 /** Start the edge as `npm run dev` does, with only `env` configured. NODE_ENV=test
  * keeps it from listening, so a start that succeeds exits 0, and one that is refused
  * exits with the reason. Nothing here reaches Circle: a refused start stops before
- * any request, and the simulated one never makes any. */
+ * any request, and no request reaches Circle before it is needed. */
 function start(env: Record<string, string>): Promise<{ code: number; stderr: string }> {
   const inherited = Object.fromEntries(
     ['PATH', 'HOME', 'TMPDIR', 'SystemRoot'].flatMap((k) =>
@@ -32,28 +32,26 @@ function start(env: Record<string, string>): Promise<{ code: number; stderr: str
 }
 
 describe('starting the edge', { concurrency: true }, () => {
-  it('starts simulated with nothing configured', async () => {
+  it('refuses to start with nothing configured', async () => {
     const run = await start({})
+    assert.notEqual(run.code, 0)
+    assert.match(run.stderr, /MISTHOS_SELLER_ADDRESS/)
+  })
+
+  it('starts the gate without Circle and says the wallet routes are off', async () => {
+    const run = await start({ MISTHOS_SELLER_ADDRESS: SELLER, EDGE_CORE_TOKEN: 'secret' })
     assert.equal(run.code, 0, run.stderr)
+    assert.match(run.stderr, /Circle wallet routes are not mounted/)
   })
 
-  // Live for the API and the gate meant live for the wallet routes only when spelled
-  // `false`; `0` started an edge that handed the live API made-up payout addresses.
-  it('will not start live on MISTHOS_SIMULATED=0 without the Circle credentials', async () => {
-    const run = await start({ MISTHOS_SIMULATED: '0', MISTHOS_SELLER_ADDRESS: SELLER })
-    assert.notEqual(run.code, 0)
-    assert.match(run.stderr, /CIRCLE_API_KEY and CIRCLE_APP_ID are required/)
-  })
-
-  it('will not start live without the core token that guards the wallet routes', async () => {
-    const run = await start({ MISTHOS_SIMULATED: '0', MISTHOS_SELLER_ADDRESS: SELLER, ...CIRCLE })
-    assert.notEqual(run.code, 0)
-    assert.match(run.stderr, /EDGE_CORE_TOKEN is required/)
-  })
-
-  it('will not start on a MISTHOS_SIMULATED the API would refuse', async () => {
-    const run = await start({ MISTHOS_SIMULATED: 'maybe' })
-    assert.notEqual(run.code, 0)
-    assert.match(run.stderr, /MISTHOS_SIMULATED is not a boolean/)
+  it('starts live and names the removed switch once', async () => {
+    const run = await start({
+      MISTHOS_SIMULATED: 'maybe',
+      MISTHOS_SELLER_ADDRESS: SELLER,
+      EDGE_CORE_TOKEN: 'secret',
+      ...CIRCLE,
+    })
+    assert.equal(run.code, 0, run.stderr)
+    assert.match(run.stderr, /simulation has been removed/)
   })
 })

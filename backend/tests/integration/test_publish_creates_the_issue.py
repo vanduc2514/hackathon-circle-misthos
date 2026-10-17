@@ -13,15 +13,16 @@ import pytest
 from misthos.domain.signals import IssueFacts
 from misthos.repositories import MemoryRepository
 from misthos.schemas import PublishRequest
-from misthos.services.github import GitHubError, SimulatedGitHub
+from misthos.services.github import GitHubError
 from misthos.store import Store, UnreadableIssue
+from tests.support.fake_github import FakeGitHub
 
 REPO = "acme/ledger"
 PUBLISHER = "PUB-1"
 
 
-class CreatingGitHub(SimulatedGitHub):
-    """An App that can open issues: the simulation's reads, plus a real creation."""
+class CreatingGitHub(FakeGitHub):
+    """An App that can open issues: the fake's reads, plus a real creation."""
 
     creates_issues = True
 
@@ -42,9 +43,17 @@ class CreatingGitHub(SimulatedGitHub):
 
 
 def store_with(github: CreatingGitHub) -> Store:
-    store = Store(MemoryRepository(), github=github)
-    store.reset()
-    return store
+    from tests.support.fake_chain import FakeChain
+    from tests.support.fake_compliance import FakeIdentity, FakeScreening
+    from tests.support.seeded import SeededStore
+
+    return SeededStore(
+        MemoryRepository(),
+        github=github,
+        chain=FakeChain(),
+        screening=FakeScreening(),
+        identity=FakeIdentity(),
+    )
 
 
 def publish(store: Store, number: int | None = None) -> str:
@@ -111,8 +120,8 @@ class TestPublishingDescription:
 
         assert store.find_open(REPO, 412) is None
 
-    def test_the_simulation_still_makes_a_number_up(self) -> None:
-        """Its GitHub holds no repository to open an issue in, so nothing is created."""
+    def test_a_gateway_that_cannot_create_issues_still_makes_a_number_up(self) -> None:
+        """The fake holds no repository to open an issue in, so nothing is created."""
         github = CreatingGitHub()
         github.creates_issues = False
         rec = publish(store_with(github))

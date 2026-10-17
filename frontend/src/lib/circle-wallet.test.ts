@@ -2,27 +2,24 @@ import { describe, expect, it } from 'vitest'
 import { circleSigner, type ChallengeRunner, type CircleApi, type CircleSession } from './circle-wallet'
 
 const ADDRESS = '0x6ac2b2e73846a141f2cb8885b54e777ccb5a1b7d'
-const FRAME = { app_id: 'app-1', user_token: 'ut', encryption_key: 'ek', simulated: false }
+const FRAME = { app_id: 'app-1', user_token: 'ut', encryption_key: 'ek' }
 
 /** The API's Circle routes: a wallet that exists once its creation challenge has run. */
-function fakeApi(opts: { exists?: boolean; simulated?: boolean } = {}) {
+function fakeApi(opts: { exists?: boolean } = {}) {
   let created = Boolean(opts.exists)
   const signed: string[] = []
   const sessions: string[] = []
-  const simulated = Boolean(opts.simulated)
   const api: CircleApi = {
     session: async (): Promise<CircleSession> => {
       sessions.push('session')
-      return created || simulated
-        ? { ...FRAME, simulated, challenge_id: null, address: ADDRESS }
+      return created
+        ? { ...FRAME, challenge_id: null, address: ADDRESS }
         : { ...FRAME, challenge_id: 'create-1', address: null }
     },
-    wallet: async () => ({ address: created || simulated ? ADDRESS : null }),
+    wallet: async () => ({ address: created ? ADDRESS : null }),
     sign: async (message) => {
       signed.push(message)
-      return simulated
-        ? { ...FRAME, simulated, challenge_id: null, signature: '0xsimulated' }
-        : { ...FRAME, challenge_id: 'sign-1', signature: null }
+      return { ...FRAME, challenge_id: 'sign-1', signature: null }
     },
   }
   return { api, signed, sessions, create: () => (created = true) }
@@ -67,15 +64,6 @@ describe('circleSigner', () => {
     expect(signature).toBe('0xfromtheframe')
   })
 
-  it('opens no frame in the simulation', async () => {
-    const { api } = fakeApi({ simulated: true })
-    const { runner, ran } = fakeFrame()
-
-    const signer = await circleSigner(api, runner)
-
-    expect(await signer.sign('m')).toBe('0xsimulated')
-    expect(ran).toEqual([])
-  })
 
   it('signs in as nobody when the owner does not finish creating the wallet', async () => {
     const { api } = fakeApi()

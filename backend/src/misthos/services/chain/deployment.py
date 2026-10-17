@@ -19,11 +19,7 @@ from misthos.config import Settings
 REPO_ROOT = Path(__file__).resolve().parents[5]
 DEPLOYMENTS_DIR = REPO_ROOT / "contracts" / "deployments"
 
-# Shown only while simulated and nothing has been deployed. It is labelled as
-# simulated wherever it appears, and refused outside the simulation.
-SIMULATED_ESCROW = "0x7A3f19bE5c2D80416aB9e0C7d3F5a12B6c8E4d90"
-
-DeploymentSource = Literal["override", "record", "simulation"]
+DeploymentSource = Literal["override", "record"]
 
 
 class EscrowNotDeployed(RuntimeError):
@@ -47,8 +43,8 @@ def record_path(cfg: Settings) -> Path:
 def load_deployment(cfg: Settings) -> EscrowDeployment:
     """Resolve the escrow address: explicit override, then the deploy record.
 
-    Outside the simulation there is no fallback. Settling against an address
-    nobody deployed is the failure this exists to prevent.
+    There is no fallback. Settling against an address nobody deployed is the
+    failure this exists to prevent.
     """
     if cfg.escrow_contract:
         return EscrowDeployment(cfg.escrow_contract, cfg.chain_id, "override")
@@ -67,8 +63,6 @@ def load_deployment(cfg: Settings) -> EscrowDeployment:
             deployed_at_block=record.get("deployedAtBlock"),
         )
 
-    if cfg.simulated:
-        return EscrowDeployment(SIMULATED_ESCROW, cfg.chain_id, "simulation")
     raise EscrowNotDeployed(
         f"no MisthosEscrow deployment for chain {cfg.chain_id}: run `mise run contracts:deploy` "
         f"or set MISTHOS_ESCROW_CONTRACT"

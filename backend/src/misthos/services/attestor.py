@@ -11,7 +11,7 @@ key and letting settings ignore it — into a refusal to start.
 Rotation is an operational step rather than a redeploy, and the procedure with its
 verification and rollback is in `docs/runbooks/attestor-rotation.md`.
 
-The simulation signs nothing. Outside it, the Arc gateway (`services/chain/arc.py`,
+The Arc gateway (`services/chain/arc.py`,
 #69) is the only caller: it asks this module for the attestation key when it signs a
 release or a refund, and for the escrow owner's key when it records an approved price
 as a ceiling. No other code path can reach either key.
@@ -42,8 +42,8 @@ class AttestorKeyError(RuntimeError):
 class SecretStore(Protocol):
     """A secret store addressed by reference, so the value never reaches a config file.
 
-    The deployment supplies the managed store; `UnavailableSecretStore` is what the
-    offline simulation gets.
+    The deployment supplies the managed store; `UnavailableSecretStore` is what a run
+    without one gets.
     """
 
     def read(self, reference: str) -> str | None:
@@ -51,7 +51,7 @@ class SecretStore(Protocol):
 
 
 class UnavailableSecretStore:
-    """The offline default. A simulated run releases nothing, so it needs no key."""
+    """The default when no secret store is mounted: it holds no key."""
 
     def read(self, reference: str) -> str | None:
         return None
@@ -161,24 +161,22 @@ def assert_key_is_not_in_the_environment(environment: Mapping[str, str] | None =
 
 
 def assert_secrets_are_configured(
-    simulated: bool, reference: str, owner_reference: str | None = None
+    reference: str, owner_reference: str | None = None
 ) -> None:
-    """Refuse a live deployment that never said where the keys live.
+    """Refuse a deployment that never said where the keys live.
 
-    The simulation signs nothing, so it needs no reference. A deployment that settles
-    for real does, and discovering that at the first release is too late. The owner's
-    key is checked when the caller passes its reference: without it no approved price
-    could be recorded as a ceiling, so no issue could ever be funded.
+    Discovering a missing key at the first release is too late. The owner's key is
+    checked when the caller passes its reference: without it no approved price could
+    be recorded as a ceiling, so no issue could ever be funded.
     """
-    if not simulated and not reference:
+    if not reference:
         raise AttestorKeyError(
-            "MISTHOS_SIMULATED is off and MISTHOS_ATTESTOR_SECRET_REF is unset, so no "
-            "release could ever be attested"
+            "MISTHOS_ATTESTOR_SECRET_REF is unset, so no release could ever be attested"
         )
-    if not simulated and owner_reference is not None and not owner_reference:
+    if owner_reference is not None and not owner_reference:
         raise AttestorKeyError(
-            "MISTHOS_SIMULATED is off and MISTHOS_OWNER_SECRET_REF is unset, so no "
-            "approved price could be recorded and no issue funded"
+            "MISTHOS_OWNER_SECRET_REF is unset, so no approved price could be recorded "
+            "and no issue funded"
         )
 
 

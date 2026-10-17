@@ -1,4 +1,4 @@
-"""API tests against the seeded simulation."""
+"""API tests against the seeded fixtures."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from fastapi.testclient import TestClient
 from siwe_wallet import Wallet
 
 from misthos.config import settings
-from misthos.domain.issue import IssueState
+from misthos.domain.issue import IllegalTransition, IssueState
 from misthos.domain.money import Usdc
 from misthos.domain.pricing import platform_fee
 from misthos.main import app
 from misthos.repositories import StaleIssue
-from misthos.services.wallets import simulated_address
 from misthos.store import store
+from tests.support.accounts import sign_in_party
 
 API = "/api/v1"
 
@@ -32,15 +32,9 @@ def sign_in(client: TestClient, seed: int, role: str, name: str, login: str) -> 
     assert verified.status_code == 200, verified.text
     account = client.post(f"{API}/auth/role", json={"role": role, "name": name})
     assert account.status_code == 201, account.text
-    linked = client.post(f"{API}/auth/github/simulate", json={"login": login})
-    assert linked.status_code == 200, linked.text
-    return linked.json()["account"]
+    linked = store.link_github(account.json()["address"], login)
+    return linked.model_dump(mode="json")
 
-
-@pytest.fixture(autouse=True)
-def fresh_store():
-    store.reset()
-    yield
 
 @pytest.fixture
 def client() -> TestClient:
@@ -58,7 +52,7 @@ class TestEscrowReadback:
         body = client.get(f"{API}/issues/{issue_id}/escrow").json()
         issue = client.get(f"{API}/issues/{issue_id}").json()
 
-        assert body["source"] == "simulation"
+        assert body["source"] == "chain"
         assert body["status"] == "held"
         assert body["amount"] == issue["escrow"]["amount"]
         assert len(body["issue_key"]) == 66
@@ -217,25 +211,24 @@ class TestEscrowReadback:
 
 
 class TestHealth:
-    def test_health_reports_the_simulation(self, client: TestClient) -> None:
+    def test_health_reports_the_network(self, client: TestClient) -> None:
         body = client.get(f"{API}/health").json()
         assert body["status"] == "ok"
-        assert body["simulated"] is True
-        assert body["seeded_issues"] == 8
+        assert "seeded_issues" not in body and "simulated" not in body
         assert body["chain"] == "arc-testnet"
         assert body["chain_id"] == 5042002
-        assert body["money"] == "simulated"
-        assert "no money moves" in body["money_note"]
+        assert body["money"] == "test"
+        assert "no real value" in body["money_note"]
 
     def test_the_label_follows_the_chain_id_at_request_time(self, client: TestClient) -> None:
-        original = (settings.chain_id, settings.simulated)
+        original = settings.chain_id
         try:
-            settings.chain_id, settings.simulated = 5042, False
+            settings.chain_id = 5042
             mainnet = client.get(f"{API}/health").json()
             settings.chain_id = 8453
             other = client.get(f"{API}/health").json()
         finally:
-            settings.chain_id, settings.simulated = original
+            settings.chain_id = original
         assert (mainnet["chain"], mainnet["money"]) == ("arc-mainnet", "real")
         assert (other["chain"], other["money"]) == ("chain-8453", "unknown")
 
@@ -272,12 +265,12 @@ class TestIssues:
 
 class TestWallets:
     def test_a_session_links_the_contributor_wallet(self, client: TestClient) -> None:
+        sign_in_party(client, "CON-1")
         body = client.post(f"{API}/wallets/contributor/CON-1/session").json()
-        assert body["simulated"] is True
         assert body["challenge_id"] is None
         linked = body["wallet"]
         assert body["circle_user_id"] == "misthos-contributor-CON-1"
-        assert linked["address"] == simulated_address("contributor", "CON-1")
+        assert linked["address"].startswith("0x") and len(linked["address"]) == 42
 
         # The party's own record. The public listing carries no wallet on purpose: a
         # wallet next to a GitHub handle is the link 08 says must never be published.
@@ -287,14 +280,18 @@ class TestWallets:
         assert "wallet" not in profiles["CON-1"]
 
     def test_link_reads_the_address_back_for_a_publisher(self, client: TestClient) -> None:
+        sign_in_party(client, "PUB-1")
         wallet = client.post(f"{API}/wallets/publisher/PUB-1/link").json()
         publishers = {p["id"]: p for p in client.get(f"{API}/publishers").json()}
         assert publishers["PUB-1"]["wallet"] == wallet
 
+    @pytest.mark.real_auth
     def test_an_unknown_party_or_id_is_refused(self, client: TestClient) -> None:
-        assert client.post(f"{API}/wallets/contributor/CON-999/session").status_code == 404
+        sign_in_party(client, "CON-1")
+        assert client.post(f"{API}/wallets/contributor/CON-999/session").status_code == 403
         assert client.post(f"{API}/wallets/admin/1/session").status_code == 422
 
+    @pytest.mark.real_auth
     def test_only_the_party_itself_may_link_its_wallet(self, client: TestClient) -> None:
         account = sign_in(client, 61, "contributor", "erin", "erin-dev")
         own = account["party_id"]
@@ -303,16 +300,15 @@ class TestWallets:
         # records is where that party's payouts go.
         assert client.post(f"{API}/wallets/contributor/CON-1/session").status_code == 403
 
+    @pytest.mark.real_auth
     def test_the_wrong_kind_of_party_is_refused(self, client: TestClient) -> None:
         account = sign_in(client, 62, "publisher", "Acme", "acme-co")
         own = account["party_id"]
         assert client.post(f"{API}/wallets/contributor/{own}/session").status_code == 403
         assert client.post(f"{API}/wallets/publisher/{own}/session").status_code == 200
 
-    def test_a_wallet_needs_a_signed_in_party_outside_the_simulation(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(settings, "simulated", False)
+    @pytest.mark.real_auth
+    def test_a_wallet_needs_a_signed_in_party(self, client: TestClient) -> None:
         assert client.post(f"{API}/wallets/contributor/CON-1/session").status_code == 401
         assert client.post(f"{API}/wallets/publisher/PUB-1/link").status_code == 401
 
@@ -322,6 +318,7 @@ class TestWallets:
         accepted = client.get(f"{API}/issues", params={"state": "in_review"}).json()[0]
         issue = client.get(f"{API}/issues/{accepted['id']}").json()
         cid = issue["contributor_id"]
+        sign_in_party(client, cid)
         wallet = client.post(f"{API}/wallets/contributor/{cid}/session").json()["wallet"]
 
         # Watch where the escrow is told to send the money, rather than reading it back
@@ -335,7 +332,7 @@ class TestWallets:
             lambda *args, **kwargs: (paid_to.append(args[1]), release(*args, **kwargs))[1],
         )
 
-        client.post(f"{API}/issues/{accepted['id']}/complete")
+        store.approve_and_accept(accepted["id"])
         timeline = client.get(f"{API}/issues/{accepted['id']}/timeline").json()
         released = [d for d in timeline if d["action"] == "released"]
         assert released
@@ -346,21 +343,19 @@ class TestWallets:
 class TestLifecycleThroughTheApi:
     def test_advance_funds_an_awaiting_approval_issue(self, client: TestClient) -> None:
         assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"
-        body = client.post(f"{API}/issues/ISS-1006/advance").json()
-        assert body["state"] == "FUNDED"
-        assert body["escrow"]["tx_hash"].startswith("0x")
+        body = store.advance("ISS-1006")
+        assert body.state.value == "FUNDED"
+        assert body.escrow.tx_hash.startswith("0x")
 
     def test_complete_runs_the_rest_of_the_happy_path(self, client: TestClient) -> None:
-        client.post(f"{API}/issues/ISS-1006/advance")  # fund
-        client.post(f"{API}/issues/ISS-1006/advance")  # claim
-        client.post(f"{API}/issues/ISS-1006/advance")  # submit
-        body = client.post(f"{API}/issues/ISS-1006/complete").json()
+        store.approve_and_accept("ISS-1006")
+        body = client.get(f"{API}/issues/ISS-1006").json()
         assert body["state"] == "PAID"
         assert float(body["paid_usdc"]) > 0
 
     def test_settlement_pays_one_party_and_never_a_reviewer(self, client: TestClient) -> None:
         """The platform reviews, so there is no reviewer to pay."""
-        client.post(f"{API}/issues/ISS-1002/complete")
+        store.approve_and_accept("ISS-1002")
         body = client.get(f"{API}/issues/ISS-1002").json()
         assert body["state"] == "PAID"
         assert "reviewer_id" not in body
@@ -369,7 +364,7 @@ class TestLifecycleThroughTheApi:
     def test_a_settlement_records_the_flat_platform_fee(self, client: TestClient) -> None:
         """Ten percent of the commitment, carved out rather than added, and the same
         for every publisher (#142)."""
-        client.post(f"{API}/issues/ISS-1002/complete")
+        store.approve_and_accept("ISS-1002")
         body = client.get(f"{API}/issues/ISS-1002").json()
         assert body["state"] == "PAID"
 
@@ -381,7 +376,8 @@ class TestLifecycleThroughTheApi:
         assert payout.base_units + fee.base_units == gross
 
     def test_advancing_a_finished_issue_is_conflict(self, client: TestClient) -> None:
-        assert client.post(f"{API}/issues/ISS-1005/advance").status_code == 409
+        with pytest.raises(IllegalTransition):
+            store.advance("ISS-1005")
 
     def test_a_silent_publisher_does_not_strand_finished_work(self) -> None:
         """The one release path with no human signature. See `08`."""
@@ -430,7 +426,7 @@ class TestLifecycleThroughTheApi:
     def test_an_issue_awaiting_merge_still_counts_as_open(self, client: TestClient) -> None:
         """ACCEPTED holds committed money until the publisher merges."""
         before = client.get(f"{API}/metrics").json()["open_issues"]
-        client.post(f"{API}/issues/ISS-1002/advance")  # IN_REVIEW -> ACCEPTED
+        store.advance("ISS-1002")  # IN_REVIEW -> ACCEPTED
         assert client.get(f"{API}/issues/ISS-1002").json()["state"] == "ACCEPTED"
         assert client.get(f"{API}/metrics").json()["open_issues"] == before
 
@@ -442,7 +438,8 @@ class TestLifecycleThroughTheApi:
         assert rec is not None
         rec.state = IssueState.PRICED
         store.save(rec)
-        assert client.post(f"{API}/issues/ISS-1006/advance").status_code == 409
+        with pytest.raises(IllegalTransition):
+            store.advance("ISS-1006")
 
     def test_acting_on_an_issue_that_just_changed_is_conflict(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -452,17 +449,14 @@ class TestLifecycleThroughTheApi:
         def changed_underneath(issue_id: str) -> None:
             raise StaleIssue(issue_id)
 
-        monkeypatch.setattr(store, "advance", changed_underneath)
-        r = client.post(f"{API}/issues/ISS-1006/advance")
-        assert r.status_code == 409
-        assert "changed since it was loaded" in r.json()["detail"]
+        monkeypatch.setattr(store.current(), "advance", changed_underneath)
+        with pytest.raises(StaleIssue, match="changed since it was loaded"):
+            store.advance("ISS-1006")
 
     def test_every_transition_leaves_a_decision(self, client: TestClient) -> None:
-        before = len(client.get(f"{API}/issues/ISS-1006/timeline").json())
-        client.post(f"{API}/issues/ISS-1006/advance")
-        after = client.get(f"{API}/issues/ISS-1006/timeline").json()
-        assert len(after) == before + 1
-        assert after[-1]["actor"] == "publisher"
+        rec = store.advance("ISS-1006")
+        assert rec.state is IssueState.FUNDED
+        assert any(d.action == "price_approved" for d in rec.decisions)
 
 
 class TestPublish:
@@ -741,17 +735,13 @@ class TestMetrics:
 
     def test_metrics_move_after_a_settlement(self, client: TestClient) -> None:
         before = client.get(f"{API}/metrics").json()["settled_issues"]
-        for _ in range(3):
-            client.post(f"{API}/issues/ISS-1006/advance")
-        client.post(f"{API}/issues/ISS-1006/complete")
+        store.approve_and_accept("ISS-1006")
         assert client.get(f"{API}/metrics").json()["settled_issues"] == before + 1
 
     def test_metrics_report_the_take_rate_revenue(self, client: TestClient) -> None:
         """The revenue line moves with each settlement, and never exceeds it."""
         before = client.get(f"{API}/metrics").json()
-        for _ in range(3):
-            client.post(f"{API}/issues/ISS-1006/advance")
-        client.post(f"{API}/issues/ISS-1006/complete")
+        store.approve_and_accept("ISS-1006")
         after = client.get(f"{API}/metrics").json()
 
         fees = Usdc.from_decimal(after["platform_fees_usdc"])
@@ -772,14 +762,13 @@ class TestWebhooks:
         body = client.get(f"{API}/webhooks/github").json()
         assert "pull_request" in body["handled_events"]
 
-    def test_accepts_an_unsigned_payload_in_simulation(self, client: TestClient) -> None:
+    def test_rejects_an_unsigned_payload(self, client: TestClient) -> None:
         r = client.post(
             f"{API}/webhooks/github",
             json={"action": "opened"},
             headers={"X-GitHub-Event": "pull_request"},
         )
-        assert r.status_code == 202
-        assert r.json()["signature_verified"] is False
+        assert r.status_code == 401
 
     def test_rejects_a_bad_signature(self, client: TestClient) -> None:
         r = client.post(
@@ -809,51 +798,33 @@ class TestWebhooks:
         assert r.json()["signature_verified"] is True
 
 
-class TestReset:
-    def test_reset_restores_the_seed(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from misthos.config import settings
+class TestNoSimulationSurfaces:
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("post", "/demo/reset"),
+            ("post", "/issues/ISS-1006/advance"),
+            ("post", "/issues/ISS-1006/complete"),
+            ("post", "/auth/github/simulate"),
+        ],
+    )
+    def test_the_demo_routes_are_gone(self, client: TestClient, method: str, path: str) -> None:
+        assert getattr(client, method)(f"{API}{path}").status_code == 404
 
-        monkeypatch.setattr(settings, "database_url", "")  # the zero-config demo
-        client.post(f"{API}/issues/ISS-1006/advance")
-        assert client.post(f"{API}/demo/reset").json()["issues"] == 8
-        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"
+    def test_a_fresh_store_has_no_seed(self) -> None:
+        from misthos.repositories import MemoryRepository
+        from misthos.store import Store
+        from tests.support.fake_chain import FakeChain
+        from tests.support.fake_compliance import FakeIdentity, FakeScreening
+        from tests.support.fake_github import FakeGitHub
 
-    def test_reset_is_refused_when_a_database_is_configured(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The README's durable setup sets only MISTHOS_DATABASE_URL, and there an
-        unauthenticated reset would delete every row of every table."""
-        from misthos.config import settings
-
-        monkeypatch.setattr(settings, "database_url", "postgresql://db.example/misthos")
-        monkeypatch.setattr(settings, "allow_demo_reset", False)
-        client.post(f"{API}/issues/ISS-1006/advance")
-
-        r = client.post(f"{API}/demo/reset")
-        assert r.status_code == 403
-        assert "MISTHOS_ALLOW_DEMO_RESET" in r.json()["detail"]
-        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "FUNDED"
-
-    def test_an_operator_can_allow_reset_on_a_throwaway_database(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from misthos.config import settings
-
-        monkeypatch.setattr(settings, "database_url", "postgresql://db.example/misthos")
-        monkeypatch.setattr(settings, "allow_demo_reset", True)
-        client.post(f"{API}/issues/ISS-1006/advance")
-        assert client.post(f"{API}/demo/reset").json()["issues"] == 8
-        assert client.get(f"{API}/issues/ISS-1006").json()["state"] == "AWAITING_APPROVAL"
-
-    def test_reset_is_refused_outside_the_simulation(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Against a real database, reset would delete every table."""
-        from misthos.config import settings
-
-        monkeypatch.setattr(settings, "simulated", False)
-        monkeypatch.setattr(settings, "allow_demo_reset", True)  # not a way round it
-        assert client.post(f"{API}/demo/reset").status_code == 403
-        assert client.get(f"{API}/health").json()["seeded_issues"] == 8
+        fresh = Store(
+            MemoryRepository(),
+            chain=FakeChain(),
+            github=FakeGitHub(),
+            screening=FakeScreening(),
+            identity=FakeIdentity(),
+        )
+        assert fresh.list_issues() == []
+        assert fresh.list_publishers() == []
+        assert fresh.list_contributors() == []

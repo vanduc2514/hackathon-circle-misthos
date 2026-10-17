@@ -8,7 +8,7 @@ import './styles.css'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // The simulation mutates on every action, so always re-read.
+      // Every action mutates, so always re-read.
       staleTime: 0,
       refetchOnWindowFocus: false,
       retry: 1,

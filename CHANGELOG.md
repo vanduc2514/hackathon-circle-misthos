@@ -7,7 +7,19 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Removed
 
-- **The Loop, Spend and Plans pages, and the subscription model behind them** (#183).
+- **Simulation is gone** (#184). `MISTHOS_SIMULATED`, `SimulatedChain`, the simulated
+  billing rail, the demo endpoints and stepper, the seed, the demo wallets and the
+  edge's simulated wallet service are deleted. A deployment that still sets the old
+  variable runs live and is told once at startup; every path now has one
+  implementation, and it is the live one.
+  - Compliance is no longer faked: identity is Stripe Identity and screening reads the
+    official OFAC SDN list. Without a Stripe key a first payout stays pending; an
+    unreadable SDN list blocks funding and payouts.
+  - The browser suite is removed with the demo wallets and reset endpoint it drove; the
+    pytest, vitest and node suites remain, and the API tests inject in-memory gateways
+    at the boundaries. The suite count falls accordingly.
+  - Migration `0018` drops the `simulated_escrow` and `simulated_escrow_ceilings` tables.
+- - **The Loop, Spend and Plans pages, and the subscription model behind them** (#183).
   `/loop`, `/spend` and `/plans` are no longer routed and no link points at them; their
   API endpoints, `domain/plans.py`, `api/v1/plans.py`, `services/billing/` and
   `services/finance/` are gone, and a migration drops the `subscriptions` and
@@ -25,6 +37,13 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **Publish from connected repositories and issues** (#199). The publish form no
+  longer takes an `owner/name` and an issue number as free text. It offers the
+  publisher's connected repositories, then the open issues in the chosen one; pulling
+  one lists that GitHub issue and adds the platform label to it, so the label-driven
+  flow prices the same issue. Creating an issue is a button that reveals the title,
+  description and labels fields, and creation applies the platform label too. The
+  price field and the pricing flow are unchanged.
 - **One way in: the sign-in gate** (#181). Signing in is a dialog in the landing page's
   look that asks for a wallet, then a GitHub account, then a side, and opens the app at
   `/overview` only when all three are done. Every way in from the landing page — *Sign
@@ -35,7 +54,7 @@ Notable changes to Misthos, newest first. The format follows
     challenge (`POST /auth/circle/session`, `/auth/circle/wallet`, `/auth/circle/sign`), and
     `/auth/verify` recovers its address exactly as it recovers MetaMask's. Its wallets
     are EOAs, because a smart account's signature cannot be recovered. Without a wallet
-    extension the gate says so, and in the simulation no Circle frame opens.
+    extension the gate says so.
   - **GitHub before the side.** `POST /auth/github/start` and `/auth/github/simulate`
     take a signed-in wallet with no account, and the login is held against it until
     `POST /auth/role` creates the account, which adopts it. A held login is already one

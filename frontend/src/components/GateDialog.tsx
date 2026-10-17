@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Check, X } from 'lucide-react'
 import { api, shortHash, unwrap, type HealthOut, type MeOut } from '../lib/client'
 import { signIn, signOut, useHealth, useMe } from '../lib/session'
-import { browserProvider, browserWallet, demoWallet, type Signer } from '../lib/wallet'
+import { browserProvider, browserWallet, type Signer } from '../lib/wallet'
 import { circleSigner, type CircleApi } from '../lib/circle-wallet'
 import { circleSignInId, gateStep, linkedLogin, STEPS, stepsDone, type GateStep } from '../lib/gate'
 import { linking } from '../lib/github-link'
@@ -156,7 +156,7 @@ export default function GateDialog({
 
         {step === 'wallet' && <WalletStep health={health.data} onSignedIn={changed} />}
         {step === 'github' && me.data && health.data && (
-          <GitHubStep health={health.data} refusal={refusal} onLinked={changed} />
+          <GitHubStep health={health.data} refusal={refusal} />
         )}
         {step === 'side' && me.data && <SideStep me={me.data} onChosen={changed} />}
 
@@ -179,14 +179,13 @@ function circleApi(): CircleApi {
   }
 }
 
-/** Step 1: two doors to one session, MetaMask first; and the simulation's demo keys. */
+/** Step 1: two doors to one session, MetaMask first. */
 function WalletStep({ health, onSignedIn }: { health?: HealthOut; onSignedIn: () => void }) {
   const enter = useMutation({
     mutationFn: async (pick: () => Promise<Signer> | Signer) => signIn(await pick()),
     onSuccess: onSignedIn,
   })
   const extension = Boolean(browserProvider())
-  const simulated = health?.simulated ?? false
   const circle = health?.circle_sign_in ?? false
 
   return (
@@ -222,7 +221,6 @@ function WalletStep({ health, onSignedIn }: { health?: HealthOut; onSignedIn: ()
             <p className="gate-hint">
               A wallet Circle keeps for you behind a PIN you set in Circle&apos;s own window.
               Neither Misthos nor Circle can move its money without that PIN.
-              {simulated && ' In the simulation no Circle window opens, and the wallet is made up.'}
             </p>
             <div className="gate-actions">
               <button
@@ -242,33 +240,6 @@ function WalletStep({ health, onSignedIn }: { health?: HealthOut; onSignedIn: ()
         )}
       </section>
 
-      {simulated && (
-        <section className="gate-section" aria-label="Demo wallets">
-          <h3>The simulation&apos;s demo wallets</h3>
-          <p className="gate-hint">
-            Keys kept in this browser, for the simulation only. They never hold funds.
-          </p>
-          <div className="gate-actions">
-            <button
-              type="button"
-              className="gate-btn"
-              disabled={enter.isPending}
-              onClick={() => enter.mutate(() => demoWallet('publisher'))}
-            >
-              Demo publisher wallet
-            </button>
-            <button
-              type="button"
-              className="gate-btn"
-              disabled={enter.isPending}
-              onClick={() => enter.mutate(() => demoWallet('contributor'))}
-            >
-              Demo contributor wallet
-            </button>
-          </div>
-        </section>
-      )}
-
       {enter.isPending && (
         <p className="gate-hint" role="status">
           Waiting for your wallet…
@@ -287,25 +258,16 @@ function WalletStep({ health, onSignedIn }: { health?: HealthOut; onSignedIn: ()
 function GitHubStep({
   health,
   refusal,
-  onLinked,
 }: {
   health: HealthOut
   refusal: string | null
-  onLinked: () => void
 }) {
-  const [login, setLogin] = useState('')
   const way = linking(health)
   const start = useMutation({
     mutationFn: async () => unwrap(await api.POST('/api/v1/auth/github/start')),
     // GitHub asks the account holder, then sends them back to the gate.
     onSuccess: (data) => window.location.assign(data.authorize_url),
   })
-  const typed = useMutation({
-    mutationFn: async () =>
-      unwrap(await api.POST('/api/v1/auth/github/simulate', { body: { login: login.trim() } })),
-    onSuccess: onLinked,
-  })
-
   return (
     <div className="gate-section">
       {refusal && (
@@ -331,57 +293,14 @@ function GitHubStep({
         </div>
       )}
       {way.notSetUp && (
-        <div className={way.notSetUp === 'deployment' ? 'gate-error' : 'gate-note'} role="note">
-          GitHub linking isn&apos;t set up on this server
-          {way.notSetUp === 'simulation'
-            ? ', so in the simulation the login you type below is taken as yours.'
-            : ', so no GitHub account can be linked here yet, and signing in waits on it.'}{' '}
-          {way.notSetUp === 'simulation' ? 'To link your real account' : 'To fix it'}, whoever runs
-          the server creates a GitHub OAuth App with the callback{' '}
+        <div className="gate-error" role="note">
+          GitHub linking isn&apos;t set up on this server, so no GitHub account can be linked
+          here yet, and signing in waits on it. To fix it, whoever runs the server creates
+          a GitHub OAuth App with the callback{' '}
           <code>{health.github_oauth_callback_url}</code>, sets{' '}
           <code>MISTHOS_GITHUB_OAUTH_CLIENT_ID</code> and{' '}
           <code>MISTHOS_GITHUB_OAUTH_CLIENT_SECRET</code>, and restarts the API.
         </div>
-      )}
-      {way.byLogin && (
-        <form
-          className="gate-form"
-          style={{ marginTop: 14 }}
-          onSubmit={(e) => {
-            e.preventDefault()
-            typed.mutate()
-          }}
-        >
-          <label className="gate-field">
-            <span>
-              {way.byLogin === 'main' ? 'Your GitHub login' : 'Or, in the simulation, any GitHub login'}
-            </span>
-            <input
-              type="text"
-              value={login}
-              onChange={(e) => setLogin(e.target.value)}
-              pattern="[A-Za-z0-9\-]+"
-              maxLength={39}
-              placeholder="octocat"
-              autoComplete="username"
-              required
-            />
-          </label>
-          <div className="gate-actions">
-            <button
-              type="submit"
-              className={way.byLogin === 'main' ? 'gate-btn primary' : 'gate-btn'}
-              disabled={typed.isPending || !login.trim()}
-            >
-              Link this login
-            </button>
-          </div>
-          {typed.error && (
-            <div className="gate-error" role="alert">
-              {typed.error.message}
-            </div>
-          )}
-        </form>
       )}
     </div>
   )

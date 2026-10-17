@@ -1,12 +1,12 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
-import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js'
+import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js'
 import { browserProvider } from './eip1193'
 import { toChecksumAddress } from './siwe'
 
 /** Something that can prove it holds an address by signing a message. */
 export type Signer = {
-  kind: 'browser' | 'demo' | 'circle'
+  kind: 'browser' | 'circle'
   address: string
   sign: (message: string) => Promise<string>
 }
@@ -54,34 +54,4 @@ export async function browserWallet(): Promise<Signer> {
         params: ['0x' + bytesToHex(utf8ToBytes(message)), address],
       })) as string,
   }
-}
-
-// --------------------------------------------------------------- demo wallets
-
-export type DemoSlot = 'publisher' | 'contributor'
-
-const slotKey = (slot: DemoSlot) => `misthos.demo-wallet.${slot}`
-
-/**
- * A throwaway key kept in this browser, for the simulation only, so the demo can be
- * driven without a wallet extension. One per side, so a publisher and a contributor
- * can take turns in the same browser. It never holds funds.
- */
-export function demoWallet(slot: DemoSlot): Signer {
-  let hex: string | null = null
-  try {
-    hex = localStorage.getItem(slotKey(slot))
-  } catch {
-    // Storage can be blocked; a fresh key for this page is still a valid demo.
-  }
-  if (!hex || !/^[0-9a-f]{64}$/.test(hex)) {
-    hex = bytesToHex(secp256k1.utils.randomSecretKey())
-    try {
-      localStorage.setItem(slotKey(slot), hex)
-    } catch {
-      // As above.
-    }
-  }
-  const key = hexToBytes(hex)
-  return { kind: 'demo', address: addressOf(key), sign: async (m) => signPersonal(key, m) }
 }

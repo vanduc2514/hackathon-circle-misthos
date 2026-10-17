@@ -22,26 +22,6 @@ from misthos.services.github.base import (
     StatusState,
 )
 
-# The demo's GitHub has a couple of open issues, so the picker has something to show
-# after the App is installed in the simulation (#199). They belong to a repository the
-# seed does not use, so no listed fixture is offered twice.
-_DEMO_ISSUES = (
-    IssueFacts(
-        repo="acme/widgets",
-        number=77,
-        title="Retry on 503",
-        body="The retry budget ignores jitter, so a cold cache exhausts it.",
-        labels=("bug",),
-    ),
-    IssueFacts(
-        repo="acme/widgets",
-        number=78,
-        title="Show the fee split before funding",
-        body="A publisher should see what the contributor receives before committing.",
-        labels=("feature",),
-    ),
-)
-
 
 @dataclass(frozen=True)
 class Sent:
@@ -56,11 +36,11 @@ class Sent:
     state: str = ""
 
 
-class SimulatedGitHub:
-    name = "simulated"
+class FakeGitHub:
+    name = "fake"
     creates_issues = False
-    """The simulation's GitHub holds only what a test or a demo put in it, so there is
-    no repository to open an issue in; the store invents a number as it always has."""
+    """The fake holds only what a test put in it, so there is no repository to open an
+    issue in; the store invents a number when a publish names none."""
 
     def __init__(self) -> None:
         self._guard = threading.Lock()
@@ -70,6 +50,7 @@ class SimulatedGitHub:
         self.files: dict[tuple[str, int], list[ChangedFile]] = {}
         self.history: dict[tuple[str, str], int] = {}
         self.sent: list[Sent] = []
+        self.installations: list[Installation] = []
         self.fail_writes = False
         """Make every write raise, to prove a failed post never fails the action."""
 
@@ -80,8 +61,6 @@ class SimulatedGitHub:
             self.installations: list[Installation] = []
             self.sent = []
             self.fail_writes = False
-            for facts in _DEMO_ISSUES:
-                self.issues[(facts.repo.lower(), facts.number)] = facts
 
     # --------------------------------------------------------- installations
 

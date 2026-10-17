@@ -53,8 +53,7 @@ const steps = [
 ]
 
 /** Say what the money is, in the words a visitor would look for. */
-const moneyWords: Record<'simulated' | 'test' | 'real' | 'unknown', string> = {
-  simulated: 'simulated money',
+const moneyWords: Record<'test' | 'real' | 'unknown', string> = {
   test: 'test USDC',
   real: 'real USDC',
   unknown: 'not Arc: treat as real',
@@ -157,13 +156,13 @@ function HeaderAction() {
   const { data: me } = useMe()
   const gate = useGate()
   return gate.finished ? (
-    <Link className="nav-cta demo-preview-trigger" to="/overview">
+    <Link className="nav-cta preview-trigger" to="/overview">
       Open the app <ArrowRight aria-hidden="true" />
     </Link>
   ) : (
     <button
       type="button"
-      className="nav-cta demo-preview-trigger"
+      className="nav-cta preview-trigger"
       aria-haspopup="dialog"
       onClick={gate.open}
     >

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -40,33 +39,7 @@ class AccountConflict(Exception):
     """A GitHub login can belong to one wallet only."""
 
 
-@dataclass(frozen=True)
-class Seed:
-    """What the simulation's reset starts the repository from.
-
-    It is built in a repository of its own and handed over whole, so the one being
-    reset goes from its old contents to these in one step. The issues' versions are
-    not carried over: the repository being reset numbers them.
-    """
-
-    publishers: tuple[Publisher, ...]
-    contributors: tuple[Contributor, ...]
-    issues: tuple[IssueRecord, ...]
-    counters: Mapping[str, int]
-
-
 class Repository(Protocol):
-    def reset(self, seed: Seed | None = None) -> None:
-        """Remove everything, then hold `seed` if one is given, as one step.
-
-        A reader sees the old contents or the new ones, never the empty repository in
-        between. A copy of an issue loaded before the reset is stale after it, even
-        though the seed brings back an issue with the same id: versions never repeat.
-        The simulation's reset; never wired to production.
-        """
-
-    def is_empty(self) -> bool: ...
-
     def next_value(self, counter: str, start: int) -> int:
         """The next value of a named sequence shared by every process."""
 
@@ -132,8 +105,6 @@ class Repository(Protocol):
         """A private copy: changing it changes nothing until it is saved."""
 
     def list_issues(self, states: Collection[IssueState] | None = None) -> list[IssueRecord]: ...
-
-    def count_issues(self) -> int: ...
 
     def save_issues(self, *records: IssueRecord) -> None:
         """Save every record or none of them, bumping each one's version.
