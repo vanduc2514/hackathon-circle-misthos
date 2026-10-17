@@ -643,7 +643,9 @@ def _save_proposal(conn: Connection, rec: IssueRecord) -> None:
         "band_low_base_units": p.band_low.base_units,
         "band_high_base_units": p.band_high.base_units,
         "recommended_base_units": p.recommended.base_units,
-        "estimated_hours": p.estimated_hours,
+        # Legacy NOT NULL column from the hours model. Kept for rows written before
+        # the score curve; new proposals have no hour estimate to record.
+        "estimated_hours": 0.0,
         "complexity_score": p.complexity_score,
         "confidence": p.confidence,
         "signals": dict(p.signals),
@@ -962,7 +964,6 @@ def _proposal(row: Row) -> PriceProposal:
         band_low=Usdc(row["band_low_base_units"]),
         band_high=Usdc(row["band_high_base_units"]),
         recommended=Usdc(row["recommended_base_units"]),
-        estimated_hours=row["estimated_hours"],
         complexity_score=row["complexity_score"],
         confidence=row["confidence"],
         signals=dict(row["signals"]),

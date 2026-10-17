@@ -108,13 +108,12 @@ on the page and it never bounds anything.
 ```mermaid
 flowchart TB
     subgraph Task["What the work is"]
-        T1["Complexity signals"]
-        T2["Effort estimate"]
-        T3["Risk of rejection"]
+        T1["Six complexity signals"]
+        T2["Weighted score, 1 to 5"]
     end
     subgraph Market["What work like this costs"]
         M1["Settled issues with a similar shape"]
-        M2["The going rate for the language and stack"]
+        M2["The curve's two anchors"]
     end
     Task --> OUT["A suggested price, a range, and the reasoning"]
     Market --> OUT
@@ -135,17 +134,40 @@ flowchart TB
 | Prior attempts | Earlier pull requests were opened and abandoned or rejected | 15% |
 | Blast radius | A security path, a breaking change, or a public interface | 10% |
 
-The six signals produce an effort estimate in hours, and the hours produce a suggested
-price. Settled issues of a similar shape then move that suggestion toward what comparable
-work actually paid, and they alone set the confidence. Nothing is declared by a caller: an
-issue with no history behind it is priced on its signals alone and says so.
+The six signals produce a weighted score from 1 to 5. The score is read directly by a
+fixed curve, with no hours and no hourly rate:
+
+$$
+p(s) = 20 \times 10^{\frac{s - 2.5}{2.5}}
+     = 5.02 \times 2.5119^{\,s - 1}
+$$
+
+| Score | Price |
+| ---: | ---: |
+| 1.00 | $5.02 |
+| 1.50 | $7.96 |
+| 2.00 | $12.62 |
+| 2.50 | $20.00 |
+| 3.00 | $31.70 |
+| 3.50 | $50.24 |
+| 4.00 | $79.62 |
+| 4.50 | $126.19 |
+| 5.00 | $200.00 |
+
+The two anchors are the ordinary issue at score 2.5, worth $20, and the maximum at score
+5.0, worth $200. Score 1.0 lands at $5.02, almost exactly the platform's $5 floor. The
+range is 0.7x to 1.4x around that point; the point is the recommendation, not the band
+midpoint. The low end is clamped at $5, so the range never names a price `check_price`
+would refuse. Settled issues of a similar shape then move the suggestion toward what
+comparable work actually paid, and they alone set the confidence. Nothing is declared by
+a caller: an issue with no history behind it is priced on its signals alone and says so.
 
 ### The output
 
 Not a number on its own. A short brief:
 
 - The suggested price, with the range around it.
-- Where the effort estimate came from, in plain language.
+- The weighted score and the signals that drove it, in plain language.
 - The two or three comparable issues that settled recently, with their prices.
 - A confidence level, low, medium or high, based on how much comparable history exists.
 - A one-paragraph justification, which is the part a publisher can forward to whoever
@@ -154,53 +176,53 @@ Not a number on its own. A short brief:
 That last item is the feature with the outsized effect. The buyer's hardest step is not
 knowing the price; it is getting the price approved.
 
-### What it is not good at
+### What it is good at, and what it is not
 
-The suggestion is a bottom-up cost model: score the work, multiply by hours, multiply by a
-rate. That method has the worst track record in the field, and ours is no exception. The
-repository carries the measurement (`services/calibration.py`, `calibration-report.json`,
-#41): thirty GitHub issues that carried a real paid bounty of known worth, from sixteen
-organisations.
+The previous engine was a bottom-up cost model: score the work, multiply by hours, multiply
+by $90. Measured against 30 real paid bounties, it put 3.3% of them inside its range and
+had a median error of 1,599%. The hours map was the main cause: a score of 2.5 became 11.75
+hours, and $90 times 11.75 times a 1.225 multiplier is about $1,300.
 
-| | Rate | Worth inside the suggested range | Median error |
-| --- | --- | --- | --- |
-| The engine as it stands | $90/h | 3.3% | 1,599% |
-| The fit to those bounties | $8.09/h | 46.7% | 52% |
+The new curve is anchored to the live deployment, not to the bounty corpus. Across the 10
+priced issues on `mithios.nvduc.dev`, publishers named a median of $20, while the old
+engine recommended a median of $1,736 (84.5x). The curve predicts a median of $28.91 on the
+same issues (1.52x), and at the median live score of 2.90 it predicts $28.91 against a
+conditional median named price of $30.
 
-The paid bounties have a median of $100, from $15 to $2,000; the engine's suggestion for
-the same issues has a median of $1,667. Two things follow, and both are load-bearing for
-the decision above.
+Against the 30-bounty corpus the curve is less generous: with the $20 anchor, 6.7% of the
+known worths fall inside the range and the median error is 75.2%. Fitting the anchor to that
+corpus would move it to $128.74, with 46.7% inside and a 52.9% median error. The two markets
+disagree by roughly 6.4x, and that gap is the honest state of the evidence. The curve takes
+the live market because that is where the product is being used; the corpus stays as the
+independent check, and the publisher's number still binds.
 
-**The weights were not fitted to that corpus, deliberately.** The fit is degenerate: it puts
-70 percent of the weight on blast radius, but twenty-seven of the thirty issues carry the
-same blast-radius score because almost none of them is labelled, so a weight on a signal
-that barely varies is fitting the rate rather than the signal. And a bounty is a different
-market: a price posted to many competing hunters, often as marketing, a third of it below
-the floor at which the platform's own review pays for itself.
+**The score explains little of the variance.** On the live issues a log-linear fit of price
+against score gives $r = 0.229$, and the same score of 2.90 has named prices of $10, $20,
+$40 and $40. No curve on score alone can close that; the suggestion is a starting point,
+not a valuation.
 
-**The absolute level is untested against professional work.** That is the honest
-conclusion, and it is why the suggestion is not allowed to refuse anything. A number whose
-error is measured in hundreds of percent, in the region it has never seen a transaction, is
-in no position to be a boundary. It is in an excellent position to be a starting point.
+**The weights are still unfitted.** The corpus fit is degenerate: it puts 70 percent of the
+weight on blast radius, but 27 of the 30 issues share the same blast-radius score, so the
+weight fits the level rather than the signal. That is why the weights remain a starting
+guess and a fit is a reviewed change, not something the engine does to itself.
 
-### Why it lands high, in three lines
+### Why the old model landed high
 
-Nothing in the rules names $1,000, and yet that is where an ordinary issue lands. Three
-things do it:
+Nothing in the old rules named $1,000, and yet that is where an ordinary issue landed.
+Three things did it:
 
 1. **The score is a weighted average of six signals**, so it cannot be extreme. To score
    1.0 every signal must sit at its floor. Real readings cluster between 1.7 and 3.3,
-   which is already the middle of the range by construction. Averaging is the right way to
-   combine signals and the wrong way to produce a price.
-2. **The hours map stretches that bounded score by 6.5.** `2 + (score - 1) × 6.5` turns a
-   1-to-5 mean into 2 to 28 hours, so a small change in the score moves the estimate by a
+   which is already the middle of the range by construction.
+2. **The hours map stretched that bounded score by 6.5.** `2 + (score - 1) × 6.5` turned a
+   1-to-5 mean into 2 to 28 hours, so a small change in the score moved the estimate by a
    quarter.
 3. **One flat hourly rate, $90, applied to everyone**, when the supply it is priced for
    spans a factor of four: from about $25 an hour in South and South-East Asia to about $95
    in North America.
 
-Eleven hours at $90 is about $1,000. That is the arithmetic, and it is why the suggestion
-is labelled a suggestion.
+Eleven hours at $90 was about $1,000. The curve removes all three: no hours, no hourly
+rate, and no 6.5 stretch.
 
 ## What changed, and what it cost
 

@@ -1722,8 +1722,6 @@ export interface components {
             recommended: {
                 [key: string]: string | number;
             };
-            /** Estimated Hours */
-            estimated_hours: number;
             /**
              * Fundable
              * @default true

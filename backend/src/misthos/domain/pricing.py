@@ -5,11 +5,12 @@ caps it against a budget. What the work is worth is the one input the buyer hold
 the platform cannot supply, and telling a publisher their own number is wrong is the
 fastest way to lose them.
 
-What still lives here is the *suggestion*: an effort estimate from six signals, moved
-toward what comparable settled work actually paid, and the range that implies. It is
-advice on the page, never a condition of publishing. It survives because it is the one
-part of the engine that gets better with every settlement, and because it costs the
-publisher nothing to ignore (docs/misthos/06-pricing-engine.md).
+What still lives here is the *suggestion*: a price read directly from six weighted
+signals through a fixed curve, moved toward what comparable settled work actually paid,
+and the range that implies. There are no hours and no hourly rate. It is advice on the
+page, never a condition of publishing. It survives because it is the one part of the
+engine that gets better with every settlement, and because it costs the publisher
+nothing to ignore (docs/misthos/06-pricing-engine.md).
 """
 
 from __future__ import annotations
@@ -89,10 +90,16 @@ WEIGHTS: dict[str, float] = {
     "blast_radius": 0.10,
 }
 
-# Reference rate per hour for the suggestion. Advisory: the publisher's price is the
-# one that binds, and a buyer knows their own market rate better than a constant.
-# The suggestion is optimistic at the top of its range, which is why nothing rests on it.
-RATE_PER_HOUR = Usdc.from_decimal("90")
+# The suggestion's two anchors. A score of 2.5 is the ordinary issue and is worth $20;
+# a score of 5.0 is the maximum and is worth $200. Everything between follows a
+# geometric curve, so each point of score multiplies the price by 2.5119x. There are
+# no hours here: the live deployment's publisher-named prices clustered around $20,
+# while the previous hours model recommended roughly $1,700 for the same issues.
+ANCHOR_SCORE = Decimal("2.5")
+ANCHOR_PRICE = Usdc.from_decimal("20")
+TOP_SCORE = Decimal("5.0")
+TOP_PRICE = Usdc.from_decimal("200")
+PRICE_RATIO = TOP_PRICE.decimal / ANCHOR_PRICE.decimal
 
 # What one issue costs the platform to review: agent inference, settlement and
 # amortised screening. Kept here because it explains the platform's own economics.
@@ -141,7 +148,6 @@ class PriceProposal:
     band_low: Usdc
     band_high: Usdc
     recommended: Usdc
-    estimated_hours: float
     complexity_score: float
     confidence: str
     signals: dict[str, float] = field(default_factory=dict)
@@ -166,32 +172,33 @@ def score(signals: ComplexitySignals, weights: dict[str, float] | None = None) -
     return sum(signals.as_dict()[name] * weight for name, weight in w.items())
 
 
-def estimate_hours(signals: ComplexitySignals, weights: dict[str, float] | None = None) -> float:
+def price_for_score(score_: float, *, anchor_price: Usdc = ANCHOR_PRICE) -> Usdc:
+    """The curve's price for a weighted score, rounded to the cent it is shown at.
+
+    `p(s) = anchor * ratio ** ((s - 2.5) / 2.5)`. The curve is anchored rather than
+    fitted to an hourly rate: score 2.5 is $20, score 5.0 is $200, and score 1.0 is
+    $5.02, just above the platform's $5 floor.
+    """
+    exponent = (Decimal(str(score_)) - ANCHOR_SCORE) / (TOP_SCORE - ANCHOR_SCORE)
+    amount = anchor_price.decimal * (PRICE_RATIO**exponent)
+    return Usdc.from_decimal(amount.quantize(CENT, rounding="ROUND_HALF_UP"))
+
+
+def price_for_signals(
+    signals: ComplexitySignals,
+    weights: dict[str, float] | None = None,
+    *,
+    anchor_price: Usdc = ANCHOR_PRICE,
+) -> Usdc:
+    """The curve's price for a set of signals."""
     signals.validate()
-    score_ = score(signals, weights)
-    # A 1.0 score is a trivial change; a 5.0 is a substantial one. Map to hours.
-    return round(2 + (score_ - 1) * 6.5, 1)
-
-
-def complexity_multiplier(
-    signals: ComplexitySignals, weights: dict[str, float] | None = None
-) -> Decimal:
-    score_ = score(signals, weights)
-    return Decimal("1.0") + (Decimal(str(score_)) - Decimal("1.0")) * Decimal("0.15")
-
-
-def effort(signals: ComplexitySignals, weights: dict[str, float] | None = None) -> float:
-    """Hours times the complexity multiplier: what the formula charges the rate for,
-    and what scales one settled price to another issue."""
-    return estimate_hours(signals, weights) * float(complexity_multiplier(signals, weights))
+    return price_for_score(score(signals, weights), anchor_price=anchor_price)
 
 
 def propose(
     signals: ComplexitySignals,
     *,
-    urgency: Usdc | None = None,
-    risk_premium: Usdc | None = None,
-    rate_per_hour: Usdc = RATE_PER_HOUR,
+    anchor_price: Usdc = ANCHOR_PRICE,
     compliance_driven: bool = False,
     comparables: Sequence[Comparable] = (),
     weights: dict[str, float] | None = None,
@@ -206,23 +213,15 @@ def propose(
     `comparables` are settled issues of similar shape (`comparables.find`); they
     move the suggestion toward what that work settled at and set the confidence.
     """
-    hours = estimate_hours(signals, weights)
-    multiplier = complexity_multiplier(signals, weights)
-
-    fix_price = Usdc(int(rate_per_hour.base_units * hours * float(multiplier)))
-    if risk_premium is not None:
-        fix_price = fix_price + risk_premium
-    if urgency is not None:
-        fix_price = fix_price + urgency
+    signals.validate()
+    fix_price = price_for_signals(signals, weights, anchor_price=anchor_price)
+    complexity_score = score(signals, weights)
 
     notes: list[str] = []
     if comparables:
-        # History moves the formula's recommendation toward what it implies; the band
-        # keeps its shape around wherever the recommendation lands.
-        midpoint = (BAND_LOW + BAND_HIGH) / 2
-        formula = Usdc(int(fix_price.base_units * float(midpoint)))
-        moved = history.anchored(formula, comparables)
-        fix_price = Usdc(int(Decimal(moved.base_units) / midpoint))
+        # History moves the curve's price toward what it implies; the band keeps its
+        # shape around wherever the price lands.
+        fix_price = history.anchored(fix_price, comparables)
         share = int(history.pull(len(comparables)) * 100)
         noun = "issue" if len(comparables) == 1 else "issues"
         notes.append(
@@ -230,11 +229,13 @@ def propose(
             f"{_implied(comparables)}, so the price moved {share}% of the way there."
         )
 
-    low = Usdc(int(fix_price.base_units * float(BAND_LOW)))
+    # The band is advice, but a range that starts below the platform's own minimum
+    # would name a price `check_price` must refuse.
+    low = max(Usdc(int(fix_price.base_units * float(BAND_LOW))), MINIMUM_PRICE)
     high = Usdc(int(fix_price.base_units * float(BAND_HIGH)))
 
     confidence = history.confidence(comparables)
-    recommended = Usdc(int((low.base_units + high.base_units) / 2))
+    recommended = fix_price
 
     # Nothing here refuses an issue. The flag is kept because the stored proposal and
     # the API carry it, and it is always true: a price the publisher is willing to pay
@@ -245,11 +246,12 @@ def propose(
         band_low=low,
         band_high=high,
         recommended=recommended,
-        estimated_hours=hours,
-        complexity_score=round(score(signals, weights), 2),
+        complexity_score=round(complexity_score, 2),
         confidence=confidence,
         signals=signals.as_dict(),
-        justification=_justify(signals, hours, confidence, compliance_driven, notes),
+        justification=_justify(
+            signals, complexity_score, confidence, compliance_driven, notes
+        ),
         fundable=fundable,
         comparables=history.refs(comparables),
     )
@@ -261,14 +263,14 @@ def _implied(comparables: Sequence[Comparable]) -> Usdc:
 
 def _justify(
     signals: ComplexitySignals,
-    hours: float,
+    score_: float,
     confidence: str,
     compliance_driven: bool,
     extra: list[str],
 ) -> str:
     drivers = sorted(signals.as_dict().items(), key=lambda kv: kv[1], reverse=True)
     top = [name.replace("_", " ") for name, value in drivers[:2] if value >= 3]
-    parts = [f"Estimated at {hours} hours of work."]
+    parts = [f"Scored {score_:.2f} out of 5."]
     if top:
         if len(top) > 1:
             parts.append(f"Driven mainly by {top[0]} and {top[1]}.")

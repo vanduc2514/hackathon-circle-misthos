@@ -69,8 +69,8 @@ from misthos.domain.pricing import (
     ComplexitySignals,
     PriceRefused,
     check_price,
-    effort,
     fee_bps,
+    price_for_signals,
     propose,
 )
 from misthos.domain.review import (
@@ -469,8 +469,6 @@ class Store:
             compliance_driven=spec.get("compliance_driven", False),
             # Settled issues of the same shape, from the platform's own history (#42).
             comparables=self._comparables_for(signals, spec["repo"]),
-            urgency=Usdc.from_decimal(spec["urgency"]) if spec.get("urgency") else None,
-            risk_premium=Usdc.from_decimal(spec["risk"]) if spec.get("risk") else None,
         )
         target = IssueState(spec["state"])
         now = _now()
@@ -511,10 +509,11 @@ class Store:
             rec,
             actor="agent",
             action="price_suggested",
-            rule="complexity_score_v1",
+            rule="score_curve_v2",
             outcome=(
-                f"suggested {proposal.recommended} for {proposal.estimated_hours}h; "
-                "advice only, the publisher's price is what binds"
+                f"suggested {proposal.recommended} at complexity "
+                f"{proposal.complexity_score:.2f}; advice only, the publisher's price "
+                "is what binds"
             ),
             cost="0.00",
         )
@@ -2107,7 +2106,9 @@ class Store:
                     repo=rec.repo,
                     title=rec.title,
                     signals=dict(rec.proposal.signals),
-                    effort=effort(ComplexitySignals(**rec.proposal.signals)),
+                    basis_price=price_for_signals(
+                        ComplexitySignals(**rec.proposal.signals)
+                    ),
                     price=rec.paid,
                     settled_at=rec.paid_at,
                 )
@@ -2120,7 +2121,7 @@ class Store:
         """Settled issues of the same shape as this one, closest first (#42)."""
         return comparables.find(
             signals.as_dict(),
-            effort(signals),
+            price_for_signals(signals),
             self._settled_history(),
             weights=WEIGHTS,
             now=_now(),
@@ -3356,7 +3357,6 @@ class Store:
                 "band_low": money(p.band_low),
                 "band_high": money(p.band_high),
                 "recommended": money(p.recommended),
-                "estimated_hours": p.estimated_hours,
                 "fundable": p.fundable,
                 "complexity_score": p.complexity_score,
                 "confidence": p.confidence,
@@ -3738,8 +3738,6 @@ _ISSUE_SPECS: list[dict] = [
         # starts and the sweeper only returns it to the pool if nobody acts for a day.
         "age_days": 3,
         "contributor_id": "CON-1",
-        "risk": "1200.00",
-        "urgency": "800.00",
         "signals": {
             "code_surface": 3.0,
             "requirement_clarity": 2.0,

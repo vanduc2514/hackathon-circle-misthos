@@ -36,9 +36,9 @@ from misthos.domain.pricing import (
     PriceRefused,
     check_price,
     contributor_share,
-    effort,
     fee_bps,
     platform_fee,
+    price_for_signals,
     propose,
     suggested_range,
 )
@@ -158,14 +158,26 @@ class TestGraceAgainstTheEscrowDeadline:
 
 
 class TestPricing:
-    def test_effort_scales_with_complexity(self) -> None:
+    def test_price_scales_with_complexity(self) -> None:
         small = ComplexitySignals(1, 1, 1, 1, 1, 1)
         large = ComplexitySignals(5, 5, 5, 5, 5, 5)
-        assert propose(large).estimated_hours > propose(small).estimated_hours
+        assert propose(large).recommended > propose(small).recommended
+
+    def test_the_curve_is_anchored_at_the_live_price_level(self) -> None:
+        assert price_for_signals(ComplexitySignals(2.5, 2.5, 2.5, 2.5, 2.5, 2.5)) == (
+            Usdc.from_decimal("20")
+        )
+        assert price_for_signals(ComplexitySignals(5, 5, 5, 5, 5, 5)) == (
+            Usdc.from_decimal("200")
+        )
 
     def test_band_brackets_the_recommendation(self) -> None:
         p = propose(ComplexitySignals(3, 3, 3, 3, 3, 3))
         assert p.band_low < p.recommended < p.band_high
+
+    def test_the_band_never_suggests_a_price_below_the_floor(self) -> None:
+        p = propose(ComplexitySignals(1, 1, 1, 1, 1, 1))
+        assert p.band_low == MINIMUM_PRICE
 
     def test_the_suggested_range_brackets_the_recommendation(self) -> None:
         p = propose(ComplexitySignals(3, 3, 3, 3, 3, 3))
@@ -195,7 +207,7 @@ class TestPricing:
 
     def test_the_suggestion_never_refuses_an_issue(self) -> None:
         """`fundable` is always true now: nothing the engine says bounds a price (#142)."""
-        p = propose(ComplexitySignals(1, 1, 1, 1, 1, 1), rate_per_hour=Usdc.from_decimal("1"))
+        p = propose(ComplexitySignals(1, 1, 1, 1, 1, 1), anchor_price=Usdc.from_decimal("1"))
         assert p.fundable is True
         assert "minimum" not in p.justification
 
@@ -268,7 +280,7 @@ def settled(issue_id: str, price: str, signals: ComplexitySignals = MID, *, days
         repo=repo,
         title=f"settled {issue_id}",
         signals=signals.as_dict(),
-        effort=effort(signals),
+        basis_price=price_for_signals(signals),
         price=Usdc.from_decimal(price),
         settled_at=NOW - timedelta(days=days_ago),
     )
@@ -276,7 +288,8 @@ def settled(issue_id: str, price: str, signals: ComplexitySignals = MID, *, days
 
 def found(history: list[SettledWork], signals: ComplexitySignals = MID, **kw: object) -> list:
     return comparables.find(
-        signals.as_dict(), effort(signals), history, weights=WEIGHTS, now=NOW, **kw  # type: ignore[arg-type]
+        signals.as_dict(), price_for_signals(signals), history, weights=WEIGHTS, now=NOW,
+        **kw,  # type: ignore[arg-type]
     )
 
 
@@ -301,18 +314,18 @@ class TestComparables:
         ranked = found(history, repo="acme/ledger")
         assert [c.work.issue_id for c in ranked] == ["ISS-2", "ISS-1"]
 
-    def test_a_settled_price_is_scaled_to_this_issues_effort(self) -> None:
+    def test_a_settled_price_is_scaled_to_this_issues_shape(self) -> None:
         small = ComplexitySignals(2.5, 2.5, 2.5, 2.5, 2.5, 2.5)
         (c,) = found([settled("ISS-1", "1000", small)])
         assert c.implied > Usdc.from_decimal("1000")
 
     def test_history_moves_the_price_toward_what_it_implies(self) -> None:
         formula = propose(MID)
-        cheaper = found([settled("ISS-1", "400"), settled("ISS-2", "420"), settled("ISS-3", "410")])
+        cheaper = found([settled("ISS-1", "10"), settled("ISS-2", "12"), settled("ISS-3", "11")])
         p = propose(MID, comparables=cheaper)
         assert p.recommended < formula.recommended
         # Three comparables move it half of the way, never all of it.
-        assert p.recommended > Usdc.from_decimal("420")
+        assert p.recommended > Usdc.from_decimal("11")
         assert "moved 50% of the way" in p.justification
         assert p.band_low < p.recommended < p.band_high
 

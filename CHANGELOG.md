@@ -7,6 +7,19 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Changed
 
+- **Pricing suggestions come from a score curve, not hours** (#196). The suggestion no
+  longer computes an effort estimate or applies a $90 hourly rate. The weighted 1-5 score
+  maps directly to a price: `p(s) = 20 * 10^((s - 2.5) / 2.5)`, so score 2.5 is $20, score
+  5.0 is $200, and score 1.0 is $5.02.
+  - The 0.7x-1.4x range brackets the curve's price, and the recommendation is the curve
+    point rather than the band midpoint.
+  - Comparables scale a settled price by the curve's relative price for the two shapes,
+    not by hours.
+  - Live calibration: the previous engine's median recommendation on the 10 priced issues
+    was $1,736 against a median named price of $20 (84.5x). The curve predicts $28.91
+    (1.52x).
+  - `estimated_hours` is gone from the API. The legacy database column is written as zero
+    for proposals created by the new model.
 - **The app wears the landing page's look** (#168, #169). Every page behind `/` is now light:
   white pages, black ink and buttons, Georgia headings and figures, and Arial text. The
   dark, mono, orange theme is gone.

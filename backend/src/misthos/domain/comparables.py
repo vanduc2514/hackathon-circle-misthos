@@ -56,8 +56,9 @@ class SettledWork:
     repo: str
     title: str
     signals: dict[str, float]
-    effort: float
-    """Hours times the complexity multiplier, as the engine scored it when priced."""
+    basis_price: Usdc
+    """The curve's price for this work's signals, so another issue can be scaled
+    against it without inventing hours."""
     price: Usdc
     settled_at: datetime
 
@@ -68,7 +69,7 @@ class Comparable:
     distance: float
     implied: Usdc
     """What this settlement implies the issue being priced is worth: its price,
-    scaled by how much more or less effort this issue is."""
+    scaled by the curve's relative price for the two shapes."""
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,7 @@ def distance(a: dict[str, float], b: dict[str, float], weights: dict[str, float]
 
 def find(
     signals: dict[str, float],
-    effort: float,
+    price: Usdc,
     history: Iterable[SettledWork],
     *,
     weights: dict[str, float],
@@ -101,12 +102,16 @@ def find(
     """Every settled issue close enough to count, best first."""
     found: list[tuple[float, Comparable]] = []
     for work in history:
-        if work.issue_id == exclude or now - work.settled_at > WINDOW or work.effort <= 0:
+        if (
+            work.issue_id == exclude
+            or now - work.settled_at > WINDOW
+            or work.basis_price.base_units <= 0
+        ):
             continue
         d = distance(signals, work.signals, weights)
         if d > MAX_DISTANCE:
             continue
-        scale = Decimal(str(effort)) / Decimal(str(work.effort))
+        scale = Decimal(price.base_units) / Decimal(work.basis_price.base_units)
         implied = Usdc(int(work.price.base_units * scale))
         rank = d - (SAME_REPO_BONUS if repo and work.repo.lower() == repo.lower() else 0.0)
         found.append((rank, Comparable(work=work, distance=round(d, 3), implied=implied)))

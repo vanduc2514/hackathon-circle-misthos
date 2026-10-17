@@ -229,11 +229,6 @@ export default function IssueDetail() {
                   ${money(p.band_low)} – ${money(p.band_high)}
                 </span>
               </div>
-              <div className="price-total">
-                <span className="dim">Effort estimate</span>
-                <span className="mono-num">{p.estimated_hours}h</span>
-              </div>
-
               <div className="justify">{p.justification}</div>
               <div className="confidence-note">
                 Confidence: {p.confidence}.{' '}

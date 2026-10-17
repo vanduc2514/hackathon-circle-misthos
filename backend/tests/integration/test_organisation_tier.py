@@ -53,7 +53,7 @@ class TestReleaseThreshold:
         self, client: TestClient
     ) -> None:
         assert (
-            policy(client, approval_threshold_usdc="1000", approvers=[APPROVER]).status_code == 200
+            policy(client, approval_threshold_usdc="10", approvers=[APPROVER]).status_code == 200
         )
         to_acceptance(ISSUE)
 
@@ -66,14 +66,14 @@ class TestReleaseThreshold:
         assert APPROVER in held.outcome
 
     def test_the_grace_period_cannot_go_around_it(self, client: TestClient) -> None:
-        policy(client, approval_threshold_usdc="1000", approvers=[APPROVER])
+        policy(client, approval_threshold_usdc="10", approvers=[APPROVER])
         to_acceptance(ISSUE)
         verdict_at = store.get(ISSUE).review.decided_at  # type: ignore[union-attr]
         sweep_once(store, now=verdict_at + SILENT_PUBLISHER_GRACE + timedelta(hours=2))
         assert store.get(ISSUE).state is IssueState.ACCEPTED  # type: ignore[union-attr]
 
     def test_only_a_named_approver_releases_it(self, client: TestClient) -> None:
-        policy(client, approval_threshold_usdc="1000", approvers=[APPROVER])
+        policy(client, approval_threshold_usdc="10", approvers=[APPROVER])
         to_acceptance(ISSUE)
         store.advance(ISSUE)
 
@@ -86,7 +86,7 @@ class TestReleaseThreshold:
         assert actions.index("release_approved") < actions.index("released")
 
     def test_nothing_to_approve_is_a_conflict(self, client: TestClient) -> None:
-        policy(client, approval_threshold_usdc="1000", approvers=[APPROVER])
+        policy(client, approval_threshold_usdc="10", approvers=[APPROVER])
         r = client.post(f"{API}/issues/{ISSUE}/approve-release", json={"approver": APPROVER})
         assert r.status_code == 409
 
@@ -111,12 +111,12 @@ class TestReleaseThreshold:
 
 class TestCategoryLimits:
     def test_a_commitment_over_the_monthly_limit_is_refused(self, client: TestClient) -> None:
-        policy(client, category_limits={"compliance": "1000"})
+        policy(client, category_limits={"compliance": "10"})
 
         r = client.post(f"{API}/issues/{ISSUE}/advance")
 
         assert r.status_code == 403
-        assert "compliance is limited to 1000.00 USDC a month" in r.json()["detail"]
+        assert "compliance is limited to 10.00 USDC a month" in r.json()["detail"]
         rec = store.get(ISSUE)
         assert rec is not None and rec.state is IssueState.AWAITING_APPROVAL
         assert (rec.decisions[-1].action, rec.decisions[-1].rule) == (
@@ -137,20 +137,19 @@ class TestCategoryLimits:
         re-priced down is refused for a commitment they were never going to make (#150)."""
         rec = store.get(ISSUE)
         assert rec is not None and rec.proposal is not None
-        # Room for the price, and not for the engine's reading of the issue.
-        room = Usdc(rec.proposal.recommended.base_units - Usdc.from_decimal("1").base_units)
-        # Asserted, because a refused policy would leave no limit at all and this test
-        # would pass for the wrong reason.
-        applied = policy(client, category_limits={"compliance": f"{room.decimal:.2f}"})
+        # The limit is below the engine's suggestion and above the price the publisher
+        # chooses. Held against the suggestion, this funding would be refused (#150).
+        assert rec.proposal.recommended > Usdc.from_decimal("20")
+        applied = policy(client, category_limits={"compliance": "20"})
         assert applied.status_code == 200, applied.text
-        moved = client.patch(f"{API}/issues/{ISSUE}/price", json={"amount": "100"})
+        moved = client.patch(f"{API}/issues/{ISSUE}/price", json={"amount": "15"})
         assert moved.status_code == 200, moved.text
 
         funded = store.advance(ISSUE)
 
         assert funded.state is IssueState.FUNDED
         assert funded.escrow is not None
-        assert funded.escrow.amount["usdc"] == "100.00"
+        assert funded.escrow.amount["usdc"] == "15.00"
 
     def test_a_price_over_the_room_left_is_refused(self, client: TestClient) -> None:
         """And the other way: the amount the message names is the price, so a commitment

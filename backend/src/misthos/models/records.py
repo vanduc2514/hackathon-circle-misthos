@@ -33,8 +33,8 @@ class IssueRecord:
     created_at: datetime
     deadline: datetime | None = None
     proposal: PriceProposal | None = None
-    """The engine's advice: an effort estimate, a range and the reasoning (#142). Read
-    by the page and the record. It never bounds the price."""
+    """The engine's advice: a price from the score curve, a range and the reasoning
+    (#142). Read by the page and the record. It never bounds the price."""
     price: Usdc | None = None
     """What the publisher said the work is worth, in USDC. Named by them and never by
     the engine, and the amount the escrow commits. Nothing refuses it but the two
