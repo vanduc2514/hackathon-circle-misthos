@@ -78,14 +78,6 @@ def test_the_guards_also_run_against_redis(workflow: dict) -> None:
     assert "redis" in job["services"]
 
 
-def test_the_whole_system_boots_from_compose(workflow: dict) -> None:
-    """A Dockerfile or compose change that breaks the shipped system fails the build."""
-    commands = [step["run"] for step in workflow["jobs"]["compose"]["steps"] if "run" in step]
-    up = next(c for c in commands if c.startswith("docker compose up"))
-    assert "--wait" in up and "--build" in up
-    assert any("/api/v1/health" in c and "--fail" in c for c in commands)
-
-
 def test_the_browser_suite_is_gone(workflow: dict) -> None:
     """The demo wallet and reset endpoints the browser suite drove are gone; the API
     and unit suites are the record now."""

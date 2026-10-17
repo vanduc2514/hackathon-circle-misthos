@@ -45,14 +45,16 @@ def fresh_store():
     This is the seam: the application always builds its live store; the suite
     installs one built with in-memory gateways instead. No runtime switch is read.
     """
-    store.install(
-        SeededStore(
-            chain=FakeChain(),
-            github=FakeGitHub(),
-            screening=FakeScreening(),
-            identity=FakeIdentity(),
-        )
+    seeded = SeededStore(
+        chain=FakeChain(),
+        github=FakeGitHub(),
+        screening=FakeScreening(),
+        identity=FakeIdentity(),
     )
+    # Redis keeps rate-limit counters and one-time nonces across tests; a fresh store
+    # in memory does not. Clear them either way so one test cannot throttle the next.
+    seeded.coordinator.reset()
+    store.install(seeded)
     yield
 
 
