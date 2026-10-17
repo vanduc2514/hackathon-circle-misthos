@@ -260,7 +260,7 @@ class SeededStore(Store):
         from misthos.repositories import MemoryRepository
 
         self.repo = MemoryRepository()
-        for party in (self.chain, self.rail, self.github):
+        for party in (self.chain, self.github):
             reset = getattr(party, "reset", None)
             if reset is not None:
                 reset()

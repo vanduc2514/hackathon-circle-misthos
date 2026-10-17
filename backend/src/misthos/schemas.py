@@ -42,7 +42,6 @@ class WalletSessionOut(BaseModel):
     encryption_key: str
     challenge_id: str | None = Field(description="None when the wallet already exists")
     wallet: Wallet | None
-    simulated: bool
 
 
 class Publisher(BaseModel):
@@ -61,7 +60,7 @@ class Publisher(BaseModel):
 
 class PublisherListing(BaseModel):
     """A publisher as anyone may see it. Its budget and spending policy are
-    commercially sensitive, so outside the simulation they are filled in only for
+    commercially sensitive, so they are filled in only for
     the signed-in publisher itself ([PRIVACY.md](../../docs/PRIVACY.md))."""
 
     id: str
@@ -200,9 +199,7 @@ class EscrowReadback(BaseModel):
     issue_key: str = Field(description="bytes32 the contract stores the issue under")
     contract: str
     chain_id: int
-    source: Literal["chain", "simulation"] = Field(
-        description="chain: read from MisthosEscrow; simulation: the simulated escrow's books"
-    )
+    source: Literal["chain"] = Field(description="read from MisthosEscrow")
     status: Literal["none", "held", "released", "refunded"]
     publisher: str | None
     amount: dict[str, str | int]
@@ -483,22 +480,19 @@ class CircleSignInSession(BaseModel):
     address: str | None
     """The wallet's address, once it exists. This is the address the sign-in message
     names and the address `POST /auth/verify` recovers."""
-    simulated: bool
 
 
 class CircleSignInWallet(BaseModel):
     """A Circle sign-in wallet as it stands: its address once Circle has created it."""
 
     address: str | None
-    simulated: bool
 
 
 class CircleSignature(BaseModel):
     """The answer to signing a sign-in message with a Circle wallet.
 
-    Live, Circle signs once its owner approves with their PIN, so this carries the
-    challenge for the frame to run and the signature comes back from the frame. In the
-    simulation no frame opens, and the signature is here.
+    Circle signs once its owner approves with their PIN, so this carries the challenge
+    for the frame to run and the signature comes back from the frame.
     """
 
     app_id: str
@@ -506,7 +500,6 @@ class CircleSignature(BaseModel):
     encryption_key: str
     challenge_id: str | None
     signature: str | None
-    simulated: bool
 
 
 class FundRequest(BaseModel):
@@ -537,30 +530,16 @@ class AlreadyPublished(BaseModel):
     """The open listing of that GitHub issue."""
 
 
-class SimulatedLink(BaseModel):
-    login: str = Field(min_length=1, max_length=39, pattern=r"^[A-Za-z0-9-]+$")
-
-
 class CriteriaRequest(BaseModel):
     criteria: list[str] = Field(min_length=1, max_length=12)
 
 
 class ClaimRequest(BaseModel):
-    contributor_id: str | None = None
-    """The simulation's only: whom the demo claims as. A signed-in contributor claims
-    as themselves."""
+    """Empty: a signed-in contributor claims as themselves."""
 
 
 class SubmitRequest(BaseModel):
     pr_number: int = Field(gt=0)
-
-
-class DemoPullRequestOut(BaseModel):
-    """A pull request the simulated GitHub opened for the claimant (simulation only)."""
-
-    pr_number: int
-    author: str
-    head_sha: str
 
 
 class PolicyRequest(BaseModel):
@@ -572,10 +551,7 @@ class PolicyRequest(BaseModel):
 
 
 class ApproveReleaseRequest(BaseModel):
-    approver: str | None = Field(default=None, min_length=1, max_length=200)
-    """The simulation's only, for a visitor who is not signed in: the approver the demo
-    acts as. Signed in, the approver is the account's linked GitHub login, and this is
-    ignored."""
+    """Empty: the approver is the signed-in account's linked GitHub login."""
 
 
 class AuditMoneyEvent(BaseModel):
@@ -610,7 +586,6 @@ class AuditExport(BaseModel):
     publisher_id: str
     name: str
     generated_at: datetime
-    simulated: bool
     issues: list[AuditIssue]
 
 
@@ -640,20 +615,17 @@ class HealthOut(BaseModel):
     chain: str = Field(description="Derived from chain_id: arc-mainnet, arc-testnet or chain-<id>")
     chain_id: int
     network_label: str
-    money: Literal["simulated", "test", "real", "unknown"] = Field(
+    money: Literal["test", "real", "unknown"] = Field(
         description=(
-            "simulated: nothing moves; test: Arc testnet faucet USDC; real: Arc mainnet; "
+            "test: Arc testnet faucet USDC; real: Arc mainnet; "
             "unknown: not an Arc network, so treat its USDC as real"
         )
     )
     money_note: str
-    seeded_issues: int
-    simulated: bool
     github_oauth: bool = Field(
         description=(
             "Whether a real GitHub account can be linked here: both "
-            "MISTHOS_GITHUB_OAUTH_CLIENT_ID and MISTHOS_GITHUB_OAUTH_CLIENT_SECRET are set. "
-            "Without it, the simulation links a typed login and a deployment links none."
+            "MISTHOS_GITHUB_OAUTH_CLIENT_ID and MISTHOS_GITHUB_OAUTH_CLIENT_SECRET are set."
         )
     )
     github_oauth_callback_url: str = Field(
@@ -662,9 +634,8 @@ class HealthOut(BaseModel):
     circle_sign_in: bool = Field(
         default=False,
         description=(
-            "Whether a Circle wallet can be the way in (#181). The simulation signs for a "
-            "made-up wallet and opens no frame; live, it needs the edge service, which "
-            "MISTHOS_EDGE_CORE_TOKEN being set stands for."
+            "Whether a Circle wallet can be the way in (#181): the edge service is "
+            "configured, which MISTHOS_EDGE_CORE_TOKEN being set stands for."
         ),
     )
 
@@ -699,8 +670,6 @@ class AnnualStatement(BaseModel):
     total: dict[str, str | int]
     payouts: int
     generated_at: datetime
-    simulated: bool
-    """True when no chain was contacted. A simulated statement is not a tax record."""
 
 
 # ------------------------------------------------------- GitHub connections (#6)

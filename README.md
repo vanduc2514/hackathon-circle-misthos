@@ -121,8 +121,7 @@ MISTHOS_REDIS_URL=redis://localhost:6379/0 mise run dev:api
 ### Linking your real GitHub account locally
 
 Publishing and claiming need a linked GitHub login. With nothing configured the
-sign-in gate's GitHub step says linking is not set up here, and the simulation takes a
-login you type instead. To link your real account:
+sign-in gate's GitHub step says linking is not set up here. To link your real account:
 
 1. Create a GitHub OAuth App at <https://github.com/settings/developers> (OAuth Apps,
    New OAuth App).
@@ -146,7 +145,7 @@ login you type instead. To link your real account:
 
 ### Connecting a real repository
 
-GitHub is simulated until a GitHub App is configured. Register one from
+GitHub is read and written as a GitHub App. Register one from
 `backend/github-app-manifest.json` (replace the webhook host first), install it on
 the repository, and set its id, private key and webhook secret:
 
@@ -180,12 +179,12 @@ There is one way into the app: the sign-in gate (#181). Every way in from the la
 page — **Sign in**, **Plans**, an issue's row, **See every issue** — and the app's own
 **Sign in** open it while it is unfinished, and it asks for three things in this order:
 
-1. **A wallet.** MetaMask first, or a Circle wallet as the second way in; in the
-   simulation, the demo publisher and contributor wallets too. Either wallet signs the
+1. **A wallet.** MetaMask first, or a Circle wallet as the second way in. Either wallet
+   signs the
    same Sign-In with Ethereum message (`POST /api/v1/auth/nonce`, then `/auth/verify`),
    and the API recovers the address from the signature the same way for both.
-2. **A GitHub account,** linked before the side is chosen (`/auth/github/start`, or a
-   typed login in the simulation). Until the account exists the login is held against
+2. **A GitHub account,** linked before the side is chosen (`/auth/github/start`). Until
+   the account exists the login is held against
    the wallet, and it is already that wallet's: another wallet linking it, pending or
    complete, is refused with the conflict named.
 3. **A side,** publisher or contributor, chosen once (`/auth/role`). This creates the
@@ -199,18 +198,18 @@ signing in** rather than **Open the app**. The profile at `/account` shows who y
 the wallet the money moves through and a publisher's repositories, and sends you to the
 gate for anything missing.
 
-Through the API, in the simulation, the three steps look like this. `$SIGNED` is the
-body `{"message": …, "signature": …}` for that nonce: the message as `siweMessage` in
-`frontend/src/lib/siwe.ts` builds it, signed by the wallet it names.
+Through the API the three steps are the same for every wallet. `$SIGNED` is the body
+`{"message": …, "signature": …}` for that nonce: the message as `siweMessage` in
+`frontend/src/lib/siwe.ts` builds it, signed by the wallet it names. GitHub linking is
+the OAuth redirect (`/auth/github/start`, then the callback), so it is done in the
+browser.
 
 ```bash
 api=http://localhost:5173/api/v1
 nonce=$(curl -s -c jar -X POST $api/auth/nonce | jq -r .nonce)
 curl -s -b jar -c jar -X POST $api/auth/verify \
   -H 'Content-Type: application/json' -d "$SIGNED"           # step 1: a session
-curl -s -b jar -X POST $api/auth/github/simulate \
-  -H 'Content-Type: application/json' -d '{"login": "octo-dev"}'
-# {"address": "0x…", "account": null, "pending_github_login": "octo-dev"}
+# step 2: open $api/auth/github/start in the browser and approve on GitHub
 curl -s -b jar -X POST $api/auth/role \
   -H 'Content-Type: application/json' -d '{"role": "contributor", "name": "octo-dev"}'
 # {"address": "0x…", "role": "contributor", "party_id": "CON-…",
@@ -225,11 +224,11 @@ back without asking Circle for anything new. `POST /auth/circle/sign` with the n
 naming that address returns a `SIGN_MESSAGE` challenge for the frame, and the signature
 the frame hands back goes to `/auth/verify` like MetaMask's. The route signs only a
 sign-in message for this site, with a nonce nobody has spent, naming that very wallet.
-In the simulation no frame opens and the API signs for a made-up wallet; live it needs
-the edge service (`MISTHOS_EDGE_CORE_TOKEN`, with `CIRCLE_API_KEY` and `CIRCLE_APP_ID` on
-the edge), and `/health` says whether it is set up as `circle_sign_in`.
+The edge service provides it (`MISTHOS_EDGE_CORE_TOKEN`, with `CIRCLE_API_KEY` and
+`CIRCLE_APP_ID` on the edge), and `/health` says whether it is set up as
+`circle_sign_in`.
 
-Outside the simulation nothing is written anonymously. A publisher acts only on its own
+Nothing is written anonymously. A publisher acts only on its own
 issues, and a contributor submits only a pull request it opened. The loop then runs
 through explicit actions:
 
@@ -245,17 +244,13 @@ through explicit actions:
 Linking needs a GitHub OAuth App (`MISTHOS_GITHUB_OAUTH_CLIENT_ID` and
 `MISTHOS_GITHUB_OAUTH_CLIENT_SECRET`, see
 [Linking your real GitHub account locally](#linking-your-real-github-account-locally));
-without one the simulation links a typed login and a deployment links none. Set
-`MISTHOS_SESSION_SECRET` to keep sessions across a restart. The demo stepper
-(`/advance` and `/complete`) runs only in the simulation, because it fabricates the
-pull request and the merge.
+without one linking is not offered. Set `MISTHOS_SESSION_SECRET` to keep sessions
+across a restart.
 
 The web app does all of this from the sign-in gate and each issue's page, which shows
-each party only the step that is theirs. In the simulation there is no need for a
-wallet extension: the demo publisher and contributor wallets are throwaway keys kept
-in the browser, and GitHub is simulated, so the contributor opens their pull request
-and the publisher merges it with a button. Use two browsers, or a private window, to
-be both sides at once.
+each party only the step that is theirs. A wallet extension signs both sides in; the
+contributor opens their pull request and the publisher merges it on GitHub. Use two
+browsers, or a private window, to be both sides at once.
 
 ### Pricing from history
 

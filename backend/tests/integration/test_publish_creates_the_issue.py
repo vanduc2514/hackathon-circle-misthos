@@ -43,14 +43,12 @@ class CreatingGitHub(FakeGitHub):
 def store_with(github: CreatingGitHub) -> Store:
     from tests.support.fake_chain import FakeChain
     from tests.support.fake_compliance import FakeIdentity, FakeScreening
-    from tests.support.fake_rail import FakeRail
     from tests.support.seeded import SeededStore
 
     return SeededStore(
         MemoryRepository(),
         github=github,
         chain=FakeChain(),
-        rail=FakeRail(),
         screening=FakeScreening(),
         identity=FakeIdentity(),
     )

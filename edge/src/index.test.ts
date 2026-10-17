@@ -11,7 +11,7 @@ const CIRCLE = { CIRCLE_API_KEY: 'TEST_API_KEY:x:y', CIRCLE_APP_ID: 'app-1' }
 /** Start the edge as `npm run dev` does, with only `env` configured. NODE_ENV=test
  * keeps it from listening, so a start that succeeds exits 0, and one that is refused
  * exits with the reason. Nothing here reaches Circle: a refused start stops before
- * any request, and the simulated one never makes any. */
+ * any request, and no request reaches Circle before it is needed. */
 function start(env: Record<string, string>): Promise<{ code: number; stderr: string }> {
   const inherited = Object.fromEntries(
     ['PATH', 'HOME', 'TMPDIR', 'SystemRoot'].flatMap((k) =>

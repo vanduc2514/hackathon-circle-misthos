@@ -7,7 +7,6 @@
  * address from the signature the same way. Neither the platform nor this page ever sees
  * the PIN or a key; the API only hands Circle's frame its challenges.
  *
- * In the simulation no frame opens: the API signs for a made-up wallet.
  */
 
 import { toChecksumAddress } from './siwe'
@@ -19,7 +18,6 @@ export interface CircleFrame {
   user_token: string
   encryption_key: string
   challenge_id: string | null
-  simulated: boolean
 }
 
 export interface CircleSession extends CircleFrame {
@@ -78,7 +76,7 @@ async function circleRunner(): Promise<ChallengeRunner> {
 /**
  * The Circle wallet as a signer. A first visit runs the PIN challenge that creates the
  * wallet, and only then is there an address to sign in as; each signature is approved
- * with the PIN in Circle's frame. The simulation opens no frame at either point.
+ * with the PIN in Circle's frame.
  */
 export async function circleSigner(
   api: CircleApi,
@@ -93,7 +91,7 @@ export async function circleSigner(
 
   const session = await api.session()
   let address = session.address
-  if (!address && session.challenge_id && !session.simulated) {
+  if (!address && session.challenge_id) {
     await runInFrame({ ...session, challenge_id: session.challenge_id })
     // Circle can still be creating the wallet when the frame closes, so the address is
     // read back a few times before the gate says to try again. Only read: starting the

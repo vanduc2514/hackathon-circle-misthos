@@ -14,7 +14,6 @@ from misthos.workers.sweeper import reset_review_failures
 from tests.support.fake_chain import FakeChain
 from tests.support.fake_compliance import FakeIdentity, FakeScreening
 from tests.support.fake_github import FakeGitHub
-from tests.support.fake_rail import FakeRail
 from tests.support.seeded import SeededStore
 
 
@@ -37,7 +36,6 @@ def every_store(request: pytest.FixtureRequest, tmp_path: Path) -> Store:
     store: Store = SeededStore(
         repository=repo,
         chain=FakeChain(),
-        rail=FakeRail(),
         github=FakeGitHub(),
         screening=FakeScreening(),
         identity=FakeIdentity(),

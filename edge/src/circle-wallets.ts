@@ -33,10 +33,7 @@
  *      signature comes back from Circle's frame, never through here.
  */
 
-import { createHash } from 'node:crypto'
 import { initiateUserControlledWalletsClient } from '@circle-fin/user-controlled-wallets'
-import { privateKeyToAccount } from 'viem/accounts'
-import { simulatedFrom } from './simulated.js'
 
 export type Party = 'publisher' | 'contributor'
 
@@ -47,7 +44,6 @@ export const ARC_MAINNET = 'ARC'
 const USER_EXISTS = 155101
 
 export interface WalletConfig {
-  simulated: boolean
   apiKey: string
   appId: string
   blockchain: typeof ARC_TESTNET | typeof ARC_MAINNET
@@ -62,27 +58,24 @@ export interface WalletSession {
   challengeId: string | null
   address: string | null
   blockchain: string
-  simulated: boolean
 }
 
 export interface SignInChallenge {
   appId: string
   userToken: string
   encryptionKey: string
-  /** Live: what the browser runs in Circle's frame to sign. Simulated: null. */
+  /** What the browser runs in Circle's frame to sign. */
   challengeId: string | null
-  /** Simulated only: the signature, since no frame opens and nobody holds the key. */
+  /** Always null: the signature is made in the frame, never here. */
   signature: string | null
   address: string
   blockchain: string
-  simulated: boolean
 }
 
 export interface PartyWallet {
   circleUserId: string
   address: string | null
   blockchain: string
-  simulated: boolean
 }
 
 /** The subset of Circle's client this module calls, so tests can stand in for it. */
@@ -111,28 +104,21 @@ export interface CircleUsers {
 }
 
 /**
- * Read the wallets' configuration. `MISTHOS_SIMULATED` is read as the API and the x402
- * gate read it (simulated.ts). Only the literal `false` used to make these wallets
- * live, so with `0` a live API was handed made-up addresses and kept them as payout
- * wallets. Live, real wallets need Circle's credentials, and mainnet needs
- * EDGE_CONFIRM_MAINNET to name chain 5042.
+ * Read the wallets' configuration. Circle's credentials are required, and mainnet
+ * needs `EDGE_CONFIRM_MAINNET` to name chain 5042.
  */
 export function walletConfig(env: NodeJS.ProcessEnv = process.env): WalletConfig {
-  const simulated = simulatedFrom(env.MISTHOS_SIMULATED)
   const blockchain = env.CIRCLE_WALLET_BLOCKCHAIN === ARC_MAINNET ? ARC_MAINNET : ARC_TESTNET
   const config: WalletConfig = {
-    simulated,
     apiKey: env.CIRCLE_API_KEY ?? '',
     appId: env.CIRCLE_APP_ID ?? '',
     blockchain,
   }
-  if (!simulated) {
-    if (!config.apiKey || !config.appId) {
-      throw new Error('CIRCLE_API_KEY and CIRCLE_APP_ID are required for real wallets')
-    }
-    if (blockchain === ARC_MAINNET && env.EDGE_CONFIRM_MAINNET !== '5042') {
-      throw new Error('mainnet wallets hold real USDC: set EDGE_CONFIRM_MAINNET=5042 to confirm')
-    }
+  if (!config.apiKey || !config.appId) {
+    throw new Error('CIRCLE_API_KEY and CIRCLE_APP_ID are required for real wallets')
+  }
+  if (blockchain === ARC_MAINNET && env.EDGE_CONFIRM_MAINNET !== '5042') {
+    throw new Error('mainnet wallets hold real USDC: set EDGE_CONFIRM_MAINNET=5042 to confirm')
   }
   return config
 }
@@ -145,24 +131,12 @@ export function circleUserId(party: Party, id: string): string {
   return `misthos-${party}-${id}`
 }
 
-function simulatedAddress(userId: string): string {
-  return `0x${createHash('sha256').update(userId).digest('hex').slice(0, 40)}`
-}
-
 const SIGN_IN_ID = /^[A-Za-z0-9_-]{16,64}$/
 
 /** The Circle user behind a sign-in with a Circle wallet, before any party exists. */
 export function signInUserId(id: string): string {
   if (!SIGN_IN_ID.test(id)) throw new Error('invalid sign-in id')
   return `misthos-signin-${id}`
-}
-
-/**
- * The simulation's sign-in wallet: a key derived from the user id, as the API derives
- * it (services/wallets.py), so the two agree on the address. Nobody holds it.
- */
-function simulatedSignInAccount(userId: string) {
-  return privateKeyToAccount(`0x${createHash('sha256').update(userId).digest('hex')}`)
 }
 
 /** Only a sign-in message for the wallet that signs it is ever put in front of its owner. */
@@ -188,72 +162,6 @@ export function createWalletService(
   config: WalletConfig = walletConfig(),
   client?: CircleUsers,
 ): WalletService {
-  if (config.simulated) {
-    return {
-      config,
-      session: async (party, id) => {
-        const userId = circleUserId(party, id)
-        return {
-          circleUserId: userId,
-          appId: 'simulated',
-          userToken: 'simulated',
-          encryptionKey: 'simulated',
-          challengeId: null,
-          address: simulatedAddress(userId),
-          blockchain: config.blockchain,
-          simulated: true,
-        }
-      },
-      wallet: async (party, id) => {
-        const userId = circleUserId(party, id)
-        return {
-          circleUserId: userId,
-          address: simulatedAddress(userId),
-          blockchain: config.blockchain,
-          simulated: true,
-        }
-      },
-      signInSession: async (id) => {
-        const userId = signInUserId(id)
-        return {
-          circleUserId: userId,
-          appId: 'simulated',
-          userToken: 'simulated',
-          encryptionKey: 'simulated',
-          challengeId: null,
-          address: simulatedSignInAccount(userId).address.toLowerCase(),
-          blockchain: config.blockchain,
-          simulated: true,
-        }
-      },
-      signInWallet: async (id) => {
-        const userId = signInUserId(id)
-        return {
-          circleUserId: userId,
-          address: simulatedSignInAccount(userId).address.toLowerCase(),
-          blockchain: config.blockchain,
-          simulated: true,
-        }
-      },
-      signInSignature: async (id, message) => {
-        const account = simulatedSignInAccount(signInUserId(id))
-        if (!namesWallet(message, account.address)) {
-          throw new Error('invalid message: it names another wallet')
-        }
-        return {
-          appId: 'simulated',
-          userToken: 'simulated',
-          encryptionKey: 'simulated',
-          challengeId: null,
-          signature: await account.signMessage({ message }),
-          address: account.address.toLowerCase(),
-          blockchain: config.blockchain,
-          simulated: true,
-        }
-      },
-    }
-  }
-
   const circle: CircleUsers =
     client ?? (initiateUserControlledWalletsClient({ apiKey: config.apiKey }) as unknown as CircleUsers)
 
@@ -296,7 +204,6 @@ export function createWalletService(
       challengeId,
       address,
       blockchain: config.blockchain,
-      simulated: false,
     }
   }
 
@@ -314,8 +221,7 @@ export function createWalletService(
         circleUserId: userId,
         address: await arcAddress(userToken),
         blockchain: config.blockchain,
-        simulated: false,
-      }
+        }
     },
     async signInSignature(id, message) {
       const { userToken, encryptionKey } = await token(signInUserId(id))
@@ -339,8 +245,7 @@ export function createWalletService(
         signature: null,
         address,
         blockchain: config.blockchain,
-        simulated: false,
-      }
+        }
     },
     async wallet(party, id) {
       const userId = circleUserId(party, id)
@@ -349,8 +254,7 @@ export function createWalletService(
         circleUserId: userId,
         address: await arcAddress(userToken),
         blockchain: config.blockchain,
-        simulated: false,
-      }
+        }
     },
   }
 }

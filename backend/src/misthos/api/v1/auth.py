@@ -36,7 +36,6 @@ from misthos.schemas import (
     RoleRequest,
     SessionOut,
     SignInRequest,
-    SimulatedLink,
 )
 from misthos.services.coordination import Busy
 from misthos.services.github import GitHubError
@@ -296,42 +295,13 @@ def back_to_the_gate(**reason: str) -> str:
     return f"{settings.public_url.rstrip('/')}/?{query}"
 
 
-@router.post(
-    "/github/simulate",
-    response_model=MeOut,
-    responses={
-        401: {"description": "No wallet is signed in"},
-        403: {"description": "Not the simulation: link through GitHub"},
-        409: {"description": "The login is linked to another wallet, or being linked by one"},
-    },
-)
-async def simulate_github_link(payload: SimulatedLink, request: Request) -> MeOut:
-    """Link a typed GitHub login without OAuth, for the simulation's demo only.
-
-    As with GitHub's own link, a wallet with no side yet has the login held until it
-    chooses one, and the answer says where the gate stands.
-    """
-    if not settings.simulated:
-        raise HTTPException(status_code=403, detail="link through GitHub")
-    address = await signed_in_address(request)
-    if address is None:
-        raise HTTPException(status_code=401, detail="sign in with a wallet first")
-    try:
-        await run_in_threadpool(store.hold_github_login, address, payload.login)
-    except AccountConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except Busy as exc:
-        raise HTTPException(status_code=409, detail=str(exc), headers={"Retry-After": "1"}) from exc
-    return await _me(address)
-
-
 # ---------------------------------------------------------------- Circle, the second door
 
 
 def circle_sign_in_configured() -> bool:
-    """Whether a Circle wallet can be the way in here: always in the simulation, which
-    signs for a made-up wallet, and live where the edge that holds Circle's SDK is set up."""
-    return settings.simulated or bool(settings.edge_core_token)
+    """Whether a Circle wallet can be the way in here: the edge that holds Circle's SDK
+    must be configured."""
+    return bool(settings.edge_core_token)
 
 
 def _circle_or_refuse() -> Wallets:
@@ -376,7 +346,6 @@ async def circle_session(payload: CircleSignIn) -> CircleSignInSession:
         encryption_key=session.encryption_key,
         challenge_id=session.challenge_id,
         address=session.address,
-        simulated=session.simulated,
     )
 
 
@@ -397,7 +366,7 @@ async def circle_wallet(payload: CircleSignIn) -> CircleSignInWallet:
         found = await wallets.sign_in_wallet(payload.sign_in_id)
     except WalletUnavailable as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return CircleSignInWallet(address=found.address, simulated=found.simulated)
+    return CircleSignInWallet(address=found.address)
 
 
 @router.post(
@@ -446,5 +415,4 @@ async def circle_sign(payload: CircleSignRequest) -> CircleSignature:
         encryption_key=signed.encryption_key,
         challenge_id=signed.challenge_id,
         signature=signed.signature,
-        simulated=signed.simulated,
     )

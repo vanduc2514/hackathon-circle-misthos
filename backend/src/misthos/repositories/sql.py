@@ -6,8 +6,7 @@ rows follow the schema's rules. Proposals, submissions, verdicts and decisions a
 only ever inserted, the commitment mirror and the claim are updated in place, and an
 issue's current proposal, claim, submission and verdict are its newest rows.
 
-The simulation's reset swaps every row for the seed inside one transaction too, so a
-reader sees the old data or the seed and never the empty tables between. The version
+A save is one transaction, so a reader never sees half of it. The version
 column carries on climbing across it rather than starting again at 1, so a copy loaded
 before the reset is still refused after it.
 
@@ -17,7 +16,6 @@ needs no separate setup step and a deployment cannot run against an old schema.
 
 from __future__ import annotations
 
-import dataclasses
 import threading
 import zlib
 from collections import defaultdict
@@ -46,7 +44,6 @@ from misthos.models.records import IssueRecord
 from misthos.repositories.base import (
     AccountConflict,
     AppendOnlyViolation,
-    Seed,
     StaleIssue,
 )
 from misthos.schemas import (
@@ -70,19 +67,6 @@ Row = Mapping[str, Any]
 # for the first time starts above it.
 _VERSION_FLOOR = "issue_version_floor"
 
-# What a reset empties, children first. The simulated chain's books share the
-# database but belong to the chain gateway, which resets them itself, before a seed
-# is built against them.
-_RESET_TABLES = [
-    table
-    for table in reversed(t.metadata.sorted_tables)
-    if table not in (t.simulated_escrow, t.simulated_escrow_ceilings)
-]
-# The order a reset locks them in under Postgres. Every save takes its issue row
-# before any other, so the reset takes issues first too and never holds a table a
-# save in flight still needs; publishers and contributors, which other rows point
-# at, come last, as they do in every transaction that touches them.
-_RESET_LOCK_ORDER = [t.issues, *(table for table in _RESET_TABLES if table is not t.issues)]
 
 
 def normalise_url(url: str) -> str:
@@ -113,37 +97,6 @@ class SqlRepository:
 
                 upgrade_to_head(self.engine)
                 self._schema_ready = True
-
-    def reset(self, seed: Seed | None = None) -> None:
-        self.migrate()
-        with self.engine.begin() as conn:
-            if conn.dialect.name == "postgresql":
-                # Writers wait for the reset rather than interleave with it, which
-                # deadlocked a save holding an issue the reset was about to delete.
-                # Readers are not held up, and see the old rows until the commit.
-                quote = conn.dialect.identifier_preparer.quote
-                names = ", ".join(quote(table.name) for table in _RESET_LOCK_ORDER)
-                conn.execute(text(f"LOCK TABLE {names} IN EXCLUSIVE MODE"))
-            floor = _version_floor(conn)
-            for table in _RESET_TABLES:
-                if table is t.issues:
-                    # The versions of the rows actually deleted, so one an action saved
-                    # a moment before the reset is counted too.
-                    gone = conn.execute(delete(table).returning(table.c.version)).scalars()
-                    floor = max([floor, *gone])
-                elif table is t.counters:
-                    conn.execute(delete(table).where(table.c.name != _VERSION_FLOOR))
-                else:
-                    conn.execute(delete(table))
-            _upsert(conn, t.counters, {"name": _VERSION_FLOOR}, {"value": floor})
-            if seed is not None:
-                _write_seed(conn, seed, floor)
-
-    def is_empty(self) -> bool:
-        self.migrate()
-        with self.engine.connect() as conn:
-            publishers = conn.execute(select(func.count()).select_from(t.publishers))
-            return publishers.scalar_one() == 0
 
     def next_value(self, counter: str, start: int) -> int:
         self.migrate()
@@ -418,11 +371,6 @@ class SqlRepository:
         with self.engine.connect() as conn:
             return _load(conn, conn.execute(query).mappings().all())
 
-    def count_issues(self) -> int:
-        self.migrate()
-        with self.engine.connect() as conn:
-            return conn.execute(select(func.count()).select_from(t.issues)).scalar_one()
-
     def save_issues(self, *records: IssueRecord) -> None:
         self.migrate()
         with self.engine.begin() as conn:
@@ -476,19 +424,6 @@ def _version_floor(conn: Connection) -> int:
         select(t.counters.c.value).where(t.counters.c.name == _VERSION_FLOOR)
     ).scalar()
     return int(found or 0)
-
-
-def _write_seed(conn: Connection, seed: Seed, floor: int) -> None:
-    for publisher in seed.publishers:
-        _upsert(conn, t.publishers, {"id": publisher.id}, _publisher_values(publisher))
-    for contributor in seed.contributors:
-        _upsert(conn, t.contributors, {"id": contributor.id}, _contributor_values(contributor))
-    for rec in seed.issues:
-        # New rows here, numbered from the floor like any issue saved for the first time.
-        _save(conn, dataclasses.replace(rec, version=0), floor)
-    for name, value in seed.counters.items():
-        if name != _VERSION_FLOOR:
-            _upsert(conn, t.counters, {"name": name}, {"value": value})
 
 
 def _publisher_values(publisher: Publisher) -> dict[str, Any]:

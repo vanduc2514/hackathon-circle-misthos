@@ -1,6 +1,7 @@
 """Settings.
 
-Everything has a safe default so the demo runs with no configuration at all.
+A deployment names its chain, its GitHub App and its keys here. Values without a
+safe production default are refused at startup rather than guessed at.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MISTHOS_", env_file=".env", extra="ignore")
 
     app_name: str = "Misthos"
-    simulated: bool = True
     # The network's name, and whether its money is real, follow from the chain id;
     # there is deliberately no separate label to set. See `network` below.
     chain_id: int = 5042002
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     explorer_url: str = "https://explorer.testnet.arc.io"
     # Where `mise run contracts:deploy` recorded MisthosEscrow. Empty means the record
     # for `chain_id` under contracts/deployments/. An explicit `escrow_contract` wins.
-    # With neither, only the simulation runs, under a placeholder labelled as such.
+    # With neither the process refuses to start.
     escrow_deployment_file: str = ""
     escrow_contract: str = ""
     usdc_address: str = "0x3600000000000000000000000000000000000000"
@@ -30,13 +30,13 @@ class Settings(BaseSettings):
 
     github_webhook_secret: str = "dev-secret"
     # The GitHub App. With both set, the platform reads issues and repositories and
-    # posts criteria, reviews and statuses as the App; empty keeps GitHub simulated.
+    # posts criteria, reviews and statuses as the App. Both are required.
     # The key is the App's PEM private key; escaped newlines (\n) are accepted.
     github_app_id: str = ""
     github_app_private_key: str = ""
     github_api_url: str = "https://api.github.com"
     # Linking a user's own GitHub account (#80): the App's OAuth client credentials.
-    # Empty keeps linking simulated.
+    # Empty means linking is not offered.
     github_oauth_client_id: str = ""
     github_oauth_client_secret: str = ""
 
@@ -73,22 +73,25 @@ class Settings(BaseSettings):
     # A disputed verdict is reviewed again by this model; empty uses review_model.
     review_dispute_model: str = ""
 
-    # Empty keeps state in memory: the zero-config demo, reset on every restart. A
+    # Empty keeps state in memory, lost on restart. A
     # Postgres URL makes it durable, and sqlite:///path does the same in a local file.
     database_url: str = ""
-    # The simulation's reset deletes every row of that database, and anyone who can
-    # reach the API can ask for it, so it is refused while a database is configured
-    # unless this is set. Set it only where the database is a throwaway demo.
-    allow_demo_reset: bool = False
     # The sweeper applies claim expiry, deadline refunds and the silent-publisher
     # release on a timer. It runs inside the API by default; turn this off where a
     # dedicated `python -m misthos.workers` process runs it instead.
     sweeper_in_process: bool = True
     sweep_interval_seconds: float = 60.0
 
-    # Wallets the simulated sanctions screening treats as listed, comma separated. A
-    # real screening provider replaces the simulated one; this is for demos and tests.
-    screening_denylist: str = ""
+    # Compliance. Identity verification is Stripe Identity; sanctions screening reads
+    # the official OFAC SDN list. Both are real providers. Without the Stripe key a
+    # first payout stays pending and is not paid.
+    stripe_secret_key: str = ""
+    stripe_api_url: str = "https://api.stripe.com"
+    ofac_sdn_url: str = (
+        "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.XML"
+    )
+    ofac_refresh_seconds: int = 86_400
+    ofac_cache_path: str = ""
 
     # Logging and metrics. JSON lines for a log pipeline, plain text for a terminal.
     log_json: bool = False
@@ -118,7 +121,7 @@ class Settings(BaseSettings):
 
     @property
     def network(self) -> Network:
-        return network_for(self.chain_id, simulated=self.simulated)
+        return network_for(self.chain_id)
 
     @property
     def chain(self) -> str:

@@ -277,7 +277,6 @@ class TestOnePullRequestCountsOnce:
 
 @pytest.fixture
 def fresh_api_store() -> FakeGitHub:
-    store.reset()
     assert isinstance(store.github, FakeGitHub)
     return store.github
 

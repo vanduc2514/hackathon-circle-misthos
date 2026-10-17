@@ -124,29 +124,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/auth/github/simulate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Simulate Github Link
-         * @description Link a typed GitHub login without OAuth, for the simulation's demo only.
-         *
-         *     As with GitHub's own link, a wallet with no side yet has the login held until it
-         *     chooses one, and the answer says where the gate stands.
-         */
-        post: operations["simulate_github_link_api_v1_auth_github_simulate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/auth/circle/session": {
         parameters: {
             query?: never;
@@ -344,47 +321,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/issues/{issue_id}/advance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Advance
-         * @description Move the issue one step along the demo path. The simulation's only: it
-         *     fabricates the pull request, so a deployment uses the explicit actions.
-         */
-        post: operations["advance_api_v1_issues__issue_id__advance_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/issues/{issue_id}/complete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Complete
-         * @description Run the rest of the happy path: verdict, merge, release. The simulation's only.
-         */
-        post: operations["complete_api_v1_issues__issue_id__complete_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/issues/{issue_id}/decline": {
         parameters: {
             query?: never;
@@ -423,7 +359,7 @@ export interface paths {
          *     The approver is whoever is signed in, by the GitHub login linked to their account,
          *     and the organisation must have named that login. A name in the request would let
          *     anyone who knew an approver's name release the money, so it counts only in the
-         *     simulation, for a visitor who is not signed in, as the claim's does.
+         *     the signed-in account, which must carry a linked GitHub login.
          */
         post: operations["approve_release_api_v1_issues__issue_id__approve_release_post"];
         delete?: never;
@@ -594,8 +530,8 @@ export interface paths {
         };
         /**
          * List Publishers
-         * @description Every publisher. Outside the simulation a publisher's budget and spending
-         *     policy are served only to that publisher, signed in.
+         * @description Every publisher. A publisher's budget and spending policy are served only to
+         *     that publisher, signed in.
          */
         get: operations["list_publishers_api_v1_publishers_get"];
         put?: never;
@@ -637,70 +573,6 @@ export interface paths {
         get: operations["decisions_api_v1_decisions_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/demo/issues/{issue_id}/pull-request": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Demo Pull Request
-         * @description Open the claimant's pull request on the simulated GitHub, so the browser can
-         *     submit it. The simulation's only; submitting stays the claimant's own action.
-         */
-        post: operations["demo_pull_request_api_v1_demo_issues__issue_id__pull_request_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/demo/issues/{issue_id}/merge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Demo Merge
-         * @description Merge the submitted pull request on the simulated GitHub, as the publisher
-         *     would on the real one; it is handled exactly as that merge's webhook. The
-         *     simulation's only.
-         */
-        post: operations["demo_merge_api_v1_demo_issues__issue_id__merge_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/demo/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reset
-         * @description Put the simulation back to its seed. With a database configured this deletes
-         *     every row in it, so it is refused there unless MISTHOS_ALLOW_DEMO_RESET is set.
-         */
-        post: operations["reset_api_v1_demo_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -760,9 +632,8 @@ export interface paths {
          * @description One contributor's payouts for one calendar year, to file from.
          *
          *     A statement is personal: its settlement references would link a wallet to a
-         *     handle. It is served to the signed-in contributor it belongs to, and by the
-         *     simulation, whose numbers are not real; an operator exports one with
-         *     `python -m misthos.services.statements`.
+         *     handle. It is served to the signed-in contributor it belongs to; an operator
+         *     exports one with `python -m misthos.services.statements`.
          */
         get: operations["statement_api_v1_contributors__contributor_id__statements__year__get"];
         put?: never;
@@ -963,14 +834,12 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
-            /** Simulated */
-            simulated: boolean;
         };
-        /** ApproveReleaseRequest */
-        ApproveReleaseRequest: {
-            /** Approver */
-            approver?: string | null;
-        };
+        /**
+         * ApproveReleaseRequest
+         * @description Empty: the approver is the signed-in account's linked GitHub login.
+         */
+        ApproveReleaseRequest: Record<string, never>;
         /**
          * AuditExport
          * @description Everything an auditor needs about one organisation's issues, from the decision
@@ -986,8 +855,6 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
-            /** Simulated */
-            simulated: boolean;
             /** Issues */
             issues: components["schemas"]["AuditIssue"][];
         };
@@ -1068,8 +935,6 @@ export interface components {
             challenge_id: string | null;
             /** Address */
             address: string | null;
-            /** Simulated */
-            simulated: boolean;
         };
         /**
          * CircleSignInWallet
@@ -1078,8 +943,6 @@ export interface components {
         CircleSignInWallet: {
             /** Address */
             address: string | null;
-            /** Simulated */
-            simulated: boolean;
         };
         /** CircleSignRequest */
         CircleSignRequest: {
@@ -1092,9 +955,8 @@ export interface components {
          * CircleSignature
          * @description The answer to signing a sign-in message with a Circle wallet.
          *
-         *     Live, Circle signs once its owner approves with their PIN, so this carries the
-         *     challenge for the frame to run and the signature comes back from the frame. In the
-         *     simulation no frame opens, and the signature is here.
+         *     Circle signs once its owner approves with their PIN, so this carries the challenge
+         *     for the frame to run and the signature comes back from the frame.
          */
         CircleSignature: {
             /** App Id */
@@ -1107,8 +969,6 @@ export interface components {
             challenge_id: string | null;
             /** Signature */
             signature: string | null;
-            /** Simulated */
-            simulated: boolean;
         };
         /** Claim */
         Claim: {
@@ -1130,11 +990,11 @@ export interface components {
              */
             active: boolean;
         };
-        /** ClaimRequest */
-        ClaimRequest: {
-            /** Contributor Id */
-            contributor_id?: string | null;
-        };
+        /**
+         * ClaimRequest
+         * @description Empty: a signed-in contributor claims as themselves.
+         */
+        ClaimRequest: Record<string, never>;
         /**
          * CommitmentPlan
          * @description How a publisher funds an issue from their own wallet, in the order to send.
@@ -1232,18 +1092,6 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /**
-         * DemoPullRequestOut
-         * @description A pull request the simulated GitHub opened for the claimant (simulation only).
-         */
-        DemoPullRequestOut: {
-            /** Pr Number */
-            pr_number: number;
-            /** Author */
-            author: string;
-            /** Head Sha */
-            head_sha: string;
-        };
         /** DisputeRequest */
         DisputeRequest: {
             /** Reason */
@@ -1302,10 +1150,10 @@ export interface components {
             chain_id: number;
             /**
              * Source
-             * @description chain: read from MisthosEscrow; simulation: the simulated escrow's books
-             * @enum {string}
+             * @description read from MisthosEscrow
+             * @constant
              */
-            source: "chain" | "simulation";
+            source: "chain";
             /**
              * Status
              * @enum {string}
@@ -1365,19 +1213,15 @@ export interface components {
             network_label: string;
             /**
              * Money
-             * @description simulated: nothing moves; test: Arc testnet faucet USDC; real: Arc mainnet; unknown: not an Arc network, so treat its USDC as real
+             * @description test: Arc testnet faucet USDC; real: Arc mainnet; unknown: not an Arc network, so treat its USDC as real
              * @enum {string}
              */
-            money: "simulated" | "test" | "real" | "unknown";
+            money: "test" | "real" | "unknown";
             /** Money Note */
             money_note: string;
-            /** Seeded Issues */
-            seeded_issues: number;
-            /** Simulated */
-            simulated: boolean;
             /**
              * Github Oauth
-             * @description Whether a real GitHub account can be linked here: both MISTHOS_GITHUB_OAUTH_CLIENT_ID and MISTHOS_GITHUB_OAUTH_CLIENT_SECRET are set. Without it, the simulation links a typed login and a deployment links none.
+             * @description Whether a real GitHub account can be linked here: both MISTHOS_GITHUB_OAUTH_CLIENT_ID and MISTHOS_GITHUB_OAUTH_CLIENT_SECRET are set.
              */
             github_oauth: boolean;
             /**
@@ -1387,7 +1231,7 @@ export interface components {
             github_oauth_callback_url: string;
             /**
              * Circle Sign In
-             * @description Whether a Circle wallet can be the way in (#181). The simulation signs for a made-up wallet and opens no frame; live, it needs the edge service, which MISTHOS_EDGE_CORE_TOKEN being set stands for.
+             * @description Whether a Circle wallet can be the way in (#181): the edge service is configured, which MISTHOS_EDGE_CORE_TOKEN being set stands for.
              * @default false
              */
             circle_sign_in: boolean;
@@ -1680,7 +1524,7 @@ export interface components {
         /**
          * PublisherListing
          * @description A publisher as anyone may see it. Its budget and spending policy are
-         *     commercially sensitive, so outside the simulation they are filled in only for
+         *     commercially sensitive, so they are filled in only for
          *     the signed-in publisher itself ([PRIVACY.md](../../docs/PRIVACY.md)).
          */
         PublisherListing: {
@@ -1819,11 +1663,6 @@ export interface components {
             message: string;
             /** Signature */
             signature: string;
-        };
-        /** SimulatedLink */
-        SimulatedLink: {
-            /** Login */
-            login: string;
         };
         /** StatementLine */
         StatementLine: {
@@ -1966,8 +1805,6 @@ export interface components {
              */
             challenge_id: string | null;
             wallet: components["schemas"]["Wallet"] | null;
-            /** Simulated */
-            simulated: boolean;
         };
     };
     responses: never;
@@ -2147,60 +1984,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    simulate_github_link_api_v1_auth_github_simulate_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SimulatedLink"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MeOut"];
-                };
-            };
-            /** @description No wallet is signed in */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not the simulation: link through GitHub */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The login is linked to another wallet, or being linked by one */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
             };
         };
     };
@@ -2570,88 +2353,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EscrowReadback"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    advance_api_v1_issues__issue_id__advance_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
-                "idempotency-key"?: string | null;
-            };
-            path: {
-                issue_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IssueOut"];
-                };
-            };
-            /** @description Illegal step, busy issue or refused by the escrow */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    complete_api_v1_issues__issue_id__complete_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
-                "idempotency-key"?: string | null;
-            };
-            path: {
-                issue_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IssueOut"];
-                };
-            };
-            /** @description Illegal step, busy issue or refused by the escrow */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -3102,128 +2803,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
-            };
-        };
-    };
-    demo_pull_request_api_v1_demo_issues__issue_id__pull_request_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                issue_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DemoPullRequestOut"];
-                };
-            };
-            /** @description Outside the simulation, or not the claimant */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Nothing claimed and waiting for a pull request */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    demo_merge_api_v1_demo_issues__issue_id__merge_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Any unique string, such as a UUID. Retries with the same key get the first response back for 24 hours instead of running again. */
-                "idempotency-key"?: string | null;
-            };
-            path: {
-                issue_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IssueOut"];
-                };
-            };
-            /** @description Outside the simulation, or not the publisher */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description No pull request to merge, or nothing to release */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reset_api_v1_demo_reset_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: number;
-                    };
-                };
-            };
-            /** @description Outside the simulation, or a database is configured and its operator has not allowed reset */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

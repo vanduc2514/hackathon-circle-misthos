@@ -19,7 +19,6 @@ from misthos.models.records import IssueRecord
 from misthos.repositories.base import (
     AccountConflict,
     AppendOnlyViolation,
-    Seed,
     StaleIssue,
 )
 from misthos.schemas import (
@@ -35,64 +34,16 @@ class MemoryRepository:
     def __init__(self) -> None:
         self._guard = threading.RLock()
         self._named_locks: dict[str, threading.Lock] = {}
-        # The highest version any issue reached before the last reset. A reset keeps
-        # it, and an issue saved for the first time starts above it, so a copy loaded
-        # before a reset never matches the issue the seed brings back under its id.
         self._version_floor = 0
         self._issues: dict[str, IssueRecord] = {}
-        self.reset()
-
-    def reset(self, seed: Seed | None = None) -> None:
-        # Everything below happens under the guard every reader takes, so nobody can
-        # look in between the old contents going and the seed arriving.
-        with self._guard:
-            self._version_floor = max(
-                [self._version_floor, *(r.version for r in self._issues.values())]
-            )
-            self._publishers: dict[str, Publisher] = {}
-            self._contributors: dict[str, Contributor] = {}
-            self._issues: dict[str, IssueRecord] = {}
-            self._counters: dict[str, int] = {}
-            self._screenings: list[Screening] = []
-            self._deliveries: dict[str, tuple[str, datetime]] = {}
-            self._accounts: dict[str, Account] = {}
-            # Keyed by address: the login as GitHub spells it, and when it was held.
-            self._pending_logins: dict[str, tuple[str, datetime]] = {}
-            self._connections: dict[str, RepoConnection] = {}
-            if seed is None:
-                return
-            for publisher in seed.publishers:
-                self._publishers[publisher.id] = publisher.model_copy(deep=True)
-            for contributor in seed.contributors:
-                self._contributors[contributor.id] = contributor.model_copy(deep=True)
-            for rec in seed.issues:
-                stored = copy.deepcopy(rec)
-                stored.version = self._version_floor + 1
-                self._issues[rec.id] = stored
-            self._counters = dict(seed.counters)
-
-    def as_seed(self) -> Seed:
-        """What this repository holds, as a seed another repository can be reset to."""
-        with self._guard:
-            # A seed carries parties, issues and the id sequences, and nothing else,
-            # so anything else written here would be lost on the way.
-            assert not (
-                self._screenings
-                or self._deliveries
-                or self._accounts
-                or self._pending_logins
-                or self._connections
-            ), "a seed holds publishers, contributors, issues and counters only"
-            return Seed(
-                publishers=tuple(p.model_copy(deep=True) for p in self._publishers.values()),
-                contributors=tuple(c.model_copy(deep=True) for c in self._contributors.values()),
-                issues=tuple(copy.deepcopy(r) for r in self._issues.values()),
-                counters=dict(self._counters),
-            )
-
-    def is_empty(self) -> bool:
-        with self._guard:
-            return not self._publishers and not self._issues
+        self._publishers: dict[str, Publisher] = {}
+        self._contributors: dict[str, Contributor] = {}
+        self._counters: dict[str, int] = {}
+        self._screenings: list[Screening] = []
+        self._deliveries: dict[str, tuple[str, datetime]] = {}
+        self._accounts: dict[str, Account] = {}
+        self._pending_logins: dict[str, tuple[str, datetime]] = {}
+        self._connections: dict[str, RepoConnection] = {}
 
     def next_value(self, counter: str, start: int) -> int:
         with self._guard:
@@ -252,10 +203,6 @@ class MemoryRepository:
                 for r in self._issues.values()
                 if states is None or r.state in states
             ]
-
-    def count_issues(self) -> int:
-        with self._guard:
-            return len(self._issues)
 
     def save_issues(self, *records: IssueRecord) -> None:
         with self._guard:

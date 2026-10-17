@@ -34,7 +34,6 @@ from misthos.store import store  # noqa: E402
 from tests.support.fake_chain import FakeChain  # noqa: E402
 from tests.support.fake_compliance import FakeIdentity, FakeScreening  # noqa: E402
 from tests.support.fake_github import FakeGitHub  # noqa: E402
-from tests.support.fake_rail import FakeRail  # noqa: E402
 from tests.support.fake_wallets import FakeWallets  # noqa: E402
 from tests.support.seeded import SeededStore  # noqa: E402
 
@@ -49,7 +48,6 @@ def fresh_store():
     store.install(
         SeededStore(
             chain=FakeChain(),
-            rail=FakeRail(),
             github=FakeGitHub(),
             screening=FakeScreening(),
             identity=FakeIdentity(),

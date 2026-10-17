@@ -13,15 +13,15 @@ The diagrams below describe the target system. This table is what is actually in
 | Layer | Component | State |
 | --- | --- | --- |
 | Web | Vite + React SPA, generated API client | Built. Sign-in, publishing and every lifecycle action, live against the API (#73); a Playwright test drives the whole loop in CI |
-| Edge | Express x402 gate and Circle CLI bridge | Built. The gate settles through Circle Gateway Nanopayments when `MISTHOS_SIMULATED=false`; simulated by default |
-| Core | FastAPI, lifecycle, pricing engine, review agent, decision log, money ledger | Built. Money moves through a chain gateway, simulated until #69. The review agent is Claude once `MISTHOS_ANTHROPIC_API_KEY` is set, and a rule reviewer otherwise |
+| Edge | Express x402 gate and Circle CLI bridge | Built. The gate settles through Circle Gateway Nanopayments; it refuses to start without a seller address and Circle credentials |
+| Core | FastAPI, lifecycle, pricing engine, review agent, decision log, money ledger | Built. Money moves through the deployed escrow. The review agent is Claude once `MISTHOS_ANTHROPIC_API_KEY` is set, and a rule reviewer otherwise |
 | Worker | Sweeper: claim expiry, deadline refunds, silent-publisher release | Built. Runs inside the API by default, or alone as `python -m misthos.workers` |
 | Contracts | `MisthosEscrow` | Built. Example, fuzz and invariant tests (#35) |
 | Data | Postgres, Redis | Built and optional. Postgres once `MISTHOS_DATABASE_URL` is set, memory otherwise. Redis once `MISTHOS_REDIS_URL` is set, for the per-issue lock, idempotency keys and rate limits across processes |
-| Compliance | Screening, identity at first payout, statements | Built against simulated providers. See [PRIVACY.md](./PRIVACY.md) |
-| GitHub | App authentication, read path, write path, webhooks | Built behind one gateway. Simulated until `MISTHOS_GITHUB_APP_ID` and `MISTHOS_GITHUB_APP_PRIVATE_KEY` are set; `backend/github-app-manifest.json` registers the App |
-| Sign-in | One gate: a wallet (MetaMask or a Circle wallet), a GitHub account, then a role per wallet; explicit lifecycle actions | Built (#181). Linking is simulated until `MISTHOS_GITHUB_OAUTH_CLIENT_ID` is set, and a Circle wallet needs the edge outside the simulation. Outside the simulation every write needs a signed-in account |
-| Integrations | Circle wallets, Arc settlement | Arc settlement built behind the chain gateway (`services/chain/arc.py`), simulated by default; Circle wallet sessions built, the browser step pending |
+| Compliance | Screening, identity at first payout, statements | Built against Stripe Identity and the OFAC SDN list. See [PRIVACY.md](./PRIVACY.md) |
+| GitHub | App authentication, read path, write path, webhooks | Built behind one gateway and required; `backend/github-app-manifest.json` registers the App |
+| Sign-in | One gate: a wallet (MetaMask or a Circle wallet), a GitHub account, then a role per wallet; explicit lifecycle actions | Built (#181). Linking needs `MISTHOS_GITHUB_OAUTH_CLIENT_ID`; a Circle wallet needs the edge. Every write needs a signed-in account |
+| Integrations | Circle wallets, Arc settlement | Arc settlement built behind the chain gateway (`services/chain/arc.py`); Circle wallet sessions built, the browser step pending |
 
 Everything marked not built has its interface in place, which is why the missing pieces are listed here as work rather than as risk.
 
@@ -273,7 +273,7 @@ every step. They run on every pull request with the rest of the Foundry suite.
 
 ## Runtime topology
 
-Four processes, three ports, and no infrastructure to run for the simulation. `compose.yaml` runs all four against Postgres and Redis, and [DEPLOY.md](./DEPLOY.md) covers it and the testnet deploy.
+Four processes, three ports, and no infrastructure needed for a local run. `compose.yaml` runs all four against Postgres and Redis, and [DEPLOY.md](./DEPLOY.md) covers it and the testnet deploy.
 
 ```mermaid
 flowchart LR
@@ -308,7 +308,7 @@ Every process logs one JSON object per line when `MISTHOS_LOG_JSON` is set, each
 
 Two consequences worth being explicit about, because they are the difference between a demo and a system.
 
-A restart loses the simulation only when no database is configured. With `MISTHOS_DATABASE_URL` set, state lives in Postgres behind the same repository protocol the memory store implements, which is how it got there without touching the domain.
+A restart loses in-memory state only when no database is configured. With `MISTHOS_DATABASE_URL` set, state lives in Postgres behind the same repository protocol the memory store implements, which is how it got there without touching the domain.
 
 Two processes can no longer both claim an issue: the second is refused while the first holds the issue's lock, every save carries a version so a stale one is refused, and the schema allows one active claim per issue. A request that moves money or publishes an issue can carry an `Idempotency-Key`, and publishing and actions are rate-limited per client. Without Redis those keys and counters are per process, so set `MISTHOS_REDIS_URL` before running more than one API process behind a load balancer.
 
@@ -460,7 +460,7 @@ sequenceDiagram
 
 Criteria are the standard every verdict is measured against, so they are made checkable before any money is committed (`domain/criteria.py`, #38). The first draft comes from the issue itself: what kind of change it is (bug, security, feature, performance, docs), the files the issue names, and the publisher's own task list. Each drafted criterion names something a reviewer can look at: a test, a file, a document, an output or a number. When the publisher approves them, the API refuses any criterion a reviewer could not judge, with the reason: a question, a fragment, a judgement word with nothing to check it against ("works properly"), several criteria run together, or a repeat. The rules aim to refuse the clearly uncheckable, not to second-guess specific prose, and every seeded criterion passes them.
 
-How it is built today. The sweeper, or the demo stepper, hands every submitted commit that has no verdict to the review agent. The agent reads the changed files and judges each acceptance criterion with evidence: Claude when a key is configured, through a forced tool call so the answer is structured, or a rule reviewer that judges only what a file list proves (a test, documentation, a changelog entry) and leaves the rest unjudged. The verdict is not the agent's to pick. `domain/review.py` derives it from the judgements, the project's checks and the rework count, so the same judgements always give the same verdict and the decision log names the rule that produced it. The judgement runs outside the issue's lock and is applied only if the same commit is still under review, so a push during a slow review is never judged on the old code. Checks that have not reported on the commit are unknown rather than failing (`submissions.checks_passed` is NULL): the sweeper waits `CHECKS_WAIT` (30 minutes) after the submission for them, a `check_run` that settles them earlier lets the next pass review it, and after the wait the work is judged on the criteria alone with a finding that says the checks had not reported. Without that, a repository with no CI could never be accepted. Failing checks are still rework.
+How it is built today. The sweeper hands every submitted commit that has no verdict to the review agent. The agent reads the changed files and judges each acceptance criterion with evidence: Claude when a key is configured, through a forced tool call so the answer is structured, or a rule reviewer that judges only what a file list proves (a test, documentation, a changelog entry) and leaves the rest unjudged. The verdict is not the agent's to pick. `domain/review.py` derives it from the judgements, the project's checks and the rework count, so the same judgements always give the same verdict and the decision log names the rule that produced it. The judgement runs outside the issue's lock and is applied only if the same commit is still under review, so a push during a slow review is never judged on the old code. Checks that have not reported on the commit are unknown rather than failing (`submissions.checks_passed` is NULL): the sweeper waits `CHECKS_WAIT` (30 minutes) after the submission for them, a `check_run` that settles them earlier lets the next pass review it, and after the wait the work is judged on the criteria alone with a finding that says the checks had not reported. Without that, a repository with no CI could never be accepted. Failing checks are still rework.
 
 The diff is written by the person whose payment depends on the verdict, so it is handed to the model as data, and the model is told that instructions inside it are part of the submission.
 
@@ -541,9 +541,9 @@ An organisation sets its own spending policy, and the store enforces it at the t
 
 - **Category limits.** A monthly cap per issue label. A commitment that would pass it is refused at funding, with the limit and the month's total in the reason.
 - **A release threshold with named approvers.** A payout above it is held as `await_approver` until one of them approves, whether the merge or the grace period triggered it. The approval is required, not requested.
-- **Approvers are GitHub logins, and the approval is the session's.** A login is what a session proves: the wallet signs in, and GitHub's OAuth links the login to it. So `POST /issues/{id}/approve-release` takes the approver from the signed-in account's linked login, never from the request, and the organisation must have named it. Holding the organisation's wallet confers nothing: its own account approves only if its own login is named. The contributor being paid never approves their own payout. A policy naming something that cannot be a login, such as an e-mail address, is refused, because no session could ever satisfy it. Only the simulation, for a visitor who is not signed in, accepts a name in the request, as it does for a claim.
+- **Approvers are GitHub logins, and the approval is the session's.** A login is what a session proves: the wallet signs in, and GitHub's OAuth links the login to it. So `POST /issues/{id}/approve-release` takes the approver from the signed-in account's linked login, never from the request, and the organisation must have named it. Holding the organisation's wallet confers nothing: its own account approves only if its own login is named. The contributor being paid never approves their own payout. A policy naming something that cannot be a login, such as an e-mail address, is refused, because no session could ever satisfy it.
 
-`/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). It is the organisation's alone: a signed-in publisher reads its own, and only the simulation serves any.
+`/publishers/{id}/audit` exports the decision record and the money events unedited, as JSON or one sortable CSV (#52), leaving out only each release's transfer reference ([PRIVACY.md](./PRIVACY.md)). It is the organisation's alone: a signed-in publisher reads its own.
 
 Every CSV the platform serves, the audit export and a contributor's statement alike, carries other people's words: issue titles, repository and organisation names, reasons. A cell a spreadsheet would run as a formula, one starting with `=`, `+`, `-`, `@`, a tab or a carriage return, is written as text with a leading apostrophe. A plain number keeps its sign (`services/spreadsheet.py`).
 
@@ -589,7 +589,7 @@ The line between T1 and T2 is a wallet signature. A wallet signs in with a Sign-
 | Audit export, statements, a publisher's budget and policy | The party itself | 401, 403 |
 | Everything else read-only | Anyone | |
 
-Criteria are approved before the price, and funding is refused until they are (#21), so the contract a contributor claims is the one the publisher read. The simulation still lets an anonymous visitor drive the seeded demo, and only the simulation serves the demo stepper, which fabricates a pull request and a merge. It also serves the simulated GitHub's side to the web app: `/demo/issues/{id}/pull-request` opens the claimant's pull request and `/demo/issues/{id}/merge` merges it, handled exactly as the real merge's webhook is, so the browser can run the loop with every other step real. Its reset, `/demo/reset`, needs no sign-in and deletes every row, so it is refused wherever a database is configured unless the operator sets `MISTHOS_ALLOW_DEMO_RESET` for a demo they mean to throw away.
+Criteria are approved before the price, and funding is refused until they are (#21), so the contract a contributor claims is the one the publisher read. Every lifecycle step is an explicit action by the party it belongs to: publishing, approving criteria and price, funding from the publisher's own wallet, claiming, submitting a pull request, and merging on GitHub.
 
 The interesting line is between T3 and T4. Our services can produce an acceptance attestation, but only the escrow contract can act on it, and only for an issue whose funds are committed. Compromising a service gets an attacker the ability to request a release, not the ability to move a budget.
 
