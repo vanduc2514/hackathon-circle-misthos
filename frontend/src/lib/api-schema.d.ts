@@ -793,6 +793,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog/paid": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Paid */
+        get: operations["paid_api_v1_catalog_paid_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1451,6 +1468,77 @@ export interface components {
             chain_id: number;
             /** Statement */
             statement: string;
+        };
+        /**
+         * PaidCatalogOut
+         * @description What the edge sells over x402, read from the edge itself so its prices are the
+         *     ones charged. `available` is false when the edge could not be read.
+         */
+        PaidCatalogOut: {
+            /** Available */
+            available: boolean;
+            /**
+             * Base Url
+             * @description Where buyers call the paid routes; MISTHOS_PAID_PUBLIC_URL
+             */
+            base_url: string | null;
+            /** Networks */
+            networks?: string[];
+            /** Pay To */
+            pay_to?: string | null;
+            /** Asset */
+            asset?: string | null;
+            /** Certificate Signer */
+            certificate_signer?: string | null;
+            /** Routes */
+            routes?: components["schemas"]["PaidRouteOut"][];
+        };
+        /**
+         * PaidRouteOut
+         * @description One x402 route the edge sells, as its catalog lists it.
+         */
+        PaidRouteOut: {
+            /** Id */
+            id: string;
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "GET" | "POST";
+            /** Path */
+            path: string;
+            /** Price */
+            price: {
+                [key: string]: string;
+            };
+            /** Name */
+            name: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "Core" | "Marketplace" | "Analytics" | "Trust";
+            /** Returns */
+            returns?: string | null;
+            /**
+             * Free Tier
+             * @default false
+             */
+            free_tier: boolean;
+            /**
+             * Async
+             * @default false
+             */
+            async: boolean;
+            /**
+             * Capped
+             * @default false
+             */
+            capped: boolean;
+            /** Note */
+            note?: string | null;
         };
         /** PolicyRequest */
         PolicyRequest: {
@@ -3188,6 +3276,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    paid_api_v1_catalog_paid_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaidCatalogOut"];
                 };
             };
         };

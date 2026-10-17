@@ -5,6 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.concurrency import run_in_threadpool
 
+from misthos.api.public import public
 from misthos.api.session import SIGNED_IN, require_owner
 from misthos.schemas import (
     Account,
@@ -19,14 +20,30 @@ from misthos.store import store
 router = APIRouter(prefix="/contributors", tags=["contributors"])
 
 
-@router.get("", response_model=list[ContributorProfile])
+@router.get(
+    "",
+    response_model=list[ContributorProfile],
+    openapi_extra=public(
+        "Trust",
+        "Contributor directory",
+        "Every contributor's public profile: handle, standing and settled work.",
+    ),
+)
 async def list_contributors() -> list[ContributorProfile]:
     """Public profiles. A wallet is never served next to a handle; see docs/PRIVACY.md."""
     contributors = await run_in_threadpool(store.list_contributors)
     return [ContributorProfile.of(c) for c in contributors]
 
 
-@router.get("/{contributor_id}/reputation", response_model=list[ReputationEventOut])
+@router.get(
+    "/{contributor_id}/reputation",
+    response_model=list[ReputationEventOut],
+    openapi_extra=public(
+        "Trust",
+        "Reputation events",
+        "What one contributor's standing is made of: one event per settled issue.",
+    ),
+)
 async def reputation(contributor_id: str) -> list[ReputationEventOut]:
     """What a contributor's reputation is made of: one event per settled issue, from
     the money ledger and nothing else. Public, like the settlement comment it mirrors."""

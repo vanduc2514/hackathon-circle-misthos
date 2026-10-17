@@ -10,6 +10,7 @@ import Issues from './routes/Issues'
 import IssueDetail from './routes/IssueDetail'
 import Landing from './routes/Landing'
 import Publish from './routes/Publish'
+import PublicApi from './routes/PublicApi'
 
 // The profile loads on demand, as the sign-in gate's dialog does (components/SignInGate).
 const AccountPage = lazy(() => import('./routes/Account'))
@@ -51,9 +52,10 @@ function Layout() {
               Publish
             </NavLink>
           )}
-          <a href="/docs" target="_blank" rel="noreferrer">
+          {/* The public API page (#208), not Swagger: anonymous routes only, with prices. */}
+          <NavLink to="/public-api" className={({ isActive }) => (isActive ? 'active' : '')}>
             API
-          </a>
+          </NavLink>
         </div>
         <div className="nav-right">
           {/* Nothing is claimed about the network until the API has said which it is. */}
@@ -124,6 +126,7 @@ export default function App() {
           <Route path="/issues" element={<Issues />} />
           <Route path="/issues/:issueId" element={<IssueDetail />} />
           <Route path="/publish" element={<Publish />} />
+          <Route path="/public-api" element={<PublicApi />} />
           <Route
             path="/account"
             element={

@@ -42,7 +42,9 @@ Pass real integrations through from your shell or a `.env` file next to
 The edge sells x402 calls. It needs `MISTHOS_SELLER_ADDRESS`, the address paid, and
 `MISTHOS_EDGE_CORE_TOKEN`, which compose hands to both the edge and the API: the paid
 routes run in the API behind that token. `EDGE_PRICES` overrides a route's price and
-`EDGE_FREE_API_KEYS` lets a caller through free. See [PAID-API.md](./PAID-API.md).
+`EDGE_FREE_API_KEYS` lets a caller through free. `MISTHOS_PAID_PUBLIC_URL` is where
+buyers reach the edge from outside, which the web app's API page (`/public-api`) shows
+beside the x402 routes. See [PAID-API.md](./PAID-API.md).
 
 ### Observing it
 

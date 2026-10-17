@@ -8,6 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from misthos.api.guards import idempotent, limit_actions, limit_publish
+from misthos.api.public import public
 from misthos.api.session import (
     SIGNED_IN,
     require_github,
@@ -108,7 +109,15 @@ def _refused(exc: Exception) -> HTTPException:
     return HTTPException(status_code=403, detail=str(exc))
 
 
-@router.get("/health", response_model=HealthOut)
+@router.get(
+    "/health",
+    response_model=HealthOut,
+    openapi_extra=public(
+        "Core",
+        "Health",
+        "Network, contract addresses and the money mode this deployment is running.",
+    ),
+)
 async def health() -> HealthOut:
     return HealthOut(
         status="ok",
@@ -125,7 +134,15 @@ async def health() -> HealthOut:
     )
 
 
-@router.get("/issues", response_model=list[IssueSummaryOut])
+@router.get(
+    "/issues",
+    response_model=list[IssueSummaryOut],
+    openapi_extra=public(
+        "Marketplace",
+        "List issues",
+        "Every published issue with its price, state and acceptance criteria.",
+    ),
+)
 async def list_issues(
     state: str | None = Query(default=None, description="Filter by lifecycle state"),
     publisher_id: str | None = None,
@@ -146,13 +163,29 @@ async def list_issues(
     return await run_in_threadpool(store.summaries, records)
 
 
-@router.get("/issues/{issue_id}", response_model=IssueOut)
+@router.get(
+    "/issues/{issue_id}",
+    response_model=IssueOut,
+    openapi_extra=public(
+        "Marketplace",
+        "Issue detail",
+        "One issue, its escrow commitment, publisher and current lifecycle state.",
+    ),
+)
 async def get_issue(issue_id: str) -> IssueOut:
     rec = await _require(issue_id)
     return await run_in_threadpool(store.to_out, rec)
 
 
-@router.get("/issues/{issue_id}/timeline", response_model=list[TimelineEntry])
+@router.get(
+    "/issues/{issue_id}/timeline",
+    response_model=list[TimelineEntry],
+    openapi_extra=public(
+        "Marketplace",
+        "Issue timeline",
+        "The public audit trail: pricing, funding, claims, reviews and settlement.",
+    ),
+)
 async def get_timeline(issue_id: str) -> list[TimelineEntry]:
     return store.timeline(await _require(issue_id))
 
@@ -215,7 +248,15 @@ async def commitment_plan(
     )
 
 
-@router.get("/issues/{issue_id}/escrow", response_model=EscrowReadback)
+@router.get(
+    "/issues/{issue_id}/escrow",
+    response_model=EscrowReadback,
+    openapi_extra=public(
+        "Trust",
+        "Escrow readback",
+        "The commitment as MisthosEscrow on Arc holds it, read from the chain.",
+    ),
+)
 async def get_escrow(issue_id: str) -> EscrowReadback:
     """Read the commitment back from the escrow, so nobody has to take our word."""
     await _require(issue_id)
@@ -602,7 +643,15 @@ async def publish(
     return await idempotent(request, idempotency_key, run, status_code=201)
 
 
-@router.get("/publishers", response_model=list[PublisherListing])
+@router.get(
+    "/publishers",
+    response_model=list[PublisherListing],
+    openapi_extra=public(
+        "Marketplace",
+        "Publisher directory",
+        "Every publisher and its wallet; its budget and policy only to itself.",
+    ),
+)
 async def list_publishers(account: Account | None = SIGNED_IN) -> list[PublisherListing]:
     """Every publisher. A publisher's budget and spending policy are served only to
     that publisher, signed in."""
@@ -622,12 +671,28 @@ def _listing(publisher: Publisher, *, own: bool) -> PublisherListing:
     )
 
 
-@router.get("/metrics", response_model=MetricsOut)
+@router.get(
+    "/metrics",
+    response_model=MetricsOut,
+    openapi_extra=public(
+        "Analytics",
+        "Marketplace metrics",
+        "Settlement volume, take rate, time to merge and live issue counts.",
+    ),
+)
 async def metrics() -> MetricsOut:
     return await run_in_threadpool(store.metrics)
 
 
-@router.get("/decisions", response_model=list[Decision])
+@router.get(
+    "/decisions",
+    response_model=list[Decision],
+    openapi_extra=public(
+        "Trust",
+        "Decision log",
+        "The newest decisions, up to 500: who decided what, by which rule.",
+    ),
+)
 async def decisions(limit: int = Query(default=50, le=500)) -> list[Decision]:
     """The append-only decision log across every issue, newest first."""
     return await run_in_threadpool(store.list_decisions, limit)

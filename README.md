@@ -67,7 +67,8 @@ mise run setup     # install every runtime's dependencies
 mise run dev       # API on :8000 and web app on :5173
 ```
 
-Open <http://localhost:5173>. The API reference is at <http://127.0.0.1:8000/docs>.
+Open <http://localhost:5173>. The public API, free and x402 routes with their prices, is
+at <http://localhost:5173/public-api>; the full schema is at <http://127.0.0.1:8000/docs>.
 To link your real GitHub account rather than a typed login, set up an OAuth App first:
 see [Linking your real GitHub account locally](#linking-your-real-github-account-locally).
 

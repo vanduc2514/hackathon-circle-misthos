@@ -17,6 +17,10 @@ import { CORE_PAID_PREFIX, queryOf, segment, type PaidRoute } from './paid.js'
 const VIEWS: PaidRoute[] = [
   {
     id: 'decisions',
+    name: 'Decision export',
+    summary: 'The whole append-only decision log, a page at a time, with filters.',
+    group: 'Trust',
+    returns: 'DecisionPage',
     method: 'GET',
     path: '/paid/decisions',
     price: '0.02',
@@ -29,6 +33,10 @@ const VIEWS: PaidRoute[] = [
   },
   {
     id: 'reputation',
+    name: 'Contributor standing',
+    summary: 'Score, percentile, verdicts, disputes and specialisation, from the ledger.',
+    group: 'Trust',
+    returns: 'Reputation',
     method: 'GET',
     path: '/paid/reputation/:contributor_id',
     price: '0.05',
@@ -45,6 +53,10 @@ const VIEWS: PaidRoute[] = [
   },
   {
     id: 'escrow-attestation',
+    name: 'Escrow attestation',
+    summary: 'A signed certificate of what the escrow holds, read from the chain.',
+    group: 'Trust',
+    returns: 'Attestation',
     method: 'GET',
     path: '/paid/escrow/:issue_id/attestation',
     price: '0.02',
@@ -66,6 +78,10 @@ const VIEWS: PaidRoute[] = [
 const PRICING: PaidRoute[] = [
   {
     id: 'price',
+    name: 'Price an issue',
+    summary: "The engine's suggested price, range and confidence, with the comparables behind it.",
+    group: 'Analytics',
+    returns: 'PriceReport',
     method: 'POST',
     path: '/paid/price',
     price: '0.25',
@@ -88,6 +104,10 @@ const PRICING: PaidRoute[] = [
   },
   {
     id: 'comparables',
+    name: 'Comparables',
+    summary: 'Settled issues of the same shape, their prices and what each implies.',
+    group: 'Analytics',
+    returns: 'ComparablePage',
     method: 'GET',
     path: '/paid/comparables',
     price: '0.10',
@@ -106,6 +126,10 @@ const PRICING: PaidRoute[] = [
 const REVIEW: PaidRoute[] = [
   {
     id: 'review',
+    name: 'Pre-flight review',
+    summary: "The review agent's verdict on a diff against acceptance criteria, before you submit.",
+    group: 'Analytics',
+    returns: 'ReviewJob',
     method: 'POST',
     path: '/paid/review',
     price: '2.00',
@@ -134,6 +158,10 @@ const REVIEW: PaidRoute[] = [
 const DEALS: PaidRoute[] = [
   {
     id: 'opportunities',
+    name: 'Funded work',
+    summary: 'Funded issues still open: price, deadline, claim state and criteria.',
+    group: 'Marketplace',
+    returns: 'OpportunityPage',
     method: 'GET',
     path: '/paid/opportunities',
     price: '0.02',
@@ -148,6 +176,10 @@ const DEALS: PaidRoute[] = [
   },
   {
     id: 'receipt',
+    name: 'Settlement receipt',
+    summary: "A signed receipt of an issue's release or refund, checked against the ledger.",
+    group: 'Trust',
+    returns: 'Receipt',
     method: 'GET',
     path: '/paid/receipt/:settlement_id',
     price: '0.01',
@@ -166,6 +198,10 @@ const DEALS: PaidRoute[] = [
   },
   {
     id: 'screen',
+    name: 'Sanctions screen',
+    summary: 'A sanctions-list check of one wallet. Off until its terms are cleared.',
+    group: 'Trust',
+    returns: 'Screening',
     method: 'POST',
     path: '/paid/screen',
     price: '0.25',

@@ -31,6 +31,8 @@ x-backend: &backend
     MISTHOS_GITHUB_APP_SLUG: ${MISTHOS_GITHUB_APP_SLUG:-}
     # Shared with the edge: the paid API's routes in the core answer only the edge.
     MISTHOS_EDGE_CORE_TOKEN: ${MISTHOS_EDGE_CORE_TOKEN:-}
+    # Where buyers reach the edge from outside, for the web app's API page.
+    MISTHOS_PAID_PUBLIC_URL: ${MISTHOS_PAID_PUBLIC_URL:-http://localhost:8080}
     # The paid API's certificate key, by reference (docs/PAID-API.md).
     MISTHOS_CERTIFICATE_SECRET_REF: ${MISTHOS_CERTIFICATE_SECRET_REF:-}
     # Reset deletes every row of the database above, so it stays refused unless you

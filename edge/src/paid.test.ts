@@ -28,6 +28,9 @@ const LOOKUP: PaidRoute = {
   path: '/paid/lookup/:thing',
   price: '0.01',
   description: 'Look a thing up',
+  name: 'Lookup',
+  summary: 'Look a thing up.',
+  group: 'Trust',
   core: (req) => ({
     method: 'GET',
     path: `${CORE_PAID_PREFIX}lookup/${encodeURIComponent(String(req.params.thing))}?page=${Number(req.query.page ?? 1)}`,
@@ -41,6 +44,9 @@ const PRICED: PaidRoute = {
   path: '/paid/priced',
   price: '0.25',
   description: 'Price something',
+  name: 'Price',
+  summary: 'Price something.',
+  group: 'Analytics',
   core: () => ({ method: 'POST', path: `${CORE_PAID_PREFIX}priced` }),
 }
 
@@ -50,6 +56,9 @@ const REVIEW: PaidRoute = {
   path: '/paid/review',
   price: '0.50',
   description: 'Review a diff',
+  name: 'Review',
+  summary: 'Review a diff.',
+  group: 'Analytics',
   core: () => ({ method: 'POST', path: `${CORE_PAID_PREFIX}review` }),
   async: true,
   capped: true,
@@ -584,6 +593,8 @@ describe('the allowlist', () => {
       assert.ok(insidePaidApi(call.path), `${route.id} calls ${call.path}`)
       assert.doesNotMatch(call.path, /\/(auth|wallets?|statements?|policy|lifecycle)\b/, route.id)
       assert.equal(call.path.includes('?'), search !== '', `${route.id} forwards the query as sent`)
+      assert.ok(route.name && route.summary.length <= 100, `${route.id} has a name and a one-line summary`)
+      assert.ok(['Core', 'Marketplace', 'Analytics', 'Trust'].includes(route.group), route.id)
     }
     assert.equal(new Set(CATALOG.map((r) => r.id)).size, CATALOG.length, 'route ids are unique')
   })
@@ -667,5 +678,9 @@ describe('configuration', () => {
     assert.deepEqual(catalog.routes[0].price, { usdc: '0.01', base_units: '10000' })
     assert.equal(catalog.routes[0].free_tier, true)
     assert.equal(catalog.routes[1].poll, '/paid/review/jobs/{job_id}')
+    assert.deepEqual(
+      (catalog.routes as unknown as { name: string; group: string }[]).map((r) => [r.name, r.group]),
+      [['Lookup', 'Trust'], ['Review', 'Analytics']],
+    )
   })
 })

@@ -51,6 +51,13 @@ export interface PaidRoute {
   path: string
   /** The default price in USDC, decimal text. `EDGE_PRICES` may override it. */
   price: string
+  /** The short name and one-line summary the API page shows (#208). */
+  name: string
+  summary: string
+  /** Where the API page files it. */
+  group: 'Core' | 'Marketplace' | 'Analytics' | 'Trust'
+  /** What a successful answer is, in a word. */
+  returns?: string
   description: string
   /** Where the work runs in the core. */
   core: (req: Request) => CoreCall
@@ -789,6 +796,10 @@ export async function catalogOf(
       id: r.id,
       method: r.method,
       path: r.path,
+      name: r.name,
+      summary: r.summary,
+      group: r.group,
+      ...(r.returns ? { returns: r.returns } : {}),
       price: { usdc: priced.get(r.id), base_units: baseUnits(priced.get(r.id) as string) },
       scheme: 'exact',
       description: r.description,

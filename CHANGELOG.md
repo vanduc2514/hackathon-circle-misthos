@@ -7,6 +7,18 @@ Notable changes to Misthos, newest first. The format follows
 
 ### Added
 
+- **The API page** (#208). The app's `API` link opens `/public-api`, a Misthos page in
+  place of Swagger: every route a stranger may call, free or x402, grouped by job (Core,
+  Marketplace, Analytics, Trust) with the price as a column, filtered by All, Free or
+  x402. A row opens to show a call that works.
+  - The free rows are the routes the API marks `x-misthos-public` in `openapi.json`,
+    and no route that needs a session is marked; a test calls every one as a stranger.
+  - The x402 rows are the edge's own catalog at the prices it charges, read through the
+    new `GET /api/v1/catalog/paid` and kept a minute; if the edge cannot be read, the
+    page still shows the free rows. `MISTHOS_PAID_PUBLIC_URL` names where buyers reach
+    the edge.
+  - The edge's seller page (`GET /paid` in a browser) wears the same design.
+  - Screenshots are in `docs/screenshots/api-page/`.
 - **The paid API's rail** (#200, #201). The edge sells x402 calls from an allowlist,
   `edge/src/catalog.ts`, and nothing else: anything under `/paid` it does not list is
   `404`, and nothing wraps `/api/v1/*`. `GET /paid` is the catalog, free. See

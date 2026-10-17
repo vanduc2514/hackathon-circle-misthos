@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # edge refuses wallet routes without it, and the internal paid routes answer 404.
     edge_url: str = "http://127.0.0.1:8080"
     edge_core_token: str = ""
+    # Where buyers reach the edge's paid API from outside, such as
+    # https://paid.example.com. Shown on the web app's API page; `edge_url` is the
+    # address the core uses inside the network, and is never shown.
+    paid_public_url: str = ""
 
     # The review agent. With a key, a model judges each pull request against its
     # acceptance criteria; without one, the rule reviewer judges what the file list

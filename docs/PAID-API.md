@@ -351,6 +351,11 @@ route_unavailable` before any price is named, and nobody signs a payment for it.
 
 ## Distribution (#205)
 
+- **The API page.** The web app's `API` link (`/public-api`, #208) lists every route a
+  stranger may call, the free ones from `openapi.json` (`x-misthos-public`) and the x402
+  ones from this catalog, read through `GET /api/v1/catalog/paid`, with the price as a
+  column. Each paid route's `name`, `summary`, `group` and `returns` in `catalog.ts` are
+  what the page shows.
 - **The seller page.** `GET /paid` on the edge answers HTML to a browser and JSON to an
   agent, from the same catalog, so the page cannot disagree with what is charged: every
   route, its price, the network and asset, the seller's address, the certificate signer,

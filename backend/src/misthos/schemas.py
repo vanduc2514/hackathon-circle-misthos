@@ -780,3 +780,41 @@ class PaidCallsOut(BaseModel):
     calls: list[PaidCallOut]
     totals: list[PaidRouteTotal]
     total: dict[str, str | int]
+
+
+# ------------------------------------------------------- the API page (#208)
+
+
+class PaidRouteOut(BaseModel):
+    """One x402 route the edge sells, as its catalog lists it."""
+
+    id: str
+    method: Literal["GET", "POST"]
+    path: str
+    price: dict[str, str]
+    """`usdc` and `base_units`, as the edge charges them."""
+    name: str
+    summary: str
+    group: Literal["Core", "Marketplace", "Analytics", "Trust"]
+    returns: str | None = None
+    free_tier: bool = False
+    is_async: bool = Field(default=False, alias="async")
+    capped: bool = False
+    note: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class PaidCatalogOut(BaseModel):
+    """What the edge sells over x402, read from the edge itself so its prices are the
+    ones charged. `available` is false when the edge could not be read."""
+
+    available: bool
+    base_url: str | None = Field(
+        description="Where buyers call the paid routes; MISTHOS_PAID_PUBLIC_URL"
+    )
+    networks: list[str] = Field(default_factory=list)
+    pay_to: str | None = None
+    asset: str | None = None
+    certificate_signer: str | None = None
+    routes: list[PaidRouteOut] = Field(default_factory=list)
