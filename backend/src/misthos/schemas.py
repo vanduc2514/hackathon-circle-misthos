@@ -300,6 +300,9 @@ class IssueSummaryOut(BaseModel):
     confidence: str | None = None
     deadline: datetime | None = None
     github_url: str
+    awaiting_approver: str | None = None
+    criteria_approved_at: datetime | None = None
+    contributor_id: str | None = None
 
 
 class MetricsOut(BaseModel):
@@ -818,3 +821,76 @@ class PaidCatalogOut(BaseModel):
     asset: str | None = None
     certificate_signer: str | None = None
     routes: list[PaidRouteOut] = Field(default_factory=list)
+# ------------------------------------------------------- Dashboard (#182)
+
+DashboardAction = Literal[
+    "approve_criteria",
+    "commit_funds",
+    "watch_deadline",
+    "review_and_merge",
+    "contact_approver",
+    "open_pr",
+    "wait_verdict",
+    "rework",
+    "wait_merge",
+    "claim_expired",
+    "settled",
+    "closed",
+]
+
+
+class DashboardIssueItem(BaseModel):
+    id: str
+    github_issue_number: int
+    title: str
+    repo: str
+    price_usdc: float
+    state: str
+    next_action: DashboardAction
+    next_action_label: str
+    action_needed: bool
+    awaiting_approver: str | None = None
+    criteria_approved_at: datetime | None = None
+    contributor_id: str | None = None
+    claim_id: str | None = None
+    pull_request_number: int | None = None
+    pull_request_url: str | None = None
+    verdict_summary: str | None = None
+    verdict_passed: bool | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PublisherDashboardOut(BaseModel):
+    party_id: str
+    name: str
+    github_login: str | None = None
+    budget_remaining_usdc: float
+    committed_escrow_usdc: float
+    released_usdc: float
+    connected_repos: list[str] = Field(default_factory=list)
+    action_needed: list[DashboardIssueItem] = Field(default_factory=list)
+    all_issues: list[DashboardIssueItem] = Field(default_factory=list)
+
+
+class ContributorDashboardOut(BaseModel):
+    party_id: str
+    handle: str
+    github_login: str | None = None
+    reputation: float
+    settled_count: int
+    owed_in_flight_usdc: float
+    about_to_release_usdc: float
+    paid_this_year_usdc: float
+    total_earned_usdc: float
+    payout_wallet_set: bool
+    payout_address: str | None = None
+    action_needed: list[DashboardIssueItem] = Field(default_factory=list)
+    all_work: list[DashboardIssueItem] = Field(default_factory=list)
+
+
+class DashboardOut(BaseModel):
+    role: Literal["publisher", "contributor"]
+    publisher: PublisherDashboardOut | None = None
+    contributor: ContributorDashboardOut | None = None
+

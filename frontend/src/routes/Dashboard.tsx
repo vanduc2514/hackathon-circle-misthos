@@ -1,221 +1,423 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api, money, relativeTime, type Decision, type IssueSummaryOut, type MetricsOut } from '../lib/client'
-import { Bar, Panel, Stat, StateBadge } from '../components/ui'
-import { useHealth } from '../lib/session'
+import { api, money, relativeTime, unwrap, type DashboardOut } from '../lib/client'
+import { Panel, Stat, StateBadge } from '../components/ui'
+import { useHealth, useMe } from '../lib/session'
+
+const PUBLISHER_ACTION_LABELS: Record<string, string> = {
+  approve_criteria: 'Approve Criteria',
+  commit_funds: 'Fund Escrow',
+  review_and_merge: 'Review PR',
+  contact_approver: 'Check Approver',
+}
 
 export default function Dashboard() {
-  const metrics = useQuery({
-    queryKey: ['metrics'],
-    queryFn: async () => (await api.GET('/api/v1/metrics')).data as MetricsOut | undefined,
-  })
-  const decisions = useQuery({
-    queryKey: ['decisions'],
-    queryFn: async () => (await api.GET('/api/v1/decisions', { params: { query: { limit: 12 } } })).data as Decision[] | undefined,
-  })
-  const issues = useQuery({
-    queryKey: ['issues'],
-    queryFn: async () => (await api.GET('/api/v1/issues')).data as IssueSummaryOut[] | undefined,
+  const health = useHealth()
+  const me = useMe()
+
+  const address = me.data?.address
+  const account = me.data?.account
+  const role = account?.role
+  const partyId = account?.party_id
+
+  const dashQuery = useQuery({
+    queryKey: ['dashboard', partyId, role],
+    queryFn: async (): Promise<DashboardOut> => unwrap(await api.GET('/api/v1/dashboard')),
+    enabled: Boolean(address && role && partyId),
   })
 
-  const health = useHealth()
-  const m = metrics.data
-  const rows = issues.data ?? []
-  const byState = m?.by_state ?? {}
-  const maxState = Math.max(1, ...Object.values(byState))
+  const dashData = dashQuery.data
+  const publisher = dashData?.publisher
+  const contributor = dashData?.contributor
+
+  const pubActionNeeded = publisher?.action_needed ?? []
+  const pubAllIssues = publisher?.all_issues ?? []
+
+  const conActionNeeded = contributor?.action_needed ?? []
+  const conAllWork = contributor?.all_work ?? []
+
+  const pageTitle = !address
+    ? 'Personal Treasury Overview'
+    : !role
+      ? 'Onboarding: Select Role'
+      : role === 'publisher'
+        ? `${publisher?.name || 'Publisher'} Dashboard`
+        : `@${contributor?.handle || 'contributor'} Dashboard`
+
+  const pageSub = !address
+    ? 'Connect your wallet to inspect your scoped treasury commitments, active bounties, and pending actions.'
+    : !role
+      ? 'Finish setting up your account profile to access your personalized commitments and workflow.'
+      : role === 'publisher'
+        ? 'Monitor your allocated budget, committed in-flight escrow, released funds, and pending governance decisions.'
+        : 'Track your claimed work, review outcomes, incoming payouts, and lifetime earnings.'
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">The treasury, running itself</h1>
-          <p className="page-sub">
-            A company or a maintainer puts a fixed price on a GitHub issue. An agent prices
-            it, a contributor fixes it, an agent reviews it, and the payment clears when the
-            work is accepted.
-          </p>
-        </div>
-      </div>
       <div className="banner">
         {health.data?.money_note || `Live on ${health.data?.network_label ?? 'chain'}.`} The
         escrow holds the money on chain, and the review agent and the decision log are its
         record. GitHub is connected through the App.
       </div>
 
-      <div className="hero">
-        <div className="hero-cell">
-          <div className="hero-label">North star &middot; settled issues this week</div>
-          <div className="hero-value">{m?.settled_issues_7d ?? '—'}</div>
-          <div className="hero-note">
-            An issue counts only when a pull request merged and the payment released.
-            {m ? ` ${m.settled_issues} settled in all.` : ''}
-            {m?.median_hours_to_payout != null &&
-              ` Median ${m.median_hours_to_payout}h from claim to payout.`}
-          </div>
-        </div>
-        <div className="hero-cell">
-          <div className="hero-label">Why a fixed price rather than a bid</div>
-          <p className="hero-quote" style={{ marginTop: 10 }}>
-            &ldquo;Athens paid a juror, a rower, a builder on the Acropolis the day they
-            worked, because nobody earning two obols could float a month of credit to the
-            state.&rdquo;
-          </p>
-          <div className="hero-note" style={{ marginTop: 10 }}>
-            At a cent a transaction, paying on delivery is finally a choice.
-          </div>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">{pageTitle}</h1>
+          <p className="page-sub">{pageSub}</p>
         </div>
       </div>
 
-      <div className="grid k4">
-        <Stat
-          label="Matched volume"
-          value={`$${money(m?.matched_volume_usdc)}`}
-          hint="Total value of work that changed hands"
-        />
-        <Stat
-          label="Funded issues"
-          value={m?.funded_issues_published ?? '—'}
-          hint={`${m?.open_issues ?? 0} still open`}
-        />
-        <Stat
-          label="Settled issues"
-          value={m?.settled_issues ?? '—'}
-          hint="Merged and paid end to end. The North Star."
-        />
-        <Stat
-          label="Publisher overturns"
-          value={m ? `${Math.round(m.publisher_overturn_rate * 100)}%` : '—'}
-          hint="How often a publisher declined a passing verdict"
-        />
-      </div>
-
-      <div className="grid k3">
-        <Stat
-          label="Claim rate within 72h"
-          value={m ? `${Math.round(m.claim_rate_72h * 100)}%` : '—'}
-          hint="An unclaimed issue is how you lose a publisher"
-        />
-        <Stat
-          label="Acceptance, first review"
-          value={m ? `${Math.round(m.acceptance_rate_first_review * 100)}%` : '—'}
-          hint="Low means bad scoping or the wrong contributors"
-        />
-        <Stat
-          label="Repeat publishers"
-          value={m ? `${Math.round(m.repeat_publisher_rate * 100)}%` : '—'}
-          hint="A marketplace of first transactions has no business under it"
-        />
-      </div>
-
-      <div className="grid k4">
-        <Stat
-          label="Refund rate"
-          value={m ? `${Math.round(m.refund_rate * 100)}%` : '—'}
-          hint="Commitments that closed with the money going back. Target under 15%"
-        />
-        <Stat
-          label="Dispute rate"
-          value={m ? `${Math.round(m.dispute_rate * 100)}%` : '—'}
-          hint="Submissions whose contributor disputed a verdict. Target under 5%"
-        />
-        <Stat
-          label="Paid $500+ this month"
-          value={m?.earners_over_500_share != null ? `${Math.round(m.earners_over_500_share * 100)}%` : '—'}
-          hint="Of contributors paid in the last 30 days. Target above 30%"
-        />
-        <Stat
-          label="Top 10 share of payouts"
-          value={m?.top10_payout_share != null ? `${Math.round(m.top10_payout_share * 100)}%` : '—'}
-          hint="A marketplace, not a roster. Target under 50%"
-        />
-      </div>
-
-      <div className="grid k2">
-        <Panel title="Where the issues are">
-          <div className="bars">
-            {Object.entries(byState).map(([state, count]) => (
-              <Bar key={state} label={state} value={count} max={maxState} />
-            ))}
+      {!address && (
+        <Panel title="Sign in to view your dashboard">
+          <div className="empty" style={{ padding: '36px 20px', textAlign: 'center' }}>
+            <p style={{ marginBottom: 20, fontSize: 15, color: 'var(--text-dim, #666)' }}>
+              The treasury overview is personal to each participant. Sign in with your wallet to manage your issues,
+              track in-flight escrow, or inspect work requiring your attention.
+            </p>
+            <Link
+              to="/account"
+              className="btn"
+              style={{ display: 'inline-flex', alignItems: 'center', minHeight: 44, padding: '0 24px' }}
+            >
+              Connect Wallet / Sign In
+            </Link>
           </div>
         </Panel>
+      )}
 
-        <Panel title="Signals that decide the price">
-          <div className="bars">
-            <Bar label="code surface" value={25} max={25} />
-            <Bar label="requirement clarity" value={20} max={25} />
-            <Bar label="test coverage" value={15} max={25} />
-            <Bar label="dependency depth" value={15} max={25} />
-            <Bar label="prior attempts" value={15} max={25} />
-            <Bar label="blast radius" value={10} max={25} />
+      {address && !role && (
+        <Panel title="Role onboarding required">
+          <div className="empty" style={{ padding: '36px 20px', textAlign: 'center' }}>
+            <p style={{ marginBottom: 20, fontSize: 15, color: 'var(--text-dim, #666)' }}>
+              You have signed in with wallet <code>{address.slice(0, 8)}…{address.slice(-6)}</code>, but have not
+              selected a role. Choose whether you are acting as a Publisher or Contributor to personalize your overview.
+            </p>
+            <Link
+              to="/account"
+              className="btn"
+              style={{ display: 'inline-flex', alignItems: 'center', minHeight: 44, padding: '0 24px' }}
+            >
+              Choose Role on Account Page
+            </Link>
           </div>
-          <p className="stat-hint" style={{ marginTop: 14 }}>
-            Weights, summing to 100%. A requirement that is unclear hurts twice: it raises
-            the price and it raises the chance a submission misses the mark.
-          </p>
         </Panel>
-      </div>
+      )}
 
-      <div className="grid k2">
-        <Panel title="Recent decisions" flush>
-          {decisions.data?.length ? (
-            <div style={{ padding: '4px 16px 10px' }}>
-              <div className="timeline">
-                {decisions.data.map((d) => (
-                  <div className="tl-item" key={d.id}>
-                    <span className="tl-time">{relativeTime(d.created_at)}</span>
-                    <span>
-                      <span className="tl-action">
-                        <span className="tl-actor">{d.actor}</span>
-                        <span className="dim">{d.action.replace(/_/g, ' ')}</span>
-                      </span>
-                      <span className="tl-outcome">{d.outcome}</span>
-                    </span>
-                  </div>
-                ))}
+      {address && role && dashQuery.isLoading && (
+        <div className="empty" style={{ marginTop: 24, padding: '36px 20px', textAlign: 'center' }}>
+          Loading your personalized dashboard…
+        </div>
+      )}
+
+      {address && role === 'publisher' && publisher && (
+        <>
+          <div className="grid k3">
+            <Stat
+              label="Remaining budget"
+              value={`$${money(publisher.budget_remaining_usdc)}`}
+              hint="Available allocation for new issue bounties"
+            />
+            <Stat
+              label="Committed in-flight"
+              value={`$${money(publisher.committed_escrow_usdc)}`}
+              hint="Escrow held in active funded issues"
+            />
+            <Stat
+              label="Released to date"
+              value={`$${money(publisher.released_usdc)}`}
+              hint="Total settled payouts to contributors"
+            />
+          </div>
+
+          {publisher.connected_repos && publisher.connected_repos.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <span style={{ fontSize: 13, color: 'var(--text-dim, #666)', marginRight: 8 }}>
+                Connected Repositories:
+              </span>
+              {publisher.connected_repos.map((repo) => (
+                <Link
+                  key={repo}
+                  to={`/issues?repo=${encodeURIComponent(repo)}`}
+                  className="chip"
+                  style={{ marginRight: 6, textDecoration: 'none' }}
+                >
+                  {repo}
+                </Link>
+              ))}
+            </div>
+          )}
+
+          <Panel title={`Needs Your Action (${pubActionNeeded.length})`} flush>
+            {pubActionNeeded.length === 0 ? (
+              <div className="empty">No issues currently require your action. Everything is in flight or settled.</div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table" style={{ width: '100%', minWidth: 640 }}>
+                  <thead>
+                    <tr>
+                      <th>Issue</th>
+                      <th>State</th>
+                      <th>Next Action</th>
+                      <th style={{ textAlign: 'right' }}>Price</th>
+                      <th style={{ textAlign: 'right' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pubActionNeeded.map((item) => (
+                      <tr key={item.id}>
+                        <td>
+                          <Link to={`/issues/${item.id}`} className="row-link">
+                            <div className="cell-title">{item.title}</div>
+                            <div className="cell-repo">
+                              {item.repo}#{item.github_issue_number}
+                            </div>
+                          </Link>
+                        </td>
+                        <td>
+                          <StateBadge state={item.state} />
+                        </td>
+                        <td>
+                          <span style={{ fontSize: 13, fontWeight: 500 }}>{item.next_action_label}</span>
+                        </td>
+                        <td className="mono-num" style={{ textAlign: 'right' }}>
+                          ${money(item.price_usdc)}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <Link
+                            to={`/issues/${item.id}`}
+                            className="btn btn-sm"
+                            style={{ minHeight: 36, display: 'inline-flex', alignItems: 'center' }}
+                          >
+                            {PUBLISHER_ACTION_LABELS[item.next_action] ?? 'Proceed'}
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
+            )}
+          </Panel>
+
+          <Panel title={`All Tracked Issues (${pubAllIssues.length})`} flush>
+            {pubAllIssues.length === 0 ? (
+              <div className="empty" style={{ padding: '32px 16px', textAlign: 'center' }}>
+                <p style={{ marginBottom: 16 }}>No issues published yet. Create or fund an issue from the Issues tab.</p>
+                <Link to="/publish" className="btn btn-sm" style={{ display: 'inline-flex', alignItems: 'center', minHeight: 36 }}>
+                  Publish an Issue
+                </Link>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table" style={{ width: '100%', minWidth: 640 }}>
+                  <thead>
+                    <tr>
+                      <th>Issue</th>
+                      <th>State</th>
+                      <th>Current Status / Next Step</th>
+                      <th style={{ textAlign: 'right' }}>Price</th>
+                      <th style={{ textAlign: 'right' }}>Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pubAllIssues.map((item) => (
+                      <tr key={item.id}>
+                        <td>
+                          <Link to={`/issues/${item.id}`} className="row-link">
+                            <div className="cell-title">{item.title}</div>
+                            <div className="cell-repo">
+                              {item.repo}#{item.github_issue_number}
+                            </div>
+                          </Link>
+                        </td>
+                        <td>
+                          <StateBadge state={item.state} />
+                        </td>
+                        <td>
+                          <span style={{ fontSize: 13, color: item.action_needed ? 'var(--accent, #0066cc)' : 'inherit' }}>
+                            {item.next_action_label}
+                          </span>
+                        </td>
+                        <td className="mono-num" style={{ textAlign: 'right' }}>
+                          ${money(item.price_usdc)}
+                        </td>
+                        <td className="stat-hint" style={{ textAlign: 'right' }}>
+                          {relativeTime(item.updated_at)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+        </>
+      )}
+
+      {address && role === 'contributor' && contributor && (
+        <>
+          {!contributor.payout_wallet_set ? (
+            <div
+              className="panel"
+              style={{
+                borderLeft: '4px solid var(--amber, #d97706)',
+                marginBottom: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div>
+                <strong>Payout Destination Missing:</strong> You haven't set a payout wallet address yet.{' '}
+                <Link to="/account" style={{ textDecoration: 'underline', fontWeight: 600 }}>
+                  Configure your payout wallet on the Account page
+                </Link>{' '}
+                so settled earnings can reach you.
+              </div>
+              <Link to="/account" className="btn btn-sm" style={{ minHeight: 36, display: 'inline-flex', alignItems: 'center' }}>
+                Set up wallet
+              </Link>
             </div>
           ) : (
-            <div className="empty">No decisions yet.</div>
+            contributor.payout_address && (
+              <div style={{ marginBottom: 16, fontSize: 13, color: '#6b7280' }}>
+                Payout address: <code style={{ fontSize: 12 }}>{contributor.payout_address}</code>
+              </div>
+            )
           )}
-        </Panel>
 
-        <Panel title="Issues needing a human" flush>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Issue</th>
-                <th>State</th>
-                <th style={{ textAlign: 'right' }}>Price</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows
-                .filter((r) =>
-                  ['AWAITING_APPROVAL', 'CLAIMED', 'IN_REVIEW'].includes(r.state),
-                )
-                .slice(0, 6)
-                .map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <Link to={`/issues/${r.id}`} className="row-link">
-                        <div className="cell-title">{r.title}</div>
-                        <div className="cell-repo">
-                          {r.repo}#{r.number} &middot; {r.publisher_name}
-                        </div>
-                      </Link>
-                    </td>
-                    <td>
-                      <StateBadge state={r.state} />
-                    </td>
-                    <td className="mono-num" style={{ textAlign: 'right' }}>
-                      ${money(r.price_usdc)}
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </Panel>
-      </div>
+          <div className="grid k4">
+            <Stat
+              label="In-flight commitments"
+              value={`$${money(contributor.owed_in_flight_usdc)}`}
+              hint="Escrow secured for claimed or submitted work"
+            />
+            <Stat
+              label="About to release"
+              value={`$${money(contributor.about_to_release_usdc)}`}
+              hint="Accepted pull requests awaiting publisher merge"
+            />
+            <Stat
+              label="Paid this year"
+              value={`$${money(contributor.paid_this_year_usdc)}`}
+              hint={`${contributor.settled_count} settled bounty payouts`}
+            />
+            <Stat
+              label="Total earned"
+              value={`$${money(contributor.total_earned_usdc)}`}
+              hint={`Reputation: ${contributor.reputation}`}
+            />
+          </div>
+
+          <Panel title={`Needs Your Action (${conActionNeeded.length})`} flush>
+            {conActionNeeded.length === 0 ? (
+              <div className="empty">No tasks currently require your attention. Check the Issues tab for new bounties!</div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table" style={{ width: '100%', minWidth: 640 }}>
+                  <thead>
+                    <tr>
+                      <th>Work Item</th>
+                      <th>State</th>
+                      <th>Required Action</th>
+                      <th style={{ textAlign: 'right' }}>Bounty</th>
+                      <th style={{ textAlign: 'right' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {conActionNeeded.map((item) => (
+                      <tr key={item.id}>
+                        <td>
+                          <Link to={`/issues/${item.id}`} className="row-link">
+                            <div className="cell-title">{item.title}</div>
+                            <div className="cell-repo">
+                              {item.repo}#{item.github_issue_number}
+                            </div>
+                          </Link>
+                        </td>
+                        <td>
+                          <StateBadge state={item.state} />
+                        </td>
+                        <td>
+                          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--accent, #0066cc)' }}>
+                            {item.next_action_label}
+                          </span>
+                        </td>
+                        <td className="mono-num" style={{ textAlign: 'right' }}>
+                          ${money(item.price_usdc)}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <Link
+                            to={`/issues/${item.id}`}
+                            className="btn btn-sm"
+                            style={{ minHeight: 36, display: 'inline-flex', alignItems: 'center' }}
+                          >
+                            {item.next_action === 'open_pr' ? 'Submit PR' : 'View findings'}
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+
+          <Panel title={`All Your Bounties (${conAllWork.length})`} flush>
+            {conAllWork.length === 0 ? (
+              <div className="empty" style={{ padding: '32px 16px', textAlign: 'center' }}>
+                <p style={{ marginBottom: 16 }}>You haven't claimed any bounties yet. Browse open issues to get started.</p>
+                <Link to="/issues" className="btn btn-sm" style={{ display: 'inline-flex', alignItems: 'center', minHeight: 36 }}>
+                  Browse Available Issues
+                </Link>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table" style={{ width: '100%', minWidth: 640 }}>
+                  <thead>
+                    <tr>
+                      <th>Work Item</th>
+                      <th>State</th>
+                      <th>Status / Next Step</th>
+                      <th style={{ textAlign: 'right' }}>Bounty</th>
+                      <th style={{ textAlign: 'right' }}>Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {conAllWork.map((item) => (
+                      <tr key={item.id}>
+                        <td>
+                          <Link to={`/issues/${item.id}`} className="row-link">
+                            <div className="cell-title">{item.title}</div>
+                            <div className="cell-repo">
+                              {item.repo}#{item.github_issue_number}
+                              {item.pull_request_number && ` · PR #${item.pull_request_number}`}
+                            </div>
+                          </Link>
+                        </td>
+                        <td>
+                          <StateBadge state={item.state} />
+                        </td>
+                        <td>
+                          <span style={{ fontSize: 13 }}>{item.next_action_label}</span>
+                        </td>
+                        <td className="mono-num" style={{ textAlign: 'right' }}>
+                          ${money(item.price_usdc)}
+                        </td>
+                        <td className="stat-hint" style={{ textAlign: 'right' }}>
+                          {relativeTime(item.updated_at)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+        </>
+      )}
     </>
   )
 }
