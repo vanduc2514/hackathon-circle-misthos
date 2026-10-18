@@ -76,7 +76,78 @@ CLAIM_WINDOW = timedelta(hours=72)
 
 # How long committed funds wait for acceptable work before they go back to the
 # publisher. The escrow contract holds the same deadline on chain.
-ESCROW_TERM = timedelta(days=14)
+MIN_ESCROW_TERM = timedelta(days=3)
+MAX_ESCROW_TERM = timedelta(days=90)
+DEFAULT_ESCROW_TERM = timedelta(days=14)
+ESCROW_TERM = DEFAULT_ESCROW_TERM
+
+class EscrowTermRefused(Exception):
+    """An escrow term outside the bounds, or not a whole number of days."""
+
+    def __init__(self, justification: str) -> None:
+        super().__init__(justification)
+        self.justification = justification
+
+
+def check_escrow_term(term: object) -> timedelta:
+    """The escrow term as given, or a refusal naming the bounds.
+
+    Whole days between MIN_ESCROW_TERM and MAX_ESCROW_TERM (#172). Unnamed gets
+    DEFAULT_ESCROW_TERM (14 days).
+    """
+    if term is None:
+        return DEFAULT_ESCROW_TERM
+    bounds_msg = f"between {MIN_ESCROW_TERM.days} and {MAX_ESCROW_TERM.days}"
+    if isinstance(term, bool):
+        raise EscrowTermRefused(
+            f"{term} is not a number: escrow term must be a whole number of days {bounds_msg}"
+        )
+    if isinstance(term, timedelta):
+        if term.total_seconds() % 86400 != 0:
+            raise EscrowTermRefused(
+                f"{term} is not a whole number of days: escrow term must be {bounds_msg} whole days"
+            )
+        days = int(term.total_seconds() // 86400)
+    elif isinstance(term, int):
+        days = term
+    elif isinstance(term, float):
+        raise EscrowTermRefused(
+            f"{term} is fractional: escrow term must be a whole number of days {bounds_msg}"
+        )
+    elif isinstance(term, str):
+        term_str = term.strip()
+        try:
+            val = float(term_str)
+            if not val.is_integer():
+                raise EscrowTermRefused(
+                    f"{term} is fractional: escrow term must be a whole number of days {bounds_msg}"
+                )
+            days = int(val)
+        except ValueError:
+            raise EscrowTermRefused(
+                f"{term} is not a number: escrow term must be a whole number of days {bounds_msg}"
+            ) from None
+    else:
+        raise EscrowTermRefused(
+            f"{term} is not a valid escrow term: must be a whole number of days {bounds_msg}"
+        )
+
+    if days <= 0:
+        raise EscrowTermRefused(
+            f"{days} days is zero or negative: escrow term must be {bounds_msg} days"
+        )
+    td = timedelta(days=days)
+    if td < MIN_ESCROW_TERM:
+        raise EscrowTermRefused(
+            f"{days} days is below {MIN_ESCROW_TERM.days} days: "
+            f"minimum escrow term is {MIN_ESCROW_TERM.days} days"
+        )
+    if td > MAX_ESCROW_TERM:
+        raise EscrowTermRefused(
+            f"{days} days is above {MAX_ESCROW_TERM.days} days: "
+            f"maximum escrow term is {MAX_ESCROW_TERM.days} days"
+        )
+    return td
 
 # How long approved terms stand, while nothing is committed to the escrow. Within it,
 # approving again keeps the terms the plan already handed the wallet rather than moving

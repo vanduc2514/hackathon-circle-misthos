@@ -26,6 +26,7 @@ export default function Publish() {
   const [summary, setSummary] = useState('')
   const [labels, setLabels] = useState('')
   const [price, setPrice] = useState('')
+  const [escrowTerm, setEscrowTerm] = useState('14')
   const [compliance, setCompliance] = useState(false)
 
   // The price is the publisher's, so the form is what makes it usable: a number, and
@@ -93,6 +94,8 @@ export default function Publish() {
               : [],
             // The publisher's own number, and the amount the escrow commits (#142).
             price: price.trim(),
+            // The escrow term in whole days, between 3 and 90 (#172).
+            escrow_term: escrowTerm.trim() ? Number(escrowTerm.trim()) : 14,
             // The API publishes as the signed-in publisher whatever this says.
             publisher_id: account?.party_id ?? '',
             compliance_driven: compliance,
@@ -308,6 +311,20 @@ export default function Publish() {
                   {priced
                     ? `You pay $${named.toFixed(2)}. The contributor receives $${contributorShare(named).toFixed(2)}, and Misthos keeps $${platformFee(named).toFixed(2)} when the work is accepted.`
                     : `Any amount from $${MINIMUM_PRICE}. You can change it on the issue's page until someone claims it.`}
+                </span>
+              </label>
+              <label className="field">
+                <span>Escrow term, in whole days</span>
+                <input
+                  className="input"
+                  value={escrowTerm}
+                  onChange={(e) => setEscrowTerm(e.target.value)}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="14"
+                />
+                <span className="field-note">
+                  Between 3 and 90 days. Defaults to 14 days. How long the escrow holds funds before refund opens.
                 </span>
               </label>
               <label className="check">

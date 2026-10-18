@@ -31,6 +31,7 @@ import time
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from misthos.config import settings
 from misthos.domain import comparables, compliance, ledger, timers
@@ -437,7 +438,7 @@ class Store:
             wallet=publisher.wallet.address,
             # Whole seconds, as the escrow holds it, so the plan, the escrow and the
             # booking all name the same instant.
-            deadline=(at + lifecycle.ESCROW_TERM).replace(microsecond=0),
+            deadline=(at + (rec.escrow_term or lifecycle.DEFAULT_ESCROW_TERM)).replace(microsecond=0),
             approved_at=at,
         )
 
@@ -1329,6 +1330,10 @@ class Store:
         # (#142). Absent on an issue the GitHub flow listed, which is priced later by
         # `/misthos price`; nothing is funded until it is named.
         price = check_price(Usdc.from_decimal(payload.price)) if payload.price is not None else None
+        term_raw = getattr(payload, "escrow_term", None)
+        if term_raw is None:
+            term_raw = getattr(payload, "escrow_term_days", None)
+        escrow_term = lifecycle.check_escrow_term(term_raw)
         spec = {
             "repo": payload.repo,
             "number": number or self._unlisted_number(payload.repo),
@@ -1337,6 +1342,7 @@ class Store:
             "state": IssueState.PRICED,
             "labels": list(payload.labels),
             "price": str(price.decimal) if price is not None else None,
+            "escrow_term": escrow_term,
             "compliance_driven": payload.compliance_driven,
             # Drafted from the issue, every one checkable (#38); the publisher edits
             # and approves them before any money is committed.
@@ -1476,6 +1482,40 @@ class Store:
                 )
             )
         return works
+
+    def _build(self, spec: dict) -> IssueRecord:
+        publisher = self.repo.get_publisher(spec["publisher_id"])
+        assert publisher is not None, spec["publisher_id"]
+        signals = ComplexitySignals(**spec["signals"])
+        proposal = propose(
+            signals,
+            compliance_driven=spec.get("compliance_driven", False),
+            comparables=self._comparables_for(signals, spec["repo"]),
+            urgency=Usdc.from_decimal(spec["urgency"]) if spec.get("urgency") else None,
+            risk_premium=Usdc.from_decimal(spec["risk"]) if spec.get("risk") else None,
+        )
+        target = IssueState(spec["state"])
+        now = _now()
+        if "price" in spec:
+            price = Usdc.from_decimal(spec["price"]) if spec["price"] else None
+        else:
+            price = proposal.recommended
+        return IssueRecord(
+            id=self._next_issue_id(),
+            repo=spec["repo"],
+            number=spec["number"],
+            title=spec["title"],
+            summary=spec["summary"],
+            state=target if target in _PRE_FUNDING else IssueState.AWAITING_APPROVAL,
+            labels=spec["labels"],
+            compliance_driven=spec.get("compliance_driven", False),
+            acceptance_criteria=spec["criteria"],
+            publisher_id=spec["publisher_id"],
+            created_at=now - timedelta(days=spec["age_days"]),
+            proposal=proposal,
+            price=price,
+            escrow_term=spec.get("escrow_term") or lifecycle.DEFAULT_ESCROW_TERM,
+        )
 
     def _comparables_for(
         self, signals: ComplexitySignals, repo: str, *, exclude: str | None = None
@@ -2174,6 +2214,37 @@ class Store:
             self.repo.save_issues(rec)
             return rec
 
+    def set_escrow_term(
+        self, issue_id: str, term: Any, by: str, now: datetime | None = None
+    ) -> IssueRecord:
+        """The publisher sets or changes the escrow term before funding (#172).
+
+        Fixed once the escrow holds a commitment.
+        """
+        with self._exclusive(issue_id), self._posting():
+            rec = self.repo.get_issue(issue_id)
+            if rec is None:
+                raise KeyError(issue_id)
+            if self.chain.commitment(rec.id) is not None or rec.state not in _PRE_FUNDING:
+                raise lifecycle.EscrowTermRefused(
+                    "the money is already committed to escrow, so the term cannot change"
+                )
+            td = lifecycle.check_escrow_term(term)
+            previous = rec.escrow_term
+            if previous == td:
+                return rec
+            rec.escrow_term = td
+            self._log(
+                rec,
+                actor="publisher",
+                action="escrow_term_set",
+                rule="publisher_names_the_escrow_term",
+                outcome=f"{by} moved the escrow term from {previous.days} to {td.days} days",
+                when=now or _now(),
+            )
+            self.repo.save_issues(rec)
+            return rec
+
     def _approve_and_fund(self, rec: IssueRecord, now: datetime, outcome: str) -> None:
         if rec.criteria_approved_at is None:
             raise CriteriaNotApproved(
@@ -2601,6 +2672,7 @@ class Store:
                     for c in p.comparables
                 ],
             }
+        escrow_term_days = rec.escrow_term.days if rec.escrow_term else 14
         return IssueOut(
             id=rec.id,
             repo=rec.repo,
@@ -2627,6 +2699,8 @@ class Store:
             github_url=rec.github_url,
             criteria_approved_at=rec.criteria_approved_at,
             awaiting_approver=rec.payout_hold == PayoutGate.AWAIT_APPROVER.value,
+            escrow_term=escrow_term_days,
+            escrow_term_days=escrow_term_days,
         )
 
     def summaries(self, records: list[IssueRecord]) -> list[IssueSummaryOut]:
@@ -2645,6 +2719,8 @@ class Store:
                 confidence=rec.proposal.confidence if rec.proposal else None,
                 deadline=rec.deadline,
                 github_url=rec.github_url,
+                escrow_term=rec.escrow_term.days if rec.escrow_term else 14,
+                escrow_term_days=rec.escrow_term.days if rec.escrow_term else 14,
             )
             for rec in records
         ]

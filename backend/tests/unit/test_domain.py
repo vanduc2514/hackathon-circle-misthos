@@ -16,11 +16,16 @@ import pytest
 from misthos.domain import comparables
 from misthos.domain.comparables import SettledWork
 from misthos.domain.issue import (
+    DEFAULT_ESCROW_TERM,
     ESCROW_TERM,
+    MAX_ESCROW_TERM,
+    MIN_ESCROW_TERM,
     SILENT_PUBLISHER_GRACE,
+    EscrowTermRefused,
     IllegalTransition,
     IssueState,
     can_transition,
+    check_escrow_term,
     is_open,
     silent_release_at,
     transition,
@@ -360,3 +365,52 @@ class TestChoosingAPositionInTheBand:
         p = band_of("1000", "2000")
         low, high = suggested_range(p)
         assert low <= p.recommended <= high
+
+
+class TestEscrowTerm:
+    """Escrow term bounds and validation (#172)."""
+
+    def test_default_is_fourteen_days(self) -> None:
+        assert check_escrow_term(None) == timedelta(days=14)
+        assert check_escrow_term(None) == DEFAULT_ESCROW_TERM
+
+    def test_floor_bound_names_minimum(self) -> None:
+        with pytest.raises(
+            EscrowTermRefused, match=f"minimum escrow term is {MIN_ESCROW_TERM.days} days"
+        ):
+            check_escrow_term(2)
+        with pytest.raises(
+            EscrowTermRefused, match=f"minimum escrow term is {MIN_ESCROW_TERM.days} days"
+        ):
+            check_escrow_term(timedelta(days=1))
+
+    def test_ceiling_bound_names_maximum(self) -> None:
+        with pytest.raises(
+            EscrowTermRefused, match=f"maximum escrow term is {MAX_ESCROW_TERM.days} days"
+        ):
+            check_escrow_term(91)
+        with pytest.raises(
+            EscrowTermRefused, match=f"maximum escrow term is {MAX_ESCROW_TERM.days} days"
+        ):
+            check_escrow_term(timedelta(days=91))
+
+    def test_valid_terms_inside_bounds(self) -> None:
+        assert check_escrow_term(3) == timedelta(days=3)
+        assert check_escrow_term(14) == timedelta(days=14)
+        assert check_escrow_term(90) == timedelta(days=90)
+        assert check_escrow_term("3") == timedelta(days=3)
+        assert check_escrow_term(timedelta(days=30)) == timedelta(days=30)
+
+    def test_non_whole_number_or_fractional_term_is_refused(self) -> None:
+        with pytest.raises(EscrowTermRefused, match="fractional"):
+            check_escrow_term(3.5)
+        with pytest.raises(EscrowTermRefused, match="not a whole number of days"):
+            check_escrow_term(timedelta(hours=12))
+        with pytest.raises(EscrowTermRefused, match="not a number"):
+            check_escrow_term("not-a-number")
+
+    def test_zero_or_negative_is_refused(self) -> None:
+        with pytest.raises(EscrowTermRefused, match="zero or negative"):
+            check_escrow_term(0)
+        with pytest.raises(EscrowTermRefused, match="zero or negative"):
+            check_escrow_term(-5)

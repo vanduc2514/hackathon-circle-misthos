@@ -21,7 +21,7 @@ import zlib
 from collections import defaultdict
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
@@ -677,6 +677,7 @@ def _save(conn: Connection, rec: IssueRecord, floor: int) -> int:
         "terms_wallet": rec.funding.wallet if rec.funding else None,
         "terms_deadline": rec.funding.deadline if rec.funding else None,
         "terms_approved_at": rec.funding.approved_at if rec.funding else None,
+        "escrow_term_days": rec.escrow_term.days if rec.escrow_term else 14,
     }
     if rec.version == 0:
         exists = conn.execute(select(t.issues.c.id).where(t.issues.c.id == rec.id)).first()
@@ -978,6 +979,11 @@ def _load(conn: Connection, issue_rows: Sequence[Row]) -> list[IssueRecord]:
             payout_checked_at=_utc_or_none(row["payout_checked_at"]),
             criteria_approved_at=_utc_or_none(row["criteria_approved_at"]),
             relisted_from=row["relisted_from"],
+            escrow_term=(
+                timedelta(days=row["escrow_term_days"])
+                if ("escrow_term_days" in row and row["escrow_term_days"] is not None)
+                else timedelta(days=14)
+            ),
             decisions=logs[row["id"]],
             money_events=ledger[row["id"]],
             version=row["version"],

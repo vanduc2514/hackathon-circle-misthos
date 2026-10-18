@@ -131,8 +131,9 @@ flowchart LR
     end
     subgraph Human["Human decides"]
         H1["What the price is"]
-        H2["Whether the work is accepted"]
-        H3["Whether to fund the issue at all"]
+        H2["How long the escrow holds funds (3-90 days)"]
+        H3["Whether the work is accepted"]
+        H4["Whether to fund the issue at all"]
     end
 ```
 
