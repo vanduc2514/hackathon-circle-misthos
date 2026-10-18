@@ -29,7 +29,6 @@ from misthos.domain.issue import SILENT_PUBLISHER_GRACE, IssueState, silent_rele
 
 
 class TimedAction(StrEnum):
-    EXPIRE_CLAIM = "expire_claim"
     REFUND = "refund"
     RELEASE_AFTER_GRACE = "release_after_grace"
     RETRY_PAYOUT = "retry_payout"
@@ -45,7 +44,6 @@ class Clocks:
 
     state: IssueState
     deadline: datetime | None = None
-    claim_expires_at: datetime | None = None
     verdict_passed_at: datetime | None = None
     """When the verdict passed, while nothing has accepted the work yet."""
     payout_held_since: datetime | None = None
@@ -53,24 +51,13 @@ class Clocks:
 
 
 def due(clocks: Clocks, now: datetime) -> TimedAction | None:
-    """The timed action this issue is owed at `now`, if any.
-
-    One at a time, because each changes the state the next is judged on: a lapsed
-    claim puts the issue back in FUNDED, and only from there can a passed deadline
-    refund it.
-    """
+    """The timed action this issue is owed at `now`, if any."""
     match clocks.state:
         case IssueState.IN_REVIEW if _release_due(clocks, now):
             return TimedAction.RELEASE_AFTER_GRACE
         case IssueState.IN_REVIEW if _elapsed(clocks.payout_held_since, now, PAYOUT_RETRY_INTERVAL):
             return TimedAction.RETRY_PAYOUT
-        case IssueState.CLAIMED if _elapsed(clocks.claim_expires_at, now) or _elapsed(
-            clocks.deadline, now
-        ):
-            # A claim also ends at the deadline: with no pull request there is no
-            # work to wait for, and the commitment it was holding is refundable.
-            return TimedAction.EXPIRE_CLAIM
-        case IssueState.FUNDED if _elapsed(clocks.deadline, now):
+        case IssueState.FUNDED | IssueState.CLAIMED if _elapsed(clocks.deadline, now):
             return TimedAction.REFUND
     return None
 

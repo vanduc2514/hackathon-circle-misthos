@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from misthos.domain.issue import CLAIM_WINDOW, ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
+from misthos.domain.issue import ESCROW_TERM, SILENT_PUBLISHER_GRACE, IssueState
 from misthos.domain.timers import TIMED_STATES, Clocks, TimedAction, due
 
 T0 = datetime(2026, 10, 1, 12, tzinfo=UTC)
@@ -18,19 +18,13 @@ A_MOMENT = timedelta(seconds=1)
 
 
 class TestClaims:
-    def claimed(self, deadline: datetime = T0 + ESCROW_TERM) -> Clocks:
-        return Clocks(IssueState.CLAIMED, deadline=deadline, claim_expires_at=T0 + CLAIM_WINDOW)
-
-    def test_a_claim_holds_for_its_whole_window(self) -> None:
-        assert due(self.claimed(), T0 + CLAIM_WINDOW) is None
-
-    def test_a_lapsed_claim_returns_the_issue_to_the_pool(self) -> None:
-        assert due(self.claimed(), T0 + CLAIM_WINDOW + A_MOMENT) is TimedAction.EXPIRE_CLAIM
-
-    def test_a_claim_ends_at_the_deadline_even_inside_its_window(self) -> None:
-        """With no pull request there is no work to wait for past the deadline."""
-        clocks = self.claimed(deadline=T0 + timedelta(hours=1))
-        assert due(clocks, T0 + timedelta(hours=1) + A_MOMENT) is TimedAction.EXPIRE_CLAIM
+    def test_no_timer_expires_a_claim(self) -> None:
+        """In the open claim model, claims never expire and no timer expires a claim."""
+        clocks = Clocks(IssueState.FUNDED, deadline=T0 + ESCROW_TERM)
+        # 3 days later (the old 72h window): no timer fires
+        assert due(clocks, T0 + timedelta(days=3)) is None
+        assert not hasattr(TimedAction, "EXPIRE_CLAIM")
+        assert not hasattr(clocks, "claim_expires_at")
 
 
 class TestDeadline:
@@ -75,5 +69,5 @@ class TestSilentPublisher:
 @pytest.mark.parametrize("state", sorted(set(IssueState) - TIMED_STATES))
 def test_no_timer_moves_an_issue_out_of_a_state_it_does_not_own(state: IssueState) -> None:
     """Work under review is never timed out: that is the contract's call. See #33."""
-    clocks = Clocks(state, deadline=T0, claim_expires_at=T0, verdict_passed_at=T0)
+    clocks = Clocks(state, deadline=T0, verdict_passed_at=T0)
     assert due(clocks, T0 + timedelta(days=365)) is None

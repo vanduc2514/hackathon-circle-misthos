@@ -1021,16 +1021,20 @@ export interface components {
              * Format: date-time
              */
             issued_at: string;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            expires_at: string;
+            /** Expires At */
+            expires_at?: string | null;
             /**
              * Active
              * @default true
              */
             active: boolean;
+            /**
+             * State
+             * @default CLAIMED
+             */
+            state: string;
+            /** Handle */
+            handle?: string | null;
         };
         /**
          * ClaimRequest
@@ -1334,11 +1338,27 @@ export interface components {
             price_usdc?: string | null;
             proposal?: components["schemas"]["PriceProposalOut"] | null;
             escrow?: components["schemas"]["EscrowCommitment"] | null;
+            /** Claims */
+            claims?: components["schemas"]["Claim"][];
+            /** Submissions */
+            submissions?: components["schemas"]["Submission"][];
             claim?: components["schemas"]["Claim"] | null;
             submission?: components["schemas"]["Submission"] | null;
             review?: components["schemas"]["Review"] | null;
             /** Contributor Id */
             contributor_id?: string | null;
+            /** Contributor Ids */
+            contributor_ids?: string[];
+            /**
+             * Review Budget
+             * @default 1
+             */
+            review_budget: number;
+            /**
+             * Reviews Spent
+             * @default 0
+             */
+            reviews_spent: number;
             /** Paid Usdc */
             paid_usdc?: string | null;
             /** Platform Fee Usdc */
@@ -1846,6 +1866,30 @@ export interface components {
             additions: number;
             /** Deletions */
             deletions: number;
+            /** Contributor Id */
+            contributor_id?: string | null;
+            /**
+             * Review Count
+             * @default 0
+             */
+            review_count: number;
+            /**
+             * Deposit State
+             * @default none
+             */
+            deposit_state: string;
+            /** Deposit Amount Usdc */
+            deposit_amount_usdc?: string | null;
+            /**
+             * State
+             * @default submitted
+             */
+            state: string;
+            /**
+             * Draft
+             * @default false
+             */
+            draft: boolean;
         };
         /** SubmitRequest */
         SubmitRequest: {

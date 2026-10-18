@@ -26,23 +26,54 @@ class IssueState(StrEnum):
     REFUNDED = "REFUNDED"
 
 
-# Every legal transition. Anything not listed is a bug, not an edge case.
+class ClaimState(StrEnum):
+    """The lifecycle of a single contributor's claim on an issue."""
+
+    CLAIMED = "CLAIMED"
+    IN_REVIEW = "IN_REVIEW"
+    REWORK = "REWORK"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+    WITHDRAWN = "WITHDRAWN"
+
+
+CLAIM_TRANSITIONS: dict[ClaimState, frozenset[ClaimState]] = {
+    ClaimState.CLAIMED: frozenset(
+        {ClaimState.IN_REVIEW, ClaimState.WITHDRAWN, ClaimState.SUPERSEDED}
+    ),
+    ClaimState.IN_REVIEW: frozenset(
+        {ClaimState.REWORK, ClaimState.ACCEPTED, ClaimState.REJECTED, ClaimState.SUPERSEDED}
+    ),
+    ClaimState.REWORK: frozenset(
+        {ClaimState.IN_REVIEW, ClaimState.WITHDRAWN, ClaimState.SUPERSEDED}
+    ),
+    ClaimState.ACCEPTED: frozenset({ClaimState.SUPERSEDED}),
+    ClaimState.REJECTED: frozenset({ClaimState.IN_REVIEW, ClaimState.SUPERSEDED}),
+    ClaimState.SUPERSEDED: frozenset(),
+    ClaimState.WITHDRAWN: frozenset(),
+}
+
+
+# Every legal transition on the issue aggregate. In the open claim model,
+# work in flight proceeds beneath FUNDED; the issue transitions only on merge
+# (PAID) or escrow expiration (REFUNDED).
 TRANSITIONS: dict[IssueState, frozenset[IssueState]] = {
     IssueState.DRAFT: frozenset({IssueState.PRICED}),
     IssueState.PRICED: frozenset({IssueState.AWAITING_APPROVAL}),
     IssueState.AWAITING_APPROVAL: frozenset({IssueState.DRAFT, IssueState.FUNDED}),
-    IssueState.FUNDED: frozenset({IssueState.CLAIMED, IssueState.REFUNDED}),
-    IssueState.CLAIMED: frozenset({IssueState.IN_REVIEW, IssueState.FUNDED}),
+    IssueState.FUNDED: frozenset({IssueState.CLAIMED, IssueState.IN_REVIEW, IssueState.REFUNDED}),
+    IssueState.CLAIMED: frozenset({IssueState.IN_REVIEW, IssueState.FUNDED, IssueState.REFUNDED}),
     # The review verdict lives on the issue, not in the state: a failed review sends
     # the issue back to CLAIMED, where the contributor still holds it and can push a
     # new commit, and a passing one leaves it here until the publisher merges.
-    # A publisher may decline a passing verdict, with a reason, once (#54); the work
-    # goes back to CLAIMED rather than the money back to them.
-    IssueState.IN_REVIEW: frozenset({IssueState.CLAIMED, IssueState.REJECTED, IssueState.PAID}),
+    IssueState.IN_REVIEW: frozenset(
+        {IssueState.CLAIMED, IssueState.REJECTED, IssueState.PAID, IssueState.REFUNDED}
+    ),
     IssueState.PAID: frozenset(),
     # A rejection sends the issue back to the pool, or, when the contributor's
     # dispute is upheld on a second review, back into review (#39).
-    IssueState.REJECTED: frozenset({IssueState.FUNDED, IssueState.IN_REVIEW}),
+    IssueState.REJECTED: frozenset({IssueState.FUNDED, IssueState.IN_REVIEW, IssueState.REFUNDED}),
     IssueState.REFUNDED: frozenset(),
 }
 

@@ -217,8 +217,10 @@ class EscrowReadback(BaseModel):
 class Claim(BaseModel):
     contributor_id: str
     issued_at: datetime
-    expires_at: datetime
+    expires_at: datetime | None = None
     active: bool = True
+    state: str = "CLAIMED"
+    handle: str | None = None
 
 
 class Submission(BaseModel):
@@ -230,6 +232,12 @@ class Submission(BaseModel):
     files_changed: int
     additions: int
     deletions: int
+    contributor_id: str | None = None
+    review_count: int = 0
+    deposit_state: str = "none"
+    deposit_amount_usdc: str | None = None
+    state: str = "submitted"
+    draft: bool = False
 
 
 class Review(BaseModel):
@@ -271,10 +279,15 @@ class IssueOut(BaseModel):
     Null on an issue published before #142, whose amount came from the recommendation."""
     proposal: PriceProposalOut | None = None
     escrow: EscrowCommitment | None = None
+    claims: list[Claim] = Field(default_factory=list)
+    submissions: list[Submission] = Field(default_factory=list)
     claim: Claim | None = None
     submission: Submission | None = None
     review: Review | None = None
     contributor_id: str | None = None
+    contributor_ids: list[str] = Field(default_factory=list)
+    review_budget: int = 1
+    reviews_spent: int = 0
     paid_usdc: str | None = None
     """What the contributor received: the commitment less the platform's fee."""
     platform_fee_usdc: str | None = None

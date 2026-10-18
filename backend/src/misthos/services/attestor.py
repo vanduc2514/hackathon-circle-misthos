@@ -95,7 +95,7 @@ class LocalSecretStore:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode):
                 raise AttestorKeyError(f"{path} is not a regular file")
-            if info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            if os.name != "nt" and info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
                 raise AttestorKeyError(f"{path} is readable by another user; chmod 600 it")
             handle = os.fdopen(fd, encoding="utf-8")
         except BaseException:

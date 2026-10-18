@@ -92,7 +92,7 @@ class TestOpportunities:
         rec = next(r for r in open_funded() if r.state is IssueState.CLAIMED)
         found = next(o for o in self.get(client).json()["opportunities"] if o["issue_id"] == rec.id)
         assert found["claimable"] is False
-        assert found["claim"]["claimed"] is True and found["claim"]["expires_at"]
+        assert found["claim"]["claimed"] is True
 
     def test_filters(self, client):
         claimable = self.get(client, claimable="true").json()["opportunities"]

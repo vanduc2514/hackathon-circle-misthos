@@ -167,7 +167,12 @@ def _opportunity(rec: IssueRecord) -> dict[str, Any]:
         "state": rec.state.value,
         "claimable": rec.state is IssueState.FUNDED,
         "claim": (
-            {"claimed": True, "expires_at": rec.claim.expires_at.astimezone(UTC).isoformat()}
+            {
+                "claimed": True,
+                "expires_at": rec.claim.expires_at.astimezone(UTC).isoformat()
+                if rec.claim.expires_at is not None
+                else None,
+            }
             if rec.claim and rec.claim.active
             else {"claimed": False, "expires_at": None}
         ),

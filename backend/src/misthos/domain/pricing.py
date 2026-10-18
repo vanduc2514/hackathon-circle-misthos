@@ -99,6 +99,25 @@ RATE_PER_HOUR = Usdc.from_decimal("90")
 # It no longer sets a floor under anyone's price.
 REVIEW_COST_PER_ISSUE = Usdc.from_decimal("6.31")
 
+# Share of platform fee allocated to review budget.
+MAX_REVIEW_SHARE = Decimal("0.5")
+
+# Deposit required from contributor for rework reviews or after budget exhaustion.
+DEPOSIT_AMOUNT = REVIEW_COST_PER_ISSUE
+
+
+def review_budget(price: Usdc, share: Decimal = MAX_REVIEW_SHARE) -> int:
+    """The number of reviews the platform will pay for an issue.
+
+    floor(platform_fee(price) * MAX_REVIEW_SHARE / REVIEW_COST_PER_ISSUE)
+    clamped to at least 1.
+    """
+    fee = platform_fee(price)
+    fee_units = Decimal(fee.base_units)
+    cost_units = Decimal(REVIEW_COST_PER_ISSUE.base_units)
+    count = int((fee_units * share) // cost_units)
+    return max(1, count)
+
 
 # The precision a price is shown at.
 CENT = Decimal("0.01")

@@ -145,17 +145,17 @@ class TestSubmission:
         # The pull request shows that the review has started.
         assert [(s.kind, s.state) for s in github.sent] == [("status", "pending")]
 
-    def test_someone_elses_pull_request_does_not_take_the_claim(
+    def test_someone_off_the_roster_is_registered_and_answered_on_the_pr(
         self, client: TestClient, github: FakeGitHub
     ) -> None:
         issue_id, repo, number, _ = CLAIMED
         out = deliver(
             client, "pull_request", pull_request(repo, 502, "drive-by", body=f"Fixes #{number}")
         )
-        assert out["handled"] is False
-        assert "holds the claim" in out["outcome"]
-        assert get(issue_id).state is IssueState.CLAIMED
-        assert github.sent == []
+        assert out["handled"] is True
+        assert any("open claim model" in getattr(s, "body", "") for s in github.sent)
+        rec = get(issue_id)
+        assert any(c.contributor_id == "c_drive-by" for c in rec.claims)
 
     def test_a_draft_waits_until_it_is_ready(self, client: TestClient) -> None:
         issue_id, repo, number, author = CLAIMED
